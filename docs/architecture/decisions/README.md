@@ -21,6 +21,9 @@ supersedes the old one; the old one stays, marked superseded and linked forward.
 | [0008](0008-agent-provider-abstraction.md) | Provider-neutral generation, with a deterministic mock for CI | accepted | 0 / 2 |
 | [0009](0009-storage-layout-and-retention.md) | Separated per-app storage, with retention as a first-class property | accepted | 0 / 1 |
 | [0010](0010-hash-chained-audit-log.md) | An append-only, hash-chained audit log with redaction on write | accepted | 0 |
+| [0011](0011-immutable-content-addressed-versions.md) | Application versions are immutable and content-addressed | accepted | 7 |
+| [0012](0012-sharing-distributes-recipes.md) | Sharing distributes recipes, never grants | accepted | 7 |
+| [0013](0013-shared-instances-have-a-host.md) | A shared instance has a host, and the host is a trust boundary | **proposed** | 7 |
 
 ## When you need an ADR
 

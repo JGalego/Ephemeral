@@ -94,6 +94,30 @@ work, performance, recovery, installers and release automation.
 **Done when:** the threat model is written and every mitigation it names either
 exists or is recorded as accepted risk.
 
+### Phase 7 — Sharing
+
+Giving an application to somebody else, publishing it, and — separately — letting
+several people use one running instance. Designed in [sharing.md](sharing.md);
+decided in [ADR-0011](architecture/decisions/0011-immutable-content-addressed-versions.md),
+[ADR-0012](architecture/decisions/0012-sharing-distributes-recipes.md) and
+[ADR-0013](architecture/decisions/0013-shared-instances-have-a-host.md).
+
+Sits on top of nearly everything else: it needs a runtime to build a received
+recipe, generation to produce versions, sandboxing to make accepting a
+stranger's application reasonable, and the threat model — shared instances are
+the largest expansion of it so far.
+
+One part is **not** deferrable to Phase 7: immutable, content-addressed versions
+belong with Phase 2, because that is when versions start being produced and
+identity cannot be retrofitted onto history that was never recorded.
+
+**Done when:** an application can be published to a git host, installed by
+somebody else, and run under permissions *they* granted — with an update that
+wants more than the version they approved refused until they decide.
+
+**Blocked on a product decision:** where a shared instance runs. See
+[ADR-0013](architecture/decisions/0013-shared-instances-have-a-host.md#open-question).
+
 ## Things deliberately not being built yet
 
 Not everything absent is an oversight. These are decided-against-for-now, with
@@ -106,3 +130,6 @@ the reasoning recorded:
 - **A WebAssembly runtime.** The most likely future addition to the runtime
   trait, and the reason the trait exists — but today's ecosystem cannot run the
   general case.
+- **A central Ephemeral registry.** Git hosting already distributes recipes, and
+  a curated registry implies a safety judgement the project is not in a position
+  to make ([ADR-0012](architecture/decisions/0012-sharing-distributes-recipes.md)).
