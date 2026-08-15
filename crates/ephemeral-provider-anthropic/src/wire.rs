@@ -228,11 +228,68 @@ pub fn json_from(text: &str) -> Result<Value, AgentError> {
         .map_or(trimmed, |(inside, _)| inside)
         .trim();
 
-    serde_json::from_str(unfenced).map_err(|error| AgentError::Unreadable {
-        provider: crate::NAME.to_owned(),
-        reason: format!("the reply was not JSON: {error}"),
-        raw: text.to_owned(),
+    if let Ok(value) = serde_json::from_str(unfenced) {
+        return Ok(value);
+    }
+
+    // Models put source code in JSON strings, and long strings of source
+    // routinely come back with real newlines and tabs where JSON requires
+    // escapes. That is invalid JSON, and refusing it makes the provider
+    // useless for the one thing it exists to do, so the escapes are put back.
+    //
+    // Deliberately narrow: it repairs control characters inside string
+    // literals and touches nothing else. It is not a lenient parser and it
+    // does not go looking for JSON inside prose.
+    serde_json::from_str(&escape_control_characters(unfenced)).map_err(|error| {
+        AgentError::Unreadable {
+            provider: crate::NAME.to_owned(),
+            reason: format!("the reply was not JSON, even after repairing it: {error}"),
+            raw: text.to_owned(),
+        }
     })
+}
+
+/// Escapes raw control characters that appear inside JSON string literals.
+///
+/// Tracks whether it is inside a string and whether the previous character was
+/// an escaping backslash, so a `\"` inside a string does not look like the end
+/// of one. Anything outside a string is passed through untouched — the
+/// structure of the document is never rewritten, only the contents of its
+/// strings.
+fn escape_control_characters(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for character in text.chars() {
+        if escaped {
+            out.push(character);
+            escaped = false;
+            continue;
+        }
+
+        match character {
+            '\\' if in_string => {
+                out.push(character);
+                escaped = true;
+            }
+            '"' => {
+                in_string = !in_string;
+                out.push(character);
+            }
+            '\n' if in_string => out.push_str("\\n"),
+            '\r' if in_string => out.push_str("\\r"),
+            '\t' if in_string => out.push_str("\\t"),
+            control if in_string && control.is_control() => {
+                use std::fmt::Write as _;
+                // Writing to a String cannot fail; the escape is what matters.
+                let _ = write!(out, "\\u{:04x}", control as u32);
+            }
+            other => out.push(other),
+        }
+    }
+
+    out
 }
 
 /// Builds a plan from a parsed reply.
@@ -480,6 +537,53 @@ mod tests {
             plan_from(&value).unwrap_err(),
             AgentError::Refused(_)
         ));
+    }
+
+    /// Models put source code in JSON strings, and long code routinely comes
+    /// back with real newlines where JSON requires escapes. Refusing it makes
+    /// the provider useless for the one thing it exists to do.
+    #[test]
+    fn source_code_with_raw_newlines_is_repaired_rather_than_refused() {
+        let reply = "{\"files\":[{\"path\":\"main.py\",\"contents\":\"import sys
+print(1)
+\"}]}";
+
+        let value = json_from(reply).expect("a reply with raw newlines should be readable");
+        assert_eq!(
+            value["files"][0]["contents"], "import sys\nprint(1)\n",
+            "the newlines have to survive as newlines"
+        );
+    }
+
+    /// The repair must not mistake an escaped quote inside a string for the end
+    /// of that string, or everything after it is treated as structure.
+    #[test]
+    fn an_escaped_quote_does_not_end_a_string() {
+        let reply = "{\"contents\":\"print(\\\"hi\\\")
+x = 1\"}";
+
+        let value = json_from(reply).expect("readable");
+        assert_eq!(value["contents"], "print(\"hi\")\nx = 1");
+    }
+
+    /// Whitespace between fields is structure, not string content, and must be
+    /// left alone.
+    #[test]
+    fn formatting_outside_strings_is_untouched() {
+        let pretty = "{\n  \"a\": 1,\n  \"b\": [2, 3]\n}";
+
+        let value = json_from(pretty).expect("pretty-printed JSON is still JSON");
+        assert_eq!(value["a"], 1);
+        assert_eq!(value["b"][1], 3);
+    }
+
+    /// Repairing control characters is not the same as accepting anything. A
+    /// reply that is not JSON at all is still refused.
+    #[test]
+    fn repair_does_not_turn_into_a_lenient_parser() {
+        assert!(json_from("this is not JSON").is_err());
+        assert!(json_from("{\"unclosed\": ").is_err());
+        assert!(json_from("Sure! {\"a\": 1} there you go.").is_err());
     }
 
     /// Models fence their JSON despite being asked not to. Failing on that
