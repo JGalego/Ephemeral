@@ -17,7 +17,7 @@ is how sharing becomes dangerous:
    machine, with their own data and their own permission decisions.
 3. **Share a running instance.** One application, several people, shared state —
    the group-chat case. Covered separately in
-   [ADR-0013](0013-shared-instances-have-a-host.md), because it is a different
+   [ADR-0013](0013-how-several-people-share-an-application.md), because it is a different
    problem wearing the same word.
 
 This ADR is about (2), which is what people mean by publishing to GitHub or
