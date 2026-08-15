@@ -89,8 +89,8 @@ next one starts. See [the roadmap](docs/roadmap.md) for detail, and
 | 1 | Docker runtime, sandbox, run/stop/watch, logs, cleanup | ✅ done |
 | 2 | Provider abstraction, generation agent, build/test/repair loop | 🚧 in progress |
 | 3 | Meta-permissions, app permissions, permission UI, audit, sandboxing | 🚧 enforcement done, UI is the CLI |
-| 4 | Desktop application and dashboard | ⏳ planned |
-| 5 | Windows, macOS, Linux, then mobile | ⏳ planned |
+| 4 | Desktop application and dashboard | 🚧 the window compiles and renders |
+| 5 | Windows, macOS, Linux, then mobile | 🚧 desktop three; mobile planned |
 | 6 | Threat model, security testing, supply chain, release automation | 🚧 [threat model](docs/security/threat-model.md) written |
 | 7 | Sharing, publishing, and shared sessions | 🚧 publish/install done |
 
@@ -118,8 +118,9 @@ without one.
   `ANTHROPIC_API_KEY`, and `--provider mock` produces a genuine working CSV
   comparator with no credential at all. What does not exist is an offline
   provider, which is the only real answer to "my intent leaves the machine".
-- **Open a window.** There is no desktop application yet; the CLI is the whole
-  interface, and both are clients of the same core.
+- **Trust the desktop window yet.** It exists, compiles, and its rendering is
+  tested in a headless browser — but nobody has ever looked at it, and a UI
+  nobody has seen has problems no test finds.
 - **Give an application a scoped list of hosts it may reach.** Docker cannot
   filter egress by destination, so an application granted one refuses to start
   rather than quietly receiving the whole internet. See

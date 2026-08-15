@@ -96,6 +96,26 @@ belongs in another crate behind a trait.
 transition, or join a path. A client that reimplemented any of that would be a
 second, subtly different Ephemeral.
 
+## The desktop window
+
+```bash
+cd apps/desktop/src-tauri && cargo run          # needs a display
+cd apps/desktop && npm install playwright && node tests/render.test.mjs
+```
+
+It is **its own workspace**, excluded from the root one. Tauri brings a large
+native dependency tree and system libraries that only exist on a machine with a
+desktop, and everything else here stays buildable and testable without them —
+`cargo test --workspace` never touches it.
+
+On Linux it needs `libwebkit2gtk-4.1-dev librsvg2-dev patchelf`. The frontend
+has no build step and no framework: a window that shows a list does not need a
+supply chain.
+
+Everything that decides *what* to show is a pure function in `ui/render.js`,
+tested in headless Chromium. A desktop UI that can only be exercised by opening
+it is a UI nobody tests, and what this one renders is the permission prompt.
+
 ## Testing
 
 Four layers. The third is not optional.

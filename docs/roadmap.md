@@ -109,16 +109,30 @@ point rather than by the domain model alone.
 
 ### Phase 4 — Desktop
 
-The Tauri shell, the dashboard, state visualisation, logs, permission
-management.
+A Tauri window over [`ephemeral-api`](../crates/ephemeral-api), so the window
+and the terminal show the same views worded identically.
 
-**Done when:** somebody who has never used a terminal can ask for an app, decide
-its permissions, use it, and delete it.
+| | |
+|---|---|
+| `ephemeral-api` — the versioned service layer both clients consume | ✅ |
+| The window, its commands, and a frontend with no build step | ✅ |
+| Rendering tested in headless Chromium, including that untrusted names cannot become markup | ✅ |
+| Acting from the window — granting, running, generating | |
+
+**Done when:** somebody can do everything the CLI does without opening a
+terminal.
 
 ### Phase 5 — Cross-platform
 
-Windows, macOS and Linux to parity, then the mobile control plane and clients
-([ADR-0007](architecture/decisions/0007-mobile-control-plane.md)).
+| | |
+|---|---|
+| Tests on Linux, macOS and Windows on every commit | ✅ |
+| Release workflow: CLI for four targets, desktop for three, checksums, draft releases | ✅ |
+| Signing and notarisation, which need credentials this repository must never hold | |
+| Mobile, which needs the control plane in [ADR-0007](architecture/decisions/0007-mobile-control-plane.md) | |
+
+**Done when:** somebody can download and run Ephemeral on their own machine
+without building it.
 
 ### Phase 6 — Hardening
 
@@ -187,13 +201,15 @@ translation and error mapping are pure and tested, and the untested part is one
 module that hands a string to `curl`. CI guards that split rather than trusting
 it.
 
-**The desktop application** ([ADR-0002](architecture/decisions/0002-rust-core-with-platform-shells.md)
-chose Tauri v2) needs a machine with a display to build and look at. Writing one
-blind would produce a large amount of code nobody had ever run, which is the
-opposite of how the rest of this was built. The core it would sit on is
-finished: every command the CLI offers goes through `ephemeral-core`, decides
-nothing itself, and a second client would hold that boundary honest rather than
-discover it.
+**Nobody has looked at the desktop window.** It compiles, its commands are
+typed against the same service layer the CLI uses, and its rendering is tested
+in a headless browser — but no human has seen it, and a UI that has never been
+looked at has problems no test finds. Opening it is the first thing worth doing
+on a machine with a display.
+
+**Signing and notarisation** need credentials this repository must never hold.
+The release workflow produces checksums, which say a file is intact and
+deliberately do not claim who made it.
 
 ## Things deliberately not being built yet
 
