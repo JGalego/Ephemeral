@@ -1,0 +1,35 @@
+[package]
+name = "ephemeral-core"
+description = "Ephemeral's domain model: application manifests, the lifecycle state machine, both permission systems, retention and the audit log."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+[features]
+# The domain layer is I/O-free by construction. `fs` adds the filesystem-backed
+# application store; without it the crate touches no host resources at all,
+# which is what `./scripts/check` verifies (ADR-0002).
+default = ["fs"]
+fs = ["dep:tempfile"]
+
+[dependencies]
+chrono.workspace = true
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_norway.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+tempfile = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
