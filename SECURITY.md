@@ -109,8 +109,8 @@ malicious external content, dependency and supply-chain attacks, container
 escape, privilege escalation, secret exfiltration, a compromised AI provider, a
 compromised runtime, malicious plugins, filesystem and network attacks, resource
 exhaustion and persistence after deletion is a required deliverable before the
-MVP is declared complete. It will live at
-[`docs/security/threat-model.md`](docs/security/threat-model.md).
+MVP is declared complete. It will live at `docs/security/threat-model.md` and is
+tracked as a Phase 6 item in [the roadmap](docs/roadmap.md).
 
 ## Supply chain
 

@@ -1,6 +1,6 @@
 # ADR-NNNN: Short title in the imperative
 
-- **Status:** proposed | accepted | superseded by [ADR-NNNN](NNNN-....md) | deprecated
+- **Status:** proposed | accepted | superseded by ADR-NNNN (link it) | deprecated
 - **Date:** YYYY-MM-DD
 - **Deciders:** who made the call
 - **Phase:** which roadmap phase this decision belongs to
