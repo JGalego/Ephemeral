@@ -1,8 +1,24 @@
+<div align="center">
+
+<img src="docs/assets/logo.svg" alt="" width="136" height="136">
+
 # Ephemeral 🫧
 
-**Software that exists only while it's useful.**
+### Software that exists only while it's useful.
 
----
+Describe what you need in your own words. Ephemeral builds a small app that does
+exactly that, runs it in a sandbox, shows it to you — and throws it away when
+you're done.
+
+**Software, on demand.**
+
+[![CI](https://github.com/JGalego/Ephemeral/actions/workflows/ci.yml/badge.svg)](https://github.com/JGalego/Ephemeral/actions/workflows/ci.yml)
+[![Licence](https://img.shields.io/badge/licence-Apache--2.0-blue.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-1.85%2B-dea584.svg?logo=rust&logoColor=white)](rust-toolchain.toml)
+[![Status](https://img.shields.io/badge/status-phase%200%20·%20foundation-f0abfc.svg)](docs/roadmap.md)
+[![Platforms](https://img.shields.io/badge/platforms-macOS%20·%20Windows%20·%20Linux%20·%20iOS%20·%20Android-8ab4f8.svg)](ARCHITECTURE.md)
+
+</div>
 
 ## What is this?
 
@@ -10,7 +26,7 @@ Today, if you need a tool, you go looking for an app. You install it, it asks fo
 permissions you don't understand, and it stays on your machine forever — even
 though you needed it for ten minutes.
 
-Ephemeral flips that around. You describe what you want to do:
+Ephemeral flips that around. You say what you want to do:
 
 > "Compare these two CSV files and show me what's different."
 
@@ -18,10 +34,6 @@ Ephemeral builds a small application that does exactly that, runs it in a safe
 box, shows it to you, and throws it away when you're done.
 
 You never have to know how it was built.
-
-**Software, on demand.**
-
----
 
 ## How it works, in plain language
 
@@ -41,8 +53,6 @@ You never have to know how it was built.
 Every step is visible. When something is happening, Ephemeral tells you what and
 why. No unexplained spinners.
 
----
-
 ## The two permission systems
 
 This is the part that matters most, so it's worth saying twice.
@@ -60,8 +70,6 @@ Both sets are explicit, inspectable, and revocable at any time.
 
 Generated code is treated as untrusted code. Always. An LLM wrote it — that is
 not a reason to trust it.
-
----
 
 ## Status
 
@@ -81,8 +89,6 @@ and what is coming.
 | 4 | Desktop application and dashboard | ⏳ planned |
 | 5 | Windows, macOS, Linux, then mobile | ⏳ planned |
 | 6 | Threat model, security testing, supply chain, release automation | ⏳ planned |
-
----
 
 ## Try it (development)
 
@@ -104,8 +110,6 @@ See [docs/development.md](docs/development.md) for the full development guide
 and [docs/install.md](docs/install.md) for end-user installation (once packages
 are published).
 
----
-
 ## Documentation
 
 | Document | What's in it |
@@ -118,8 +122,6 @@ are published).
 | [docs/permissions.md](docs/permissions.md) | Both permission systems, in detail |
 | [docs/architecture/decisions/](docs/architecture/decisions/) | Architecture Decision Records |
 | [docs/roadmap.md](docs/roadmap.md) | Phased plan |
-
----
 
 ## Design principles
 
@@ -138,8 +140,6 @@ are published).
 13. Make the common path extremely simple.
 14. Never sacrifice security for a flashy demo.
 15. Build vertically and keep the system runnable.
-
----
 
 ## Licence
 

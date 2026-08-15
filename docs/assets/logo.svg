@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="Ephemeral">
+  <title>Ephemeral</title>
+
+  <defs>
+    <!-- Iridescent soap film: the colours shift the way a real bubble's do,
+         and stay legible on both light and dark backgrounds. -->
+    <radialGradient id="film" cx="34%" cy="28%" r="82%">
+      <stop offset="0%"   stop-color="#ffffff" stop-opacity="0.92" />
+      <stop offset="28%"  stop-color="#a5b4fc" stop-opacity="0.42" />
+      <stop offset="58%"  stop-color="#5eead4" stop-opacity="0.34" />
+      <stop offset="82%"  stop-color="#c4b5fd" stop-opacity="0.42" />
+      <stop offset="100%" stop-color="#f0abfc" stop-opacity="0.58" />
+    </radialGradient>
+
+    <radialGradient id="filmSmall" cx="36%" cy="26%" r="80%">
+      <stop offset="0%"   stop-color="#ffffff" stop-opacity="0.88" />
+      <stop offset="40%"  stop-color="#7dd3fc" stop-opacity="0.36" />
+      <stop offset="100%" stop-color="#f0abfc" stop-opacity="0.52" />
+    </radialGradient>
+
+    <!-- The rim of a bubble is brightest where the film is edge-on. -->
+    <linearGradient id="rim" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#c4b5fd" stop-opacity="0.95" />
+      <stop offset="45%"  stop-color="#5eead4" stop-opacity="0.75" />
+      <stop offset="100%" stop-color="#f0abfc" stop-opacity="0.95" />
+    </linearGradient>
+
+    <linearGradient id="rimSmall" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#7dd3fc" stop-opacity="0.9" />
+      <stop offset="100%" stop-color="#f0abfc" stop-opacity="0.9" />
+    </linearGradient>
+
+    <!-- A bubble about to go. The dashes are the film breaking up. -->
+    <linearGradient id="rimFading" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%"   stop-color="#c4b5fd" stop-opacity="0.7" />
+      <stop offset="100%" stop-color="#f0abfc" stop-opacity="0.25" />
+    </linearGradient>
+  </defs>
+
+  <!-- The main bubble. -->
+  <circle cx="104" cy="124" r="72" fill="url(#film)" />
+  <circle cx="104" cy="124" r="72" fill="none" stroke="url(#rim)" stroke-width="3" />
+  <ellipse cx="76" cy="92" rx="21" ry="14" fill="#ffffff" opacity="0.75" transform="rotate(-32 76 92)" />
+  <circle cx="132" cy="88" r="4.5" fill="#ffffff" opacity="0.5" />
+
+  <!-- A second, smaller bubble: software arrives in more than one piece. -->
+  <circle cx="188" cy="76" r="36" fill="url(#filmSmall)" />
+  <circle cx="188" cy="76" r="36" fill="none" stroke="url(#rimSmall)" stroke-width="2.5" />
+  <ellipse cx="175" cy="61" rx="11" ry="7" fill="#ffffff" opacity="0.75" transform="rotate(-32 175 61)" />
+
+  <!-- The third has already popped, which is the point of the product. -->
+  <circle cx="196" cy="176" r="22" fill="none" stroke="url(#rimFading)" stroke-width="2.5"
+          stroke-linecap="round" stroke-dasharray="15 13" transform="rotate(-24 196 176)" />
+  <circle cx="222" cy="150" r="2.6" fill="#f0abfc" opacity="0.75" />
+  <circle cx="176" cy="204" r="2" fill="#c4b5fd" opacity="0.6" />
+  <circle cx="212" cy="200" r="1.6" fill="#5eead4" opacity="0.6" />
+</svg>
