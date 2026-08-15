@@ -1,0 +1,36 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Node / web UI (arrives in Phase 4)
+node_modules/
+dist/
+.vite/
+
+# Tauri (arrives in Phase 4)
+apps/*/src-tauri/target/
+apps/*/src-tauri/gen/
+
+# Local Ephemeral state produced by running the CLI during development
+.ephemeral/
+/data/
+
+# Editors
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.swp
+.DS_Store
+
+# Secrets — nothing of this shape belongs in the repository. See SECURITY.md.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.keystore
+*.jks
+*.mobileprovision
+credentials.json

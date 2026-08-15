@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+#
+# Ephemeral development bootstrap (macOS / Linux).
+#
+#   ./scripts/bootstrap
+#
+# Installs the toolchain and developer tools Ephemeral needs, then verifies the
+# environment. Safe to run repeatedly. It does not install Docker: Ephemeral
+# detects Docker at runtime and explains its absence, and no part of the
+# development workflow requires it (see ADR-0005).
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+BOLD=$'\033[1m'; DIM=$'\033[2m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'
+RED=$'\033[31m'; RESET=$'\033[0m'
+if [ ! -t 1 ]; then BOLD=""; DIM=""; GREEN=""; YELLOW=""; RED=""; RESET=""; fi
+
+step() { printf '%s==>%s %s\n' "$BOLD" "$RESET" "$1"; }
+ok()   { printf '  %s✓%s %s\n' "$GREEN" "$RESET" "$1"; }
+warn() { printf '  %s!%s %s\n' "$YELLOW" "$RESET" "$1"; }
+fail() { printf '  %s✗%s %s\n' "$RED" "$RESET" "$1"; }
+note() { printf '    %s%s%s\n' "$DIM" "$1" "$RESET"; }
+
+printf '\n%sEphemeral 🫧  development bootstrap%s\n\n' "$BOLD" "$RESET"
+
+# --- Rust toolchain ---------------------------------------------------------
+
+step "Rust toolchain"
+if ! command -v rustup >/dev/null 2>&1; then
+  if command -v cargo >/dev/null 2>&1; then
+    warn "cargo found but rustup is not installed"
+    note "rust-toolchain.toml pins the toolchain; without rustup you must match it yourself."
+  else
+    fail "Rust is not installed."
+    note "Install it from https://rustup.rs and re-run this script:"
+    note "  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+    exit 1
+  fi
+else
+  # Installs the pinned toolchain and its components from rust-toolchain.toml.
+  rustup show active-toolchain >/dev/null
+  ok "$(rustc --version)"
+  ok "$(cargo --version)"
+fi
+
+for component in rustfmt clippy; do
+  if command -v rustup >/dev/null 2>&1 && ! rustup component list --installed 2>/dev/null | grep -q "^${component}"; then
+    step "Installing $component"
+    rustup component add "$component"
+  fi
+done
+command -v rustfmt >/dev/null 2>&1 && ok "rustfmt available"
+cargo clippy --version >/dev/null 2>&1 && ok "clippy available"
+
+# --- Developer tools --------------------------------------------------------
+#
+# cargo-deny enforces the supply-chain policy in deny.toml (licences, advisories,
+# duplicate and untrusted sources). Optional locally, required in CI.
+
+step "Developer tools"
+if cargo deny --version >/dev/null 2>&1; then
+  ok "cargo-deny $(cargo deny --version | awk '{print $2}')"
+else
+  warn "cargo-deny not installed (supply-chain checks will be skipped locally)"
+  note "install with: cargo install --locked cargo-deny"
+fi
+
+# --- Optional: container runtime -------------------------------------------
+
+step "Container runtime (optional)"
+if command -v docker >/dev/null 2>&1; then
+  if docker info >/dev/null 2>&1; then
+    ok "Docker available and running"
+  else
+    warn "Docker is installed but the daemon is not reachable"
+    note "Start Docker Desktop, or 'systemctl start docker' on Linux."
+  fi
+else
+  warn "Docker not found"
+  note "Not required. Ephemeral detects Docker at runtime and explains its"
+  note "absence; app creation, inspection and lifecycle work without it."
+fi
+
+# --- Build and verify -------------------------------------------------------
+
+step "Fetching dependencies"
+cargo fetch --locked 2>/dev/null || cargo fetch
+ok "dependencies resolved"
+
+step "Building the workspace"
+cargo build --workspace --all-targets
+ok "build succeeded"
+
+step "Running tests"
+cargo test --workspace
+ok "tests passed"
+
+printf '\n%sReady.%s Try:\n\n' "$GREEN" "$RESET"
+printf '  cargo run -p ephemeral-cli -- doctor      %s# check your environment%s\n' "$DIM" "$RESET"
+printf '  cargo run -p ephemeral-cli -- states      %s# show the lifecycle state machine%s\n' "$DIM" "$RESET"
+printf '  ./scripts/check                           %s# everything CI runs%s\n\n' "$DIM" "$RESET"
