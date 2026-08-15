@@ -1,0 +1,68 @@
+/* Deliberately small and dependency-free. A desktop shell that pulled in a
+   framework would carry a build step and a supply chain for a window that
+   shows a list. */
+:root {
+  --ink: #1a1a1a;
+  --quiet: #666;
+  --edge: #e2e2e2;
+  --low: #2f7d4f;
+  --medium: #a06a10;
+  --high: #b1400f;
+  --critical: #96122b;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 2rem;
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--ink);
+  max-width: 52rem;
+}
+
+h1 { margin: 0; font-size: 1.5rem; }
+.tagline { margin: 0.25rem 0 2rem; color: var(--quiet); }
+
+ul { list-style: none; margin: 0; padding: 0; }
+
+li.application {
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.name { font-weight: 600; }
+.purpose, .state { color: var(--quiet); font-size: 0.9rem; }
+
+/* An application waiting on a decision is the thing a person most needs to
+   notice, so it is the only thing on the list that shouts. */
+.awaiting {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0.05rem 0.5rem;
+  border-radius: 999px;
+  background: var(--high);
+  color: white;
+  font-size: 0.8rem;
+}
+
+.isolated { color: var(--low); font-size: 0.9rem; }
+
+.risk-low { color: var(--low); }
+.risk-medium { color: var(--medium); }
+.risk-high { color: var(--high); }
+.risk-critical { color: var(--critical); font-weight: 600; }
+
+.reason { color: var(--quiet); font-style: italic; }
+.no-reason { color: var(--high); }
+
+.problem {
+  border: 1px solid var(--high);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  color: var(--high);
+}
+
+.empty { color: var(--quiet); }

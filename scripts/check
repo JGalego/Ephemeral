@@ -63,6 +63,16 @@ if grep -rniE 'reqwest|hyper|ureq|api\.anthropic|api\.openai' \
   exit 1
 fi
 
+# The desktop window renders permission prompts, and a UI that can only be
+# exercised by opening a window is a UI nobody tests. These run the real
+# modules in headless Chromium.
+if command -v node >/dev/null 2>&1 && [ -d apps/desktop/node_modules ]; then
+  step "Desktop rendering"
+  (cd apps/desktop && node tests/render.test.mjs)
+else
+  printf '\n(skipping desktop rendering: run `cd apps/desktop && npm install playwright` first)\n'
+fi
+
 if cargo deny --version >/dev/null 2>&1; then
   step "Supply chain"
   cargo deny check
