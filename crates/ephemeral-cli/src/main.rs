@@ -211,12 +211,24 @@ fn data_dir_for(
             // The XDG spec says a relative XDG_DATA_HOME is invalid and must be
             // ignored, rather than resolved against the working directory.
             let base = xdg_data_home
-                .filter(|path| path.is_absolute())
+                .filter(|path| is_posix_absolute(path))
                 .map(Path::to_path_buf)
                 .or_else(|| home.map(|base| base.join(".local/share")))?;
             Some(base.join("ephemeral"))
         }
     }
+}
+
+/// Whether a path is absolute by POSIX rules.
+///
+/// [`Path::is_absolute`] applies the rules of whatever platform the code was
+/// compiled for, so `/data/xdg` is *not* absolute on Windows — it has no drive.
+/// XDG is a POSIX specification and its branch only ever applies on Unix, so it
+/// is evaluated by POSIX rules wherever this happens to be compiled. That also
+/// restores the property [`data_dir_for`] claims: every platform's behaviour is
+/// testable from any one of them.
+fn is_posix_absolute(path: &Path) -> bool {
+    path.to_str().is_some_and(|text| text.starts_with('/'))
 }
 
 /// Resolves where Ephemeral keeps its state.
@@ -355,6 +367,11 @@ mod tests {
     /// The XDG specification says a relative value is invalid and must be
     /// ignored rather than resolved against the working directory — which would
     /// put a user's applications wherever they happened to be standing.
+    ///
+    /// "Relative" here means by POSIX rules, not by the rules of whichever
+    /// platform is running the test: `Path::is_absolute` called this Unix path
+    /// relative on Windows, which sent CI red and the user's data somewhere
+    /// they did not ask for.
     #[test]
     fn a_relative_xdg_data_home_is_ignored() {
         assert_eq!(
