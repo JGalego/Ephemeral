@@ -223,25 +223,30 @@ jobs:
           mkdir -p dist
           root=apps/desktop/src-tauri/target
 
-          mapfile -t found < <(find "$root" -path '*/release/bundle/*' -type f \
+          # Through a file rather than a pipe or `mapfile`. A pipe puts the loop
+          # in a subshell where a failed `cp` cannot fail the step, and
+          # `mapfile` is bash 4 — macOS still ships bash 3.2, so the first
+          # version of this worked on two runners and died on the third.
+          find "$root" -path '*/release/bundle/*' -type f \
             \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \
-               -o -name '*.dmg' -o -name '*.msi' -o -name '*-setup.exe' \) -print)
+               -o -name '*.dmg' -o -name '*.msi' -o -name '*-setup.exe' \) \
+            -print > installers.txt
 
-          if [ "${#found[@]}" -eq 0 ]; then
+          if [ ! -s installers.txt ]; then
             echo "::error::No installers were produced. Bundle tree:"
-            find "$root" -path '*/release/bundle/*' -maxdepth 6 | head -50
+            find "$root" -maxdepth 6 -path '*/release/bundle/*' | head -50
             exit 1
           fi
 
-          for file in "${found[@]}"; do
+          while IFS= read -r file; do
             echo "  $(basename "$file")"
             cp "$file" dist/
-          done
+          done < installers.txt
 
           # The macOS .app is a directory, so it travels as an archive. Somebody
           # who does not want a disk image still needs a way to get the window.
           if [ "${{ runner.os }}" = "macOS" ]; then
-            app=$(find "$root" -path '*/release/bundle/macos/*.app' -maxdepth 6 -type d | head -1)
+            app=$(find "$root" -maxdepth 6 -path '*/release/bundle/macos/*.app' -type d | head -1)
             if [ -n "$app" ]; then
               tar -czf "dist/Ephemeral-macos-universal.app.tar.gz" \
                 -C "$(dirname "$app")" "$(basename "$app")"
@@ -249,6 +254,41 @@ jobs:
           fi
 
           ls -la dist
+
+      # Producing an installer and shipping an installer are different claims,
+      # and only one of them can be checked here. This installs the `.deb` the
+      # way a person would, then starts the installed binary against a virtual
+      # display and a scratch home, so a package that unpacks but cannot open a
+      # window fails the release rather than the download.
+      #
+      # Linux only: it is the one runner where a package manager and a virtual
+      # X server are both available. macOS and Windows installers are still
+      # checked only for existence, which is stated here rather than implied by
+      # a green tick.
+      - name: The package installs and the window opens
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y ./dist/*.deb xvfb
+
+          test -x /usr/bin/ephemeral-desktop
+          test -f /usr/share/applications/Ephemeral.desktop
+
+          Xvfb :99 -screen 0 1280x900x24 -nolisten tcp &
+          sleep 3
+
+          DISPLAY=:99 EPHEMERAL_HOME="$(mktemp -d)" \
+            WEBKIT_DISABLE_COMPOSITING_MODE=1 /usr/bin/ephemeral-desktop &
+          window=$!
+          sleep 10
+
+          if ! kill -0 "$window" 2>/dev/null; then
+            echo "::error::The installed application exited instead of staying open."
+            exit 1
+          fi
+
+          kill "$window"
+          echo "Installed, started, and still running after ten seconds."
 
       - name: Checksums
         shell: bash
