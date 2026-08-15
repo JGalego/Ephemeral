@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ephemeral</title>
+    <link rel="stylesheet" href="app.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Ephemeral</h1>
+      <p class="tagline">Software that exists only while it's useful.</p>
+    </header>
+
+    <main>
+      <section id="applications" aria-label="Your applications">
+        <p class="empty" id="empty" hidden>
+          No applications yet. Ask for one and Ephemeral will build it.
+        </p>
+        <ul id="list"></ul>
+      </section>
+
+      <section id="detail" aria-label="Application" hidden></section>
+    </main>
+
+    <p class="problem" id="problem" role="alert" hidden></p>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

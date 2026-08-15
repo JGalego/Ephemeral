@@ -144,6 +144,23 @@ jobs:
           fi
           echo "Provider transport is confined to curl, in one module."
 
+  # The desktop window renders the permission prompt, and a UI that can only be
+  # exercised by opening a window is a UI nobody tests. Its rendering is pure
+  # functions over the same views the CLI shows, run here in headless Chromium.
+  desktop:
+    name: Desktop rendering
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install a browser
+        run: npm install --no-save playwright && npx playwright install --with-deps chromium
+        working-directory: apps/desktop
+      - run: node tests/render.test.mjs
+        working-directory: apps/desktop
+
   supply-chain:
     name: Supply chain
     runs-on: ubuntu-latest
@@ -183,6 +200,7 @@ jobs:
       - security-invariants
       - domain-purity
       - generation
+      - desktop
       - supply-chain
       - lockfile
     steps:

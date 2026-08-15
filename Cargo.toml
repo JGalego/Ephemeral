@@ -9,6 +9,11 @@ members = [
     "crates/ephemeral-cli",
 ]
 
+# The desktop window is its own workspace. Tauri brings a large native
+# dependency tree and system libraries that only exist on a machine with a
+# desktop; everything else here must stay buildable and testable without them.
+exclude = ["apps/desktop/src-tauri"]
+
 [workspace.package]
 version = "0.1.0"
 edition = "2024"

@@ -1,0 +1,27 @@
+[package]
+name = "ephemeral-desktop"
+description = "Ephemeral's desktop window. A client of ephemeral-api that decides nothing itself."
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+
+# Deliberately its own workspace. Tauri brings a large native dependency tree
+# and system libraries that only exist on a machine with a desktop, and the
+# rest of Ephemeral must stay buildable and testable without any of it.
+[workspace]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+ephemeral-core = { path = "../../../crates/ephemeral-core" }
+ephemeral-api = { path = "../../../crates/ephemeral-api" }
+
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[lib]
+name = "ephemeral_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
