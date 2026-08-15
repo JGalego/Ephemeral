@@ -383,6 +383,22 @@ pub trait Runtime {
     /// repair attempt and therefore has to be preserved rather than summarised.
     fn build_image(&self, request: &BuildRequest) -> Result<String, RuntimeError>;
 
+    /// Runs a container to completion and returns what it printed.
+    ///
+    /// For work that finishes on its own — running an application's tests,
+    /// above all. Confined exactly as [`Runtime::start`] would confine it: a
+    /// generated test is generated code, and gets no more of the machine than
+    /// the application does.
+    ///
+    /// # Errors
+    ///
+    /// [`RuntimeError::CannotEnforce`] if the confinement cannot be applied, or
+    /// [`RuntimeError::CommandFailed`] if the runtime refuses. A container that
+    /// runs and exits non-zero is **not** an error — that is an [`Completed`]
+    /// with `succeeded` false, because a failing test is an answer rather than
+    /// a malfunction.
+    fn run_once(&self, spec: &ContainerSpec) -> Result<Completed, RuntimeError>;
+
     /// Starts an application under the confinement described by `spec`.
     ///
     /// `secrets` supplies the values for [`ContainerSpec::environment_names`].
@@ -455,6 +471,22 @@ pub trait Runtime {
     ///
     /// [`RuntimeError::CommandFailed`] if the runtime cannot be asked.
     fn managed_containers(&self) -> Result<Vec<ManagedContainer>, RuntimeError>;
+}
+
+/// What a container that ran to completion produced.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Completed {
+    /// Whether it exited zero.
+    pub succeeded: bool,
+
+    /// How it exited.
+    pub exit_code: i32,
+
+    /// Everything it printed, both streams interleaved.
+    ///
+    /// Kept whole. This is what a person reads when a test fails and what a
+    /// repair attempt is given, and either use is defeated by a summary.
+    pub output: String,
 }
 
 /// What to build, and from where.

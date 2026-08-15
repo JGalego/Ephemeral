@@ -482,6 +482,56 @@ impl AppPermissions {
         Self::default()
     }
 
+    /// Records that an application *asks* for a capability.
+    ///
+    /// A request, never a grant. This block is the application's statement of
+    /// what it wants; whether it gets any of it is decided by a person and
+    /// recorded in the ledger, which this cannot reach.
+    ///
+    /// Adding the same request twice is idempotent — a manifest listing a
+    /// capability twice should not read as wanting it more.
+    pub fn request(&mut self, permission: &AppPermission) {
+        match permission {
+            AppPermission::FilesystemRead { scope } => {
+                self.add_rule(FilesystemRule::Read(scope.clone()));
+            }
+            AppPermission::FilesystemWrite { scope } => {
+                self.add_rule(FilesystemRule::Write(scope.clone()));
+            }
+            AppPermission::NetworkOutbound { scope } => {
+                self.network.outbound = true;
+                if !self.network.allowed_hosts.contains(scope) {
+                    self.network.allowed_hosts.push(scope.clone());
+                }
+            }
+            AppPermission::NetworkInbound { port } => {
+                if !self.network.inbound_ports.contains(port) {
+                    self.network.inbound_ports.push(*port);
+                }
+            }
+            AppPermission::ReadEnvironment { name } => {
+                if !self.environment.contains(name) {
+                    self.environment.push(name.clone());
+                }
+            }
+            AppPermission::ExecuteProcesses => self.process.execute = true,
+            AppPermission::Camera => self.devices.camera = true,
+            AppPermission::Microphone => self.devices.microphone = true,
+            AppPermission::Location => self.devices.location = true,
+            // No catch-all: a new capability should break this match rather
+            // than be silently dropped. A request nobody recorded is a request
+            // that cannot be granted, which sounds safe until it is the reason
+            // an application does not work and nothing says why.
+        }
+    }
+
+    /// Adds a filesystem rule if an identical one is not already present.
+    fn add_rule(&mut self, rule: FilesystemRule) {
+        if !self.filesystem.contains(&rule) {
+            self.filesystem.push(rule);
+        }
+    }
+
     /// The flat capability list the ledger stores and checks.
     ///
     /// The single conversion point between what a person reads and what the

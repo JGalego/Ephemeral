@@ -12,8 +12,8 @@ use std::process::{Command, Output};
 use ephemeral_core::AppId;
 
 use crate::{
-    APP_LABEL, Availability, BuildRequest, ContainerState, ContainerStatus, ManagedContainer,
-    Runtime, RuntimeError, Secrets, spec::ContainerSpec,
+    APP_LABEL, Availability, BuildRequest, Completed, ContainerState, ContainerStatus,
+    ManagedContainer, Runtime, RuntimeError, Secrets, spec::ContainerSpec,
 };
 
 use super::command::{self, NetworkMode};
@@ -226,6 +226,30 @@ impl Runtime for DockerRuntime {
         Err(RuntimeError::BuildFailed {
             app: request.app.clone(),
             summary: last_meaningful_line(&printed),
+            output: printed,
+        })
+    }
+
+    fn run_once(&self, spec: &ContainerSpec) -> Result<Completed, RuntimeError> {
+        let mut spec = spec.clone();
+        if let Some(user) = &self.user {
+            spec.user.clone_from(user);
+        }
+
+        // Every refusal happens here, before anything runs.
+        let args = command::run_once(&spec)?;
+
+        if command::network_mode(&spec)? == NetworkMode::Isolated {
+            self.ensure_isolated_network()?;
+        }
+
+        let output = self.invoke(&args, &[])?;
+        let mut printed = String::from_utf8_lossy(&output.stdout).into_owned();
+        printed.push_str(&String::from_utf8_lossy(&output.stderr));
+
+        Ok(Completed {
+            succeeded: output.status.success(),
+            exit_code: output.status.code().unwrap_or(-1),
             output: printed,
         })
     }

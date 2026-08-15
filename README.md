@@ -15,7 +15,7 @@ you're done.
 [![CI](https://github.com/JGalego/Ephemeral/actions/workflows/ci.yml/badge.svg)](https://github.com/JGalego/Ephemeral/actions/workflows/ci.yml)
 [![Licence](https://img.shields.io/badge/licence-Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-dea584.svg?logo=rust&logoColor=white)](rust-toolchain.toml)
-[![Status](https://img.shields.io/badge/status-phase%201%20·%20local%20runtime-f0abfc.svg)](docs/roadmap.md)
+[![Status](https://img.shields.io/badge/status-phase%202%20·%20generation-f0abfc.svg)](docs/roadmap.md)
 [![Platforms](https://img.shields.io/badge/platforms-macOS%20·%20Windows%20·%20Linux%20·%20iOS%20·%20Android-8ab4f8.svg)](ARCHITECTURE.md)
 
 </div>
@@ -73,10 +73,11 @@ not a reason to trust it.
 
 ## Status
 
-**Phase 1 — Local runtime.** The sandbox that confines generated code now
-exists, and the permission model has consequences: a granted scope becomes a
-mount, an inbound port becomes a loopback binding, and an application with an
-empty ledger gets a container that can see nothing of yours.
+**Phase 2 — Generation.** An application can now be described, written, built,
+tested and run without anybody touching its code. The sandbox from Phase 1 is
+what it runs in: a granted scope becomes a mount, an inbound port becomes a
+loopback binding, and an application with an empty ledger gets a container that
+can see nothing of yours.
 
 Ephemeral is built in phases, and each phase must demonstrably work before the
 next one starts. See [the roadmap](docs/roadmap.md) for detail, and
@@ -85,22 +86,31 @@ next one starts. See [the roadmap](docs/roadmap.md) for detail, and
 | Phase | Scope | Status |
 |-------|-------|--------|
 | 0 | Repo, docs, architecture, CI, app model, state machine | ✅ done |
-| 1 | Docker runtime, sandbox, run/stop/watch, logs, cleanup | 🚧 in progress |
-| 2 | Provider abstraction, generation agent, build/test/repair loop | ⏳ planned |
+| 1 | Docker runtime, sandbox, run/stop/watch, logs, cleanup | ✅ done |
+| 2 | Provider abstraction, generation agent, build/test/repair loop | 🚧 in progress |
 | 3 | Meta-permissions, app permissions, permission UI, audit, sandboxing | ⏳ planned |
 | 4 | Desktop application and dashboard | ⏳ planned |
 | 5 | Windows, macOS, Linux, then mobile | ⏳ planned |
 | 6 | Threat model, security testing, supply chain, release automation | ⏳ planned |
 | 7 | Sharing, publishing, and shared sessions | ⏳ planned |
 
-**What you can do today.** Create an application record, grant and revoke its
-permissions, run it in a hardened container under exactly those permissions,
-watch it for crashes and time limits, read its output, inspect the audit trail,
-and archive, delete or purge it.
+**What you can do today.** Describe what you want, have Ephemeral write and
+build it, watch it fix its own build when it breaks, run the result in a
+hardened container under exactly the permissions you granted, watch it for
+crashes and time limits, read its output and the audit trail, and archive,
+delete or purge it.
 
-**What you cannot do yet.** Ask for an application in words and have one built —
-that is Phase 2, and until it lands nothing can reach the `Ready` state, so
-`ephemeral run` has nothing to run. The sandbox is finished and waiting.
+```console
+$ ephemeral create "compare these two CSV files and show me what's different"
+$ ephemeral generate <app>          # plan, write, build, test — bounded and cancellable
+$ ephemeral grant <app> read:'~/Downloads/**' --why "to compare them"
+$ ephemeral run <app>
+```
+
+**What you cannot do yet.** Use a real model. Only the deterministic `mock`
+provider exists — it produces a fixed example application without a credential,
+a network connection or a bill, which is what CI runs against. Real providers
+are the rest of Phase 2.
 
 ## Try it (development)
 

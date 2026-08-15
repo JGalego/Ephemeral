@@ -180,6 +180,15 @@ pub struct GeneratedApp {
 
     /// The command that starts it, already split into arguments.
     pub entrypoint: Vec<String>,
+
+    /// The command that verifies it, already split into arguments.
+    ///
+    /// Required, not optional. "Ephemeral tests it" is a promise the product
+    /// makes on its front page, and an application with nothing to run against
+    /// it cannot pass validation — so a provider that returns none has produced
+    /// something Ephemeral will not certify, rather than something that passes
+    /// vacuously.
+    pub test_command: Vec<String>,
 }
 
 impl GeneratedApp {
@@ -207,6 +216,9 @@ impl GeneratedApp {
         }
         if self.entrypoint.is_empty() {
             return Err(PlanError::NoEntrypoint);
+        }
+        if self.test_command.is_empty() {
+            return Err(PlanError::NoTests);
         }
 
         for file in &self.files {
@@ -306,6 +318,10 @@ pub enum PlanError {
     #[error("no entry point was produced, so there would be nothing to start")]
     NoEntrypoint,
 
+    /// Nothing to verify it with.
+    #[error("no tests were produced, so there is no way to tell whether this application works")]
+    NoTests,
+
     /// A path that would write outside the application's own directory.
     #[error("{path} is not a path inside the application, and will not be written")]
     UnsafePath {
@@ -402,6 +418,7 @@ mod tests {
             files: vec![SourceFile::new("main.py", "print('hello')\n")],
             dockerfile: "FROM python:3.12-slim\nCOPY . /app\n".to_owned(),
             entrypoint: vec!["python".to_owned(), "main.py".to_owned()],
+            test_command: vec!["python".to_owned(), "-m".to_owned(), "pytest".to_owned()],
         }
     }
 
@@ -519,6 +536,18 @@ mod tests {
             no_entrypoint.validate().unwrap_err(),
             PlanError::NoEntrypoint
         ));
+    }
+
+    /// "Ephemeral tests it" is a promise on the front page. An application with
+    /// nothing to run against it must not pass validation vacuously.
+    #[test]
+    fn an_application_with_no_tests_cannot_be_certified() {
+        let mut untested = generated();
+        untested.test_command.clear();
+
+        let error = untested.validate().unwrap_err();
+        assert!(matches!(error, PlanError::NoTests), "{error:?}");
+        assert!(error.to_string().contains("whether this application works"));
     }
 
     #[test]

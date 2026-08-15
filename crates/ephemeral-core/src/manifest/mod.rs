@@ -202,6 +202,16 @@ pub struct AppManifest {
     /// Tags, purpose, retention and execution location.
     #[serde(default)]
     pub metadata: Metadata,
+
+    /// Every version this application has been, oldest first.
+    ///
+    /// Kept rather than replaced, so a user can see what changed and go back to
+    /// one that worked. Rolling back selects an existing version; it never
+    /// mutates the current one ([ADR-0011]).
+    ///
+    /// [ADR-0011]: https://github.com/JGalego/Ephemeral/blob/main/docs/architecture/decisions/0011-immutable-content-addressed-versions.md
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub versions: Vec<crate::Version>,
 }
 
 fn one() -> u32 {
@@ -247,6 +257,7 @@ impl AppManifest {
             budget,
             artifacts: Artifacts::default(),
             metadata: Metadata::default(),
+            versions: Vec::new(),
         }
     }
 
@@ -463,6 +474,57 @@ impl AppManifest {
     pub fn touch(&mut self) {
         self.updated_at = now();
     }
+
+    /// What this application currently is, by digest.
+    ///
+    /// `None` before anything has been generated. An application that has only
+    /// been requested has no identity beyond its id, because there is nothing
+    /// yet to take a digest of.
+    #[must_use]
+    pub fn current_version(&self) -> Option<&crate::Version> {
+        self.versions.last()
+    }
+
+    /// Records a new version, produced from `recipe`.
+    ///
+    /// Returns what this update would newly ask for, compared with the version
+    /// before it. That delta is a permission decision when it is non-empty, and
+    /// the caller is expected to put it to a person rather than apply it
+    /// ([ADR-0011]).
+    ///
+    /// A recipe identical to the current version is not recorded again: the
+    /// same application is the same version, however many times it is produced.
+    ///
+    /// [ADR-0011]: https://github.com/JGalego/Ephemeral/blob/main/docs/architecture/decisions/0011-immutable-content-addressed-versions.md
+    pub fn record_version(
+        &mut self,
+        recipe: &crate::Recipe,
+        reason: impl Into<String>,
+    ) -> crate::PermissionDelta {
+        let digest = crate::VersionDigest::of(recipe);
+
+        if let Some(current) = self.current_version()
+            && current.digest == digest
+        {
+            return crate::PermissionDelta::default();
+        }
+
+        // The Nth recorded version is sequence N. Deriving it from the history
+        // rather than from `self.version` keeps the two from drifting apart —
+        // an application created but never generated sits at version 1 with no
+        // versions recorded, and its first build should be version 1, not 2.
+        let sequence = u32::try_from(self.versions.len().saturating_add(1)).unwrap_or(u32::MAX);
+        let next = crate::Version::new(recipe, sequence, reason);
+        let delta = self
+            .current_version()
+            .map(|current| current.widening_to(&next));
+
+        self.version = next.sequence;
+        self.versions.push(next);
+        self.touch();
+
+        delta.unwrap_or_default()
+    }
 }
 
 fn check_version(declared: Option<u32>) -> Result<(), ManifestError> {
@@ -484,6 +546,114 @@ fn unparseable(error: impl std::fmt::Display) -> ManifestError {
 
 #[cfg(test)]
 mod tests {
+
+    /// A version history is what makes rollback and comparison possible, so
+    /// recording one has to actually keep the old ones.
+    #[test]
+    fn recording_a_version_keeps_the_previous_ones() {
+        let mut manifest =
+            AppManifest::requested(AppId::parse("csv-comparator").unwrap(), "CSV comparator");
+        assert_eq!(manifest.current_version(), None, "nothing generated yet");
+
+        let mut first = crate::Recipe {
+            runtime: "docker".to_owned(),
+            image: Some("python:3.12-slim".to_owned()),
+            entrypoint: vec!["python".to_owned(), "main.py".to_owned()],
+            source: vec![("main.py".to_owned(), "aaa".to_owned())],
+            requests: Vec::new(),
+            limits: "cpu=500".to_owned(),
+        };
+        first.normalise();
+
+        manifest.record_version(&first, "generated");
+        assert_eq!(manifest.versions.len(), 1);
+
+        let mut second = first.clone();
+        second.source = vec![("main.py".to_owned(), "bbb".to_owned())];
+        second.normalise();
+
+        manifest.record_version(&second, "repaired");
+        assert_eq!(manifest.versions.len(), 2, "the old version survives");
+        assert_ne!(manifest.versions[0].digest, manifest.versions[1].digest);
+        assert_eq!(manifest.version, 2);
+    }
+
+    /// The same application produced twice is the same version. Recording it
+    /// again would make the history claim a change that did not happen.
+    #[test]
+    fn regenerating_the_same_application_records_no_new_version() {
+        let mut manifest =
+            AppManifest::requested(AppId::parse("csv-comparator").unwrap(), "CSV comparator");
+
+        let mut recipe = crate::Recipe {
+            runtime: "docker".to_owned(),
+            image: Some("python:3.12-slim".to_owned()),
+            entrypoint: vec!["python".to_owned()],
+            source: vec![("main.py".to_owned(), "aaa".to_owned())],
+            requests: Vec::new(),
+            limits: "cpu=500".to_owned(),
+        };
+        recipe.normalise();
+
+        manifest.record_version(&recipe, "generated");
+        let after_first = manifest.version;
+
+        let delta = manifest.record_version(&recipe, "generated again");
+
+        assert_eq!(manifest.versions.len(), 1);
+        assert_eq!(manifest.version, after_first);
+        assert!(delta.is_empty());
+    }
+
+    /// The question ADR-0011 exists to answer, reachable from the manifest.
+    #[test]
+    fn a_version_that_wants_more_reports_the_widening() {
+        use crate::permission::{AppPermission, HostScope};
+
+        let mut manifest =
+            AppManifest::requested(AppId::parse("csv-comparator").unwrap(), "CSV comparator");
+
+        let mut modest = crate::Recipe {
+            runtime: "docker".to_owned(),
+            image: Some("python:3.12-slim".to_owned()),
+            entrypoint: vec!["python".to_owned()],
+            source: vec![("main.py".to_owned(), "aaa".to_owned())],
+            requests: Vec::new(),
+            limits: "cpu=500".to_owned(),
+        };
+        modest.normalise();
+        manifest.record_version(&modest, "generated");
+
+        let mut greedy = modest.clone();
+        greedy.requests = vec![AppPermission::outbound(HostScope::parse("*").unwrap())];
+        greedy.normalise();
+
+        let delta = manifest.record_version(&greedy, "regenerated");
+
+        assert!(delta.widens(), "a new network request must be visible");
+        assert_eq!(delta.added.len(), 1);
+    }
+
+    #[test]
+    fn a_manifest_with_versions_round_trips_through_yaml() {
+        let mut manifest =
+            AppManifest::requested(AppId::parse("csv-comparator").unwrap(), "CSV comparator");
+        let mut recipe = crate::Recipe {
+            runtime: "docker".to_owned(),
+            image: Some("python:3.12-slim".to_owned()),
+            entrypoint: vec!["python".to_owned()],
+            source: vec![("main.py".to_owned(), "aaa".to_owned())],
+            requests: Vec::new(),
+            limits: "cpu=500".to_owned(),
+        };
+        recipe.normalise();
+        manifest.record_version(&recipe, "generated");
+
+        let yaml = serde_norway::to_string(&manifest).unwrap();
+        let parsed: AppManifest = serde_norway::from_str(&yaml).unwrap();
+
+        assert_eq!(parsed.versions, manifest.versions);
+    }
     use super::*;
     use crate::permission::{FilesystemRule, PathScope};
     use crate::retention::RetentionPolicy;

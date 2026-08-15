@@ -222,6 +222,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "ephemeral-agent",
  "ephemeral-core",
  "ephemeral-runtime",
  "tempfile",

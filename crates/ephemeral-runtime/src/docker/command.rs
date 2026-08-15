@@ -82,6 +82,48 @@ pub fn run(spec: &ContainerSpec) -> Result<Vec<String>, RuntimeError> {
     Ok(args)
 }
 
+/// The arguments that run a container to completion and remove it.
+///
+/// The same confinement as [`run`], minus the parts that only make sense for
+/// something that keeps running: it does not detach, does not take a name, and
+/// removes itself when it exits. It reuses the same hardening and limit
+/// builders rather than restating them, deliberately — a control added to one
+/// path and forgotten on the other is exactly how a test ends up with more of
+/// the machine than the application it is testing.
+///
+/// # Errors
+///
+/// [`RuntimeError::CannotEnforce`] under the same conditions as [`run`].
+pub fn run_once(spec: &ContainerSpec) -> Result<Vec<String>, RuntimeError> {
+    let mut args = vec![
+        "run".to_owned(),
+        // No name and no detach: this is a container that finishes.
+        "--rm".to_owned(),
+        "--label".to_owned(),
+        format!("{MANAGED_LABEL}=true"),
+        "--label".to_owned(),
+        format!("{APP_LABEL}={}", spec.app),
+    ];
+
+    args.extend(hardening(spec));
+    args.extend(resource_limits(spec));
+    args.extend(network(spec)?);
+    args.extend(mounts(spec)?);
+
+    for name in &spec.environment_names {
+        args.push("--env".to_owned());
+        args.push(name.clone());
+    }
+
+    args.push("--workdir".to_owned());
+    args.push(spec.working_dir.clone());
+
+    args.push(spec.image.clone());
+    args.extend(spec.entrypoint.iter().cloned());
+
+    Ok(args)
+}
+
 /// The flags that hold, whatever the application was granted.
 ///
 /// None of these is derived from a permission, because none of them is
@@ -915,6 +957,48 @@ mod tests {
                 .iter()
                 .any(|arg| arg == &image_tag(&app(), "sha256-aaa"))
         );
+    }
+
+    /// A generated test is generated code. It must not get more of the machine
+    /// than the application it is testing.
+    #[test]
+    fn a_one_off_run_is_confined_exactly_as_a_started_one_is() {
+        let spec = spec_with(&[]);
+
+        let started = run(&spec).unwrap();
+        let once = run_once(&spec).unwrap();
+
+        for control in [
+            "--cap-drop=ALL",
+            "--security-opt=no-new-privileges",
+            "--read-only",
+        ] {
+            assert_flag(&started, control);
+            assert_flag(&once, control);
+        }
+
+        assert_pair(&once, "--network", "none");
+        assert_pair(&once, "--memory", "512m");
+        assert_pair(&once, "--pids-limit", "64");
+
+        // And the differences that should exist, and only those.
+        assert_flag(&once, "--rm");
+        assert!(!once.iter().any(|arg| arg == "--detach"), "{once:?}");
+        assert!(!once.iter().any(|arg| arg == "--name"), "{once:?}");
+    }
+
+    /// A one-off run refuses an unenforceable policy for the same reason a
+    /// long-running one does.
+    #[test]
+    fn a_one_off_run_refuses_what_it_cannot_enforce() {
+        let limited = spec_with(&[AppPermission::outbound(
+            HostScope::parse("api.example.com").unwrap(),
+        )]);
+
+        assert!(matches!(
+            run_once(&limited).unwrap_err(),
+            RuntimeError::CannotEnforce { .. }
+        ));
     }
 
     /// Output is requested as JSON rather than parsed out of human formatting,
