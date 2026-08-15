@@ -2,6 +2,9 @@ name: Release
 
 # Releases are cut from a tag, never from a branch. A build whose inputs cannot
 # be named afterwards is not something to hand somebody and call a release.
+#
+# `workflow_dispatch` builds everything and publishes nothing, which is how you
+# find out the pipeline works without cutting a release to discover it does not.
 on:
   push:
     tags: ["v*"]
@@ -12,12 +15,48 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
 
 jobs:
+  # A tag that disagrees with the version in the tree produces artifacts named
+  # after one release and tagged as another, and nobody notices until somebody
+  # downloads the wrong thing. Checked before anything is built, because the
+  # version is baked into every installer's filename and metadata.
+  version:
+    name: Tag matches the tree
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare
+        run: |
+          set -euo pipefail
+          crates=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          desktop=$(grep -m1 '"version"' apps/desktop/src-tauri/tauri.conf.json | cut -d'"' -f4)
+
+          echo "workspace: $crates"
+          echo "desktop:   $desktop"
+
+          if [ "$crates" != "$desktop" ]; then
+            echo "::error::The workspace is $crates and the desktop window is $desktop."
+            exit 1
+          fi
+
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            tagged="${GITHUB_REF_NAME#v}"
+            if [ "$tagged" != "$crates" ]; then
+              echo "::error::Tagged $GITHUB_REF_NAME but the tree says $crates."
+              exit 1
+            fi
+            echo "Tag $GITHUB_REF_NAME matches."
+          else
+            echo "Not a tag; nothing will be published."
+          fi
+
   # Nothing is published unless everything CI checks is true of the exact commit
   # being released. A release that skipped a check is a release nobody verified.
   verify:
     name: Verify
+    needs: version
     uses: ./.github/workflows/ci.yml
 
   cli:
@@ -29,9 +68,11 @@ jobs:
       matrix:
         include:
           - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-latest, target: aarch64-unknown-linux-gnu, linker: gcc-aarch64-linux-gnu }
           - { os: macos-latest, target: aarch64-apple-darwin }
           - { os: macos-latest, target: x86_64-apple-darwin }
           - { os: windows-latest, target: x86_64-pc-windows-msvc }
+          - { os: windows-latest, target: aarch64-pc-windows-msvc }
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
@@ -39,6 +80,18 @@ jobs:
           rustup show active-toolchain || rustup toolchain install
           rustup target add ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # Cross-compiling to ARM Linux needs a linker for it. Nothing else in the
+      # matrix does: every other pair is either native or handled by the
+      # platform's own toolchain.
+      - name: Install a cross linker
+        if: matrix.linker != ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.linker }}
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
 
       # `--locked` is the point of committing a lockfile. A release that
       # resolved a different dependency set than the one on record is exactly
@@ -46,17 +99,30 @@ jobs:
       - name: Build
         run: cargo build --release --locked -p ephemeral-cli --target ${{ matrix.target }}
 
+      # An archive rather than a bare binary: it carries the licence and the
+      # readme with the thing they apply to, and it is what every package
+      # manager and unpacking tool already expects.
       - name: Package
         shell: bash
         run: |
-          mkdir -p dist
-          name="ephemeral-${{ matrix.target }}"
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          [ "${GITHUB_REF_TYPE:-}" = "tag" ] || version="$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)"
+          stem="ephemeral-${version}-${{ matrix.target }}"
+
+          mkdir -p "staging/$stem" dist
+          cp LICENSE README.md "staging/$stem/"
+
           if [ "${{ runner.os }}" = "Windows" ]; then
-            cp "target/${{ matrix.target }}/release/ephemeral.exe" "dist/$name.exe"
+            cp "target/${{ matrix.target }}/release/ephemeral.exe" "staging/$stem/"
+            (cd staging && 7z a -tzip "../dist/$stem.zip" "$stem" >/dev/null)
           else
-            cp "target/${{ matrix.target }}/release/ephemeral" "dist/$name"
-            chmod +x "dist/$name"
+            cp "target/${{ matrix.target }}/release/ephemeral" "staging/$stem/"
+            chmod +x "staging/$stem/ephemeral"
+            tar -czf "dist/$stem.tar.gz" -C staging "$stem"
           fi
+
+          ls -la dist
 
       # A checksum somebody can compare against what they downloaded. Not a
       # signature: it says the file is intact, not who made it, and the two must
@@ -66,29 +132,58 @@ jobs:
         run: |
           cd dist
           if command -v sha256sum >/dev/null; then
-            sha256sum * > "SHA256SUMS-${{ matrix.target }}.txt"
+            sha256sum * > "SHA256SUMS-cli-${{ matrix.target }}.txt"
           else
-            shasum -a 256 * > "SHA256SUMS-${{ matrix.target }}.txt"
+            shasum -a 256 * > "SHA256SUMS-cli-${{ matrix.target }}.txt"
           fi
-          cat "SHA256SUMS-${{ matrix.target }}.txt"
+          cat "SHA256SUMS-cli-${{ matrix.target }}.txt"
 
       - uses: actions/upload-artifact@v4
         with:
           name: cli-${{ matrix.target }}
           path: dist/
+          if-no-files-found: error
 
   desktop:
-    name: Desktop (${{ matrix.os }})
+    name: Desktop (${{ matrix.name }})
     needs: verify
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-22.04
+            name: linux-x86_64
+            # Built on the oldest runner still supported, because a Linux binary
+            # links the glibc it was built against and cannot run on anything
+            # older. Building on the newest image is how a release ends up
+            # refusing to start on a distribution released last year.
+            targets: deb,rpm,appimage
+          - os: macos-latest
+            name: macos-universal
+            # One artifact for both Apple architectures. Two downloads that
+            # differ only by a word most people cannot check about their own
+            # machine is a way of handing somebody the wrong file.
+            rust: aarch64-apple-darwin,x86_64-apple-darwin
+            args: --target universal-apple-darwin
+            targets: dmg,app
+          - os: windows-latest
+            name: windows-x86_64
+            # Both, deliberately: MSI is what a managed Windows fleet installs
+            # without asking, NSIS is what a person double-clicks.
+            targets: msi,nsis
     steps:
       - uses: actions/checkout@v4
+
       - name: Install toolchain
-        run: rustup show active-toolchain || rustup toolchain install
+        shell: bash
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          if [ -n "${{ matrix.rust }}" ]; then
+            for target in $(echo "${{ matrix.rust }}" | tr ',' ' '); do
+              rustup target add "$target"
+            done
+          fi
 
       # Tauri needs a webview and its build dependencies, which is why the
       # desktop application is its own workspace and no other job needs any of
@@ -98,18 +193,79 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf \
-            build-essential curl wget file libxdo-dev libssl-dev
+            build-essential curl wget file libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev
 
-      - name: Build
-        run: cargo build --release --locked
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+          key: ${{ matrix.name }}
+
+      # `cargo build` produces a binary. An installer is a different thing, and
+      # this job exists to produce the second one — an earlier version of this
+      # workflow built the binary, uploaded an empty `bundle/` directory, and
+      # looked exactly like it was shipping installers.
+      - name: Install the Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Bundle
+        run: cargo tauri build --bundles ${{ matrix.targets }} ${{ matrix.args }}
         working-directory: apps/desktop/src-tauri
+
+      # Collected by extension rather than by name: bundle filenames are decided
+      # by each platform's packaging conventions, not by us, and a glob written
+      # against what we expected to be there is how the last version of this
+      # published nothing at all.
+      - name: Collect
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          root=apps/desktop/src-tauri/target
+
+          mapfile -t found < <(find "$root" -path '*/release/bundle/*' -type f \
+            \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \
+               -o -name '*.dmg' -o -name '*.msi' -o -name '*-setup.exe' \) -print)
+
+          if [ "${#found[@]}" -eq 0 ]; then
+            echo "::error::No installers were produced. Bundle tree:"
+            find "$root" -path '*/release/bundle/*' -maxdepth 6 | head -50
+            exit 1
+          fi
+
+          for file in "${found[@]}"; do
+            echo "  $(basename "$file")"
+            cp "$file" dist/
+          done
+
+          # The macOS .app is a directory, so it travels as an archive. Somebody
+          # who does not want a disk image still needs a way to get the window.
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            app=$(find "$root" -path '*/release/bundle/macos/*.app' -maxdepth 6 -type d | head -1)
+            if [ -n "$app" ]; then
+              tar -czf "dist/Ephemeral-macos-universal.app.tar.gz" \
+                -C "$(dirname "$app")" "$(basename "$app")"
+            fi
+          fi
+
+          ls -la dist
+
+      - name: Checksums
+        shell: bash
+        run: |
+          cd dist
+          if command -v sha256sum >/dev/null; then
+            sha256sum * > "SHA256SUMS-desktop-${{ matrix.name }}.txt"
+          else
+            shasum -a 256 * > "SHA256SUMS-desktop-${{ matrix.name }}.txt"
+          fi
+          cat "SHA256SUMS-desktop-${{ matrix.name }}.txt"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: desktop-${{ matrix.os }}
-          path: |
-            apps/desktop/src-tauri/target/release/ephemeral-desktop*
-            apps/desktop/src-tauri/target/release/bundle/
+          name: desktop-${{ matrix.name }}
+          path: dist/
+          if-no-files-found: error
 
   publish:
     name: Publish
@@ -117,16 +273,23 @@ jobs:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
 
+      # One checksum file for the whole release, rebuilt here from the artifacts
+      # actually being published. Per-job files can only vouch for what that job
+      # uploaded; this one vouches for what somebody can download.
       - name: Collect
         run: |
+          set -euo pipefail
           mkdir -p release
-          find artifacts -type f \( -name 'ephemeral-*' -o -name 'SHA256SUMS*' \) \
-            -exec cp {} release/ \;
-          ls -la release
+          find artifacts -type f ! -name 'SHA256SUMS*' -exec cp {} release/ \;
+          cd release
+          sha256sum * > SHA256SUMS.txt
+          echo
+          cat SHA256SUMS.txt
 
       - uses: softprops/action-gh-release@v2
         with:
@@ -136,8 +299,4 @@ jobs:
           # automatically would mean the first person to see a broken artifact
           # is whoever downloaded it.
           draft: true
-          body: |
-            Verify what you downloaded against `SHA256SUMS-<target>.txt`.
-
-            A checksum says the file is intact. It does not say who built it —
-            those are different claims and Ephemeral does not conflate them.
+          body_path: .github/RELEASE_BODY.md
