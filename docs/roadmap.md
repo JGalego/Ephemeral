@@ -128,12 +128,28 @@ terminal.
 | | |
 |---|---|
 | Tests on Linux, macOS and Windows on every commit | ✅ |
-| Release workflow: CLI for four targets, desktop for three, checksums, draft releases | ✅ |
+| CLI archives for six targets, including ARM Linux and ARM Windows | ✅ |
+| Desktop installers: `.deb`, `.rpm`, AppImage, a universal `.dmg`, NSIS and MSI | ✅ |
+| Checksums over the published artifacts, and draft releases | ✅ |
 | Signing and notarisation, which need credentials this repository must never hold | |
 | Mobile, which needs the control plane in [ADR-0007](architecture/decisions/0007-mobile-control-plane.md) | |
 
 **Done when:** somebody can download and run Ephemeral on their own machine
 without building it.
+
+The first version of this row said the release workflow was done. It had never
+been run: releases are cut from tags, no tag had been cut, and the workflow
+called CI as a reusable workflow that had never declared itself reusable, built
+binaries where it claimed to build installers, and depended on two icon formats
+that did not exist. Running it is what made any of that visible — the same
+lesson as filming the window, in a different medium.
+
+**Signing is the remaining gap, and it is not a small one.** Until these builds
+are signed, macOS refuses to open the application and Windows warns before
+running the installer. Both are correct to. It needs an Apple Developer account
+and a Windows code-signing certificate — paid identities belonging to a person
+or an organisation, not to a repository — after which the keys live in
+repository secrets and never in the tree.
 
 ### Phase 6 — Hardening
 
