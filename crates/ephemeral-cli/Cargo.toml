@@ -18,6 +18,7 @@ ephemeral-core.workspace = true
 ephemeral-runtime.workspace = true
 ephemeral-agent.workspace = true
 serde_norway.workspace = true
+ephemeral-provider-anthropic.workspace = true
 
 anyhow.workspace = true
 chrono.workspace = true

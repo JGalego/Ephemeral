@@ -13,7 +13,7 @@ honest record of where that line currently sits.
 | | |
 |---|---|
 | Repository, licence, contribution guide, security policy | ✅ |
-| [ARCHITECTURE.md](../ARCHITECTURE.md) and fifteen [ADRs](architecture/decisions/) | ✅ |
+| [ARCHITECTURE.md](../ARCHITECTURE.md) and sixteen [ADRs](architecture/decisions/) | ✅ |
 | CI: format, lint, docs, tests on Linux/macOS/Windows, supply chain | ✅ |
 | One-command development bootstrap | ✅ |
 | `ephemeral-core`: identity, actors, errors | ✅ |
@@ -85,11 +85,13 @@ Done so far:
 | `ephemeral review` — the permission prompt, finally reachable | ✅ |
 | Regenerating, with a widening update's grants withdrawn rather than inherited | ✅ |
 
+| A real provider (`--provider anthropic`), behind the same trait | ✅ |
+
 Still to do:
 
 | | |
 |---|---|
-| A real provider, behind the same trait | |
+| A local provider, which is the only real answer to "the intent leaves the machine" | |
 | Rolling back to a version that worked | |
 
 **Done when:** the CSV comparator can be built from a natural-language request
@@ -176,13 +178,14 @@ is accepted.
 Two remaining pieces need something this repository does not have, and saying so
 is better than shipping a plausible-looking version of either.
 
-**A real model provider** needs a credential and network access, and
-[ADR-0008](architecture/decisions/0008-agent-provider-abstraction.md) says CI
-never makes a live model call. The `AgentProvider` trait is the whole interface
-one needs; an implementation is roughly an HTTP client, a prompt, and schema
-validation on the way back. What it must *not* do is weaken the rule that model
-output is a validated proposal — `AgentError::Unreadable` rather than a
-best-effort guess.
+**A provider's transport cannot be tested here**, because doing so needs a
+credential and a live call, which
+[ADR-0008](architecture/decisions/0008-agent-provider-abstraction.md) forbids CI
+from making. `ephemeral-provider-anthropic` is built so that this costs as
+little as possible: prompts, request bodies, response parsing, capability
+translation and error mapping are pure and tested, and the untested part is one
+module that hands a string to `curl`. CI guards that split rather than trusting
+it.
 
 **The desktop application** ([ADR-0002](architecture/decisions/0002-rust-core-with-platform-shells.md)
 chose Tauri v2) needs a machine with a display to build and look at. Writing one

@@ -103,6 +103,7 @@ delete or purge it.
 ```console
 $ ephemeral create "compare these two CSV files and show me what's different"
 $ ephemeral generate <app>          # plan, write, build, test — bounded and cancellable
+                                    # --provider mock (no credential) or anthropic
 $ ephemeral review <app>            # decide what it may do, one question at a time
 $ ephemeral run <app>
 $ ephemeral publish <app> ./my-app  # an ordinary directory; git init and push
@@ -110,10 +111,10 @@ $ ephemeral publish <app> ./my-app  # an ordinary directory; git init and push
 
 **What you cannot do yet.**
 
-- **Use a real model.** Only the deterministic `mock` provider exists. It
-  produces a genuine, working CSV comparator without a credential, a network
-  connection or a bill, and it is what CI runs against — but it is a fixture,
-  not a model. Real providers are the rest of Phase 2.
+- **Run a model locally.** `--provider anthropic` works with an
+  `ANTHROPIC_API_KEY`, and `--provider mock` produces a genuine working CSV
+  comparator with no credential at all. What does not exist is an offline
+  provider, which is the only real answer to "my intent leaves the machine".
 - **Open a window.** There is no desktop application yet; the CLI is the whole
   interface, and both are clients of the same core.
 - **Give an application a scoped list of hosts it may reach.** Docker cannot

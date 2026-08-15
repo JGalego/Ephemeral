@@ -45,6 +45,17 @@ step "The whole journey, sentence to running application"
 cargo test -p ephemeral-agent --test journey
 cargo test -p ephemeral-agent --test reference_app -- --nocapture
 
+step "Providers reach the network only through curl"
+if grep -rniE 'reqwest|hyper|ureq|tokio' crates/ephemeral-provider-anthropic/Cargo.toml; then
+  echo "An HTTP stack appeared in a provider crate (ADR-0016)."
+  exit 1
+fi
+if grep -rn 'process::Command' crates/ephemeral-provider-anthropic/src --include='*.rs' \
+     | grep -v 'transport.rs'; then
+  echo "A provider spawns a process outside its transport module."
+  exit 1
+fi
+
 step "Generation uses no network client"
 if grep -rniE 'reqwest|hyper|ureq|api\.anthropic|api\.openai' \
      crates/ephemeral-agent/src crates/ephemeral-agent/Cargo.toml; then

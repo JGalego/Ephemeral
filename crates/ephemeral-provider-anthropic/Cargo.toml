@@ -1,0 +1,20 @@
+[package]
+name = "ephemeral-provider-anthropic"
+description = "Ephemeral's Anthropic provider. Prompt construction and response parsing are pure; the transport is curl."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+[dependencies]
+ephemeral-agent.workspace = true
+ephemeral-core.workspace = true
+
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

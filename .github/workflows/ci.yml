@@ -127,6 +127,22 @@ jobs:
             exit 1
           fi
           echo "No network client in the agent crate."
+      - run: cargo test -p ephemeral-provider-anthropic
+      - name: A real provider reaches the network only through curl
+        run: |
+          if grep -rniE 'reqwest|hyper|ureq|tokio' \
+               crates/ephemeral-provider-anthropic/Cargo.toml; then
+            echo "An HTTP stack appeared in a provider crate (ADR-0016)."
+            exit 1
+          fi
+          # Everything outside transport.rs must be pure: no process spawning.
+          if grep -rn 'process::Command' crates/ephemeral-provider-anthropic/src \
+               --include='*.rs' | grep -v 'transport.rs'; then
+            echo "A provider spawns a process outside its transport module."
+            echo "The untested surface is meant to stay in one small place."
+            exit 1
+          fi
+          echo "Provider transport is confined to curl, in one module."
 
   supply-chain:
     name: Supply chain
