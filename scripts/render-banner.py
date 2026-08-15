@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Render the animated banner at docs/assets/banner.gif.
 
-Bubbles nucleate in pairs out of nothing, drift apart, come back together and
-annihilate — the way virtual particles do in a vacuum. It is a joke about
+Bubbles nucleate in pairs out of nothing, drift apart, hold for a moment and
+then burst — the way virtual particles do in a vacuum. It is a joke about
 quantum field theory that happens to be the product thesis: software appears
 when it is needed and is gone when it is not.
 
@@ -31,13 +31,19 @@ from PIL import Image
 # --- what the banner looks like ---------------------------------------------
 
 WIDTH, HEIGHT = 1000, 200
-FRAMES = 40
-FRAME_MS = 70
+FRAMES = 56
+FRAME_MS = 90  # ~5s a loop: slow enough to watch one bubble live and die
 SUPERSAMPLE = 2  # rendered large and downscaled, for edges that are not jagged
 SEED = 0xB0BB1E
 
-PAIR_COUNT = 32
-FOAM_COUNT = 60
+PAIR_COUNT = 15
+FOAM_COUNT = 34
+
+# How a bubble spends its life: it inflates, holds at full size for most of it,
+# then bursts. The hold is what makes the burst read as an event rather than as
+# a shrink.
+INFLATE = 0.16
+BURST = 0.13
 
 BACKGROUND_TOP = (8, 9, 18)
 BACKGROUND_BOTTOM = (17, 19, 38)
@@ -55,20 +61,16 @@ IRIDESCENCE = [
 
 @dataclass
 class Bubble:
-    """A particle–antiparticle pair: born together, gone together.
-
-    A pair with `separation` of zero is a single bubble — the quantum foam,
-    too small and too brief for the parting to be visible.
-    """
+    """One half of a pair, or a single speck of foam."""
 
     birth: float       # frame it nucleates on
     lifetime: float    # how many frames it lasts
-    x: float           # where, in supersampled pixels
+    x: float           # where the pair is born, in supersampled pixels
     y: float
-    radius: float      # peak radius
-    separation: float  # how far the two halves drift apart before rejoining
-    angle: float       # the axis they separate along
-    drift: float       # how far the pair rises over its life
+    radius: float      # size once inflated
+    separation: float  # how far this half travels from the birth point
+    angle: float       # the direction it travels in
+    drift: float       # how far it rises over its life
     hue: float         # where it sits in the iridescent cycle
 
 
@@ -77,6 +79,11 @@ def iridescent(t: np.ndarray) -> np.ndarray:
     stops = np.array([s[0] for s in IRIDESCENCE])
     channels = [np.interp(t, stops, [s[1][c] for s in IRIDESCENCE]) for c in range(3)]
     return np.stack(channels, axis=-1) / 255.0
+
+
+def ease_out(u: float) -> float:
+    """Fast at first, settling gently — how a bubble actually inflates."""
+    return 1.0 - (1.0 - u) ** 3
 
 
 def background(width: int, height: int) -> np.ndarray:
@@ -94,6 +101,19 @@ def background(width: int, height: int) -> np.ndarray:
     return canvas * vignette[..., None]
 
 
+def _window(canvas: np.ndarray, cx: float, cy: float, reach: float):
+    """The clipped region a shape can touch, and its local coordinates."""
+    height, width, _ = canvas.shape
+    x0, x1 = max(0, int(cx - reach)), min(width, int(cx + reach) + 1)
+    y0, y1 = max(0, int(cy - reach)), min(height, int(cy + reach) + 1)
+    if x0 >= x1 or y0 >= y1:
+        return None
+
+    ys = np.arange(y0, y1)[:, None] - cy
+    xs = np.arange(x0, x1)[None, :] - cx
+    return (x0, x1, y0, y1), xs, ys
+
+
 def add_bubble(
     canvas: np.ndarray,
     cx: float,
@@ -102,19 +122,15 @@ def add_bubble(
     intensity: float,
     hue: float,
 ) -> None:
-    """Composite one bubble additively, so overlaps glow like real films do."""
+    """An intact bubble, composited additively so overlaps glow like real films."""
     if radius < 0.6 or intensity <= 0.002:
         return
 
-    height, width, _ = canvas.shape
-    pad = radius * 1.5 + 4
-    x0, x1 = max(0, int(cx - pad)), min(width, int(cx + pad) + 1)
-    y0, y1 = max(0, int(cy - pad)), min(height, int(cy + pad) + 1)
-    if x0 >= x1 or y0 >= y1:
+    window = _window(canvas, cx, cy, radius * 1.5 + 4)
+    if window is None:
         return
+    (x0, x1, y0, y1), xs, ys = window
 
-    ys = np.arange(y0, y1)[:, None] - cy
-    xs = np.arange(x0, x1)[None, :] - cx
     distance = np.hypot(xs, ys)
 
     # The rim: brightest where the film is edge-on to the viewer.
@@ -128,11 +144,8 @@ def add_bubble(
         inside, 0.24 + 0.76 * np.clip(distance / max(radius, 1e-6), 0, 1) ** 2.4, 0.0
     )
 
-    # Iridescence varies around the circumference and across the film.
     angle = np.arctan2(ys, xs) / (2 * math.pi)
-    shift = (angle + hue + 0.22 * (distance / max(radius, 1e-6))) % 1.0
-    colour = iridescent(shift)
-
+    colour = iridescent((angle + hue + 0.22 * (distance / max(radius, 1e-6))) % 1.0)
     alpha = (rim * 0.95 + interior * 0.20) * intensity
 
     # The specular highlight, up and to the left, as on every drawn bubble since
@@ -153,83 +166,149 @@ def add_bubble(
     patch += highlight[..., None]
 
 
-def add_annihilation(
-    canvas: np.ndarray, cx: float, cy: float, radius: float, progress: float
+def add_burst(
+    canvas: np.ndarray,
+    cx: float,
+    cy: float,
+    radius: float,
+    progress: float,
+    hue: float,
 ) -> None:
-    """The flash left behind when a pair cancels out."""
-    if not 0.0 <= progress <= 1.0:
-        return
+    """A bubble mid-rupture.
 
-    height, width, _ = canvas.shape
-    ring = radius * (0.5 + 1.7 * progress)
-    fade = (1.0 - progress) ** 2 * 0.5
-
-    pad = ring * 1.4 + 4
-    x0, x1 = max(0, int(cx - pad)), min(width, int(cx + pad) + 1)
-    y0, y1 = max(0, int(cy - pad)), min(height, int(cy + pad) + 1)
-    if x0 >= x1 or y0 >= y1:
-        return
-
-    ys = np.arange(y0, y1)[:, None] - cy
-    xs = np.arange(x0, x1)[None, :] - cx
-    distance = np.hypot(xs, ys)
-
-    thickness = max(1.6, ring * 0.16)
-    shell = np.exp(-(((distance - ring) / thickness) ** 2)) * fade
-    colour = np.array([0.95, 0.85, 1.0])
-
-    canvas[y0:y1, x0:x1] += colour[None, None, :] * shell[..., None]
-
-
-def stratified(rng: np.random.Generator, count: int) -> np.ndarray:
-    """`count` jittered samples spread evenly over [0, 1).
-
-    Uniform random sampling clumps: it leaves visible holes in the field and
-    moments where the whole banner is empty. Stratifying keeps the density even
-    in both space and time while still looking unplanned.
+    The film does not shrink — it gives way. The rim springs outward, tears into
+    arcs that widen into gaps, and the fragments fly off and fade. That reading
+    depends on the ring *growing* while it breaks up: a ring that contracts looks
+    like a bubble being deflated by somebody.
     """
-    edges = np.arange(count) / count
-    return (edges + rng.uniform(0, 1 / count, count)) % 1.0
+    if radius < 0.6 or not 0.0 <= progress <= 1.0:
+        return
+
+    ring = radius * (1.0 + 0.55 * ease_out(progress))
+    fade = (1.0 - progress) ** 1.7
+
+    window = _window(canvas, cx, cy, ring * 2.1 + 6)
+    if window is None:
+        return
+    (x0, x1, y0, y1), xs, ys = window
+
+    distance = np.hypot(xs, ys)
+    angle = np.arctan2(ys, xs)
+
+    # The film thins as it stretches.
+    thickness = max(1.2, radius * 0.085) * (1.0 + 2.4 * progress)
+    shell = np.exp(-(((distance - ring) / thickness) ** 2))
+
+    # Tear the ring into arcs. At the moment of rupture the ring is still whole;
+    # the gaps open from there, so the eye sees it come apart rather than blink
+    # out.
+    lobes = 7
+    seam = 0.5 + 0.5 * np.cos(lobes * angle + hue * 2 * math.pi)
+    torn = np.clip(1.0 - progress * 1.9 * (1.0 - seam), 0.0, 1.0)
+
+    colour = iridescent((angle / (2 * math.pi) + hue) % 1.0)
+    patch = canvas[y0:y1, x0:x1]
+    patch += colour * (shell * torn * fade * 1.15)[..., None]
+
+    # Droplets thrown clear of the rupture.
+    droplets = 6
+    grid_x = np.arange(x0, x1)[None, :]
+    grid_y = np.arange(y0, y1)[:, None]
+    for index in range(droplets):
+        theta = 2 * math.pi * (index / droplets + hue)
+        travel = ring * (1.0 + 0.8 * progress)
+        size = max(radius * 0.06, 0.9)
+        spark = np.exp(
+            -(
+                (grid_x - (cx + math.cos(theta) * travel)) ** 2
+                + (grid_y - (cy + math.sin(theta) * travel)) ** 2
+            )
+            / (2 * size**2)
+        )
+        patch += colour * (spark * fade * 0.45)[..., None]
+
+
+def spread(
+    rng: np.random.Generator, count: int, width: int, height: int
+) -> list[tuple[float, float, float]]:
+    """Positions and birth times that do not clump.
+
+    Uniform random sampling puts bubbles on top of each other and leaves holes
+    elsewhere. This picks each new point from a handful of candidates and keeps
+    whichever sits furthest from everything already placed — in space *and* in
+    time, so two bubbles may share a spot as long as they are not there at the
+    same moment.
+    """
+    points: list[tuple[float, float, float]] = []
+
+    def separation(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
+        dx = (a[0] - b[0]) / width
+        dy = (a[1] - b[1]) / width  # by width in both axes, to respect the aspect
+        dt = abs(a[2] - b[2])
+        dt = min(dt, FRAMES - dt) / FRAMES  # the loop wraps, so time is cyclic
+        return math.sqrt(dx * dx + dy * dy + (dt * 1.5) ** 2)
+
+    for _ in range(count):
+        best: tuple[float, float, float] | None = None
+        best_distance = -1.0
+        for _ in range(16):
+            candidate = (
+                float(rng.uniform(0.05, 0.95)) * width,
+                float(rng.uniform(0.16, 0.84)) * height,
+                float(rng.uniform(0, FRAMES)),
+            )
+            if not points:
+                best = candidate
+                break
+            nearest = min(separation(candidate, other) for other in points)
+            if nearest > best_distance:
+                best_distance, best = nearest, candidate
+        if best is not None:
+            points.append(best)
+
+    return points
 
 
 def make_population(rng: np.random.Generator, width: int, height: int) -> list[Bubble]:
     """Pairs scattered across the banner and across the loop, plus the foam."""
     population: list[Bubble] = []
 
-    pair_x = stratified(rng, PAIR_COUNT)
-    pair_birth = stratified(rng, PAIR_COUNT) * FRAMES
-    rng.shuffle(pair_birth)
+    for x, y, birth in spread(rng, PAIR_COUNT, width, height):
+        radius = float(rng.uniform(10, 26)) * SUPERSAMPLE
+        lifetime = float(rng.uniform(24, 40))
+        angle = float(rng.uniform(0, 2 * math.pi))
+        hue = float(rng.uniform(0, 1))
+        drift = float(rng.uniform(4, 12)) * SUPERSAMPLE
+        travel = float(rng.uniform(2.6, 4.2))
 
-    for index in range(PAIR_COUNT):
-        radius = float(rng.uniform(8, 30)) * SUPERSAMPLE
-        population.append(
-            Bubble(
-                birth=float(pair_birth[index]),
-                lifetime=float(rng.uniform(11, 24)),
-                x=float(0.02 + 0.96 * pair_x[index]) * width,
-                y=float(rng.uniform(0.08, 0.94)) * height,
-                radius=radius,
-                separation=radius * float(rng.uniform(2.0, 3.4)),
-                angle=float(rng.uniform(0, 2 * math.pi)),
-                drift=float(rng.uniform(3, 14)) * SUPERSAMPLE,
-                hue=float(rng.uniform(0, 1)),
+        # The two halves are born at the same point and burst at the same
+        # instant, but they travel apart and stay apart. Letting them converge
+        # again just puts two bubbles on top of each other.
+        for direction, size, tint in ((1.0, 1.0, hue), (-1.0, 0.86, (hue + 0.5) % 1.0)):
+            population.append(
+                Bubble(
+                    birth=birth,
+                    lifetime=lifetime,
+                    x=x,
+                    y=y,
+                    radius=radius * size,
+                    separation=direction * radius * travel,
+                    angle=angle,
+                    drift=drift,
+                    hue=tint,
+                )
             )
-        )
 
     # Quantum foam: the small stuff, blinking in and out below the scale at
     # which anything interesting happens.
-    foam_x = stratified(rng, FOAM_COUNT)
-    foam_birth = stratified(rng, FOAM_COUNT) * FRAMES
-    rng.shuffle(foam_birth)
-
-    for index in range(FOAM_COUNT):
+    for x, y, birth in spread(rng, FOAM_COUNT, width, height):
         population.append(
             Bubble(
-                birth=float(foam_birth[index]),
-                lifetime=float(rng.uniform(4, 11)),
-                x=float(foam_x[index]) * width,
-                y=float(rng.uniform(0, 1)) * height,
-                radius=float(rng.uniform(1.2, 3.4)) * SUPERSAMPLE,
+                birth=birth,
+                lifetime=float(rng.uniform(10, 20)),
+                x=x,
+                y=y,
+                radius=float(rng.uniform(1.4, 3.6)) * SUPERSAMPLE,
                 separation=0.0,
                 angle=0.0,
                 drift=float(rng.uniform(1, 5)) * SUPERSAMPLE,
@@ -255,37 +334,40 @@ def render() -> list[Image.Image]:
             # Ages wrap around the loop, so the animation has no seam.
             age = (frame - bubble.birth) % FRAMES
             if age >= bubble.lifetime:
-                # Just after annihilation, leave the flash behind.
-                since = age - bubble.lifetime
-                if since < 4:
-                    add_annihilation(
-                        canvas, bubble.x, bubble.y - bubble.drift, bubble.radius, since / 4
-                    )
                 continue
 
             progress = age / bubble.lifetime
-            envelope = math.sin(math.pi * progress)
-            radius = bubble.radius * envelope
-            intensity = envelope**0.65
 
-            cy = bubble.y - bubble.drift * progress
-            if bubble.separation == 0.0:
-                add_bubble(canvas, bubble.x, cy, radius, intensity * 0.8, bubble.hue)
-                continue
-
-            # The two halves part, then come back together to cancel.
-            offset = bubble.separation * 0.5 * math.sin(math.pi * progress)
-            dx = math.cos(bubble.angle) * offset
-            dy = math.sin(bubble.angle) * offset * 0.55
-            add_bubble(canvas, bubble.x + dx, cy + dy, radius, intensity, bubble.hue)
-            add_bubble(
-                canvas,
-                bubble.x - dx,
-                cy - dy,
-                radius * 0.82,
-                intensity,
-                (bubble.hue + 0.5) % 1.0,
+            # Travel outward from the birth point and settle there, rather than
+            # returning to it. The pair starts already partly apart, so the two
+            # halves inflate side by side instead of on top of each other.
+            offset = bubble.separation * (
+                0.34 + 0.66 * ease_out(min(progress / 0.7, 1.0))
             )
+            cx = bubble.x + math.cos(bubble.angle) * offset
+            cy = bubble.y + math.sin(bubble.angle) * offset * 0.55
+            cy -= bubble.drift * progress
+
+            if progress < INFLATE:
+                u = progress / INFLATE
+                add_bubble(
+                    canvas, cx, cy, bubble.radius * ease_out(u), math.sqrt(u), bubble.hue
+                )
+            elif progress < 1.0 - BURST:
+                # Held at full size, with the faint wobble of a real film.
+                wobble = 1.0 + 0.02 * math.sin(
+                    2 * math.pi * (progress * 1.5 + bubble.hue)
+                )
+                add_bubble(canvas, cx, cy, bubble.radius * wobble, 1.0, bubble.hue)
+            else:
+                add_burst(
+                    canvas,
+                    cx,
+                    cy,
+                    bubble.radius,
+                    (progress - (1.0 - BURST)) / BURST,
+                    bubble.hue,
+                )
 
         pixels = np.clip(canvas, 0.0, 1.0)
         image = Image.fromarray((pixels * 255).astype(np.uint8), mode="RGB")
