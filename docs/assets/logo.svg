@@ -1,11 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="Ephemeral">
   <title>Ephemeral</title>
-  <desc>Three bubbles in sequence: one whole, one rupturing, one already gone.</desc>
+  <desc>One bubble's life in three stages: whole, breaking up, and gone — leaving only the traces of where it went.</desc>
 
   <defs>
     <!-- Soap film is mostly transparent: the colour gathers at the edge, where
-         you are looking through the most of it. Keeping the middle nearly clear
-         is what stops a bubble reading as a solid ball. -->
+         you look through the most of it. A clear middle is what stops a bubble
+         reading as a solid ball. -->
     <radialGradient id="film" cx="36%" cy="30%" r="80%">
       <stop offset="0%"   stop-color="#a5b4fc" stop-opacity="0.10" />
       <stop offset="55%"  stop-color="#5eead4" stop-opacity="0.08" />
@@ -20,8 +20,9 @@
       <stop offset="100%" stop-color="#f0abfc" stop-opacity="0.95" />
     </linearGradient>
 
-    <!-- A film that has torn: still bright where it holds, gone where it does not. -->
-    <linearGradient id="tearing" x1="10%" y1="100%" x2="90%" y2="0%">
+    <!-- A rim that is coming apart: still bright where it holds, fading away
+         where it has already let go. -->
+    <linearGradient id="breaking" x1="8%" y1="100%" x2="92%" y2="0%">
       <stop offset="0%"   stop-color="#7dd3fc" stop-opacity="0.95" />
       <stop offset="55%"  stop-color="#c4b5fd" stop-opacity="0.8" />
       <stop offset="100%" stop-color="#f0abfc" stop-opacity="0.55" />
@@ -35,40 +36,31 @@
     </radialGradient>
   </defs>
 
-  <!-- 1. Whole. The film holds, and you can see straight through it. -->
-  <circle cx="92" cy="140" r="62" fill="url(#film)" />
-  <circle cx="92" cy="140" r="62" fill="none" stroke="url(#rim)" stroke-width="3" />
-  <ellipse cx="68" cy="113" rx="20" ry="13" fill="url(#glint)" transform="rotate(-34 68 113)" />
-  <circle cx="115" cy="107" r="3.4" fill="#ffffff" opacity="0.52" />
+  <!-- 1. Whole. The film holds, and you see straight through it. -->
+  <circle cx="88" cy="140" r="60" fill="url(#film)" />
+  <circle cx="88" cy="140" r="60" fill="none" stroke="url(#rim)" stroke-width="3" />
+  <ellipse cx="65" cy="114" rx="19" ry="12.5" fill="url(#glint)" transform="rotate(-34 65 114)" />
+  <circle cx="110" cy="108" r="3.2" fill="#ffffff" opacity="0.5" />
 
-  <!-- 2. Rupturing. The rim has sprung outward and torn into uneven arcs; what
-       is left of the film is already going, and the first droplets are clear. -->
-  <g transform="rotate(-20 182 72)">
-    <circle cx="182" cy="72" r="34" fill="url(#film)" opacity="0.16" />
-    <circle cx="182" cy="72" r="37" fill="none" stroke="url(#tearing)" stroke-width="3"
-            stroke-linecap="round" stroke-dasharray="44 16 25 12 36 20 29 14" />
-  </g>
-  <circle cx="232" cy="44" r="2.5" fill="#f0abfc" opacity="0.8" />
-  <circle cx="228" cy="102" r="2" fill="#7dd3fc" opacity="0.7" />
-  <circle cx="141" cy="40" r="1.8" fill="#c4b5fd" opacity="0.6" />
-  <circle cx="188" cy="20" r="1.4" fill="#5eead4" opacity="0.55" />
+  <!-- 2. Mid-pop. The film is gone and only the rim is left, already coming
+       apart. The dashes are deliberately uneven — an evenly dotted circle reads
+       as a UI border, not as something failing. -->
+  <circle cx="186" cy="72" r="36" fill="none" stroke="url(#breaking)" stroke-width="3"
+          stroke-linecap="round" stroke-dasharray="31 12 17 9 26 15 21 10"
+          transform="rotate(-24 186 72)" />
 
-  <!-- 3. Gone. Spray alone says nothing — it could be dust. What says "there
-       was a bubble here" is that the last shards of film all still lie on one
-       circle, far enough apart for the eye to finish the curve itself, with the
-       droplets flying outward from that same centre. -->
-  <g fill="none" stroke-linecap="round" stroke-width="2.6">
-    <path d="M 173.8 179.7 A 30 30 0 0 1 187.9 163.5" stroke="#c4b5fd" opacity="0.62" />
-    <path d="M 217.0 164.0 A 30 30 0 0 1 228.5 175.9" stroke="#f0abfc" opacity="0.55" />
-    <path d="M 229.8 201.2 A 30 30 0 0 1 219.6 214.3" stroke="#7dd3fc" opacity="0.5" />
-    <path d="M 190.8 217.8 A 30 30 0 0 1 180.4 210.8" stroke="#5eead4" opacity="0.45" />
+  <!-- 3. Popped. Only the traces of where it went. They all point away from one
+       centre, and that shared centre is what says a bubble was here rather than
+       a scribble — the eye reconstructs the bubble from the way they radiate. -->
+  <g fill="none" stroke-linecap="round">
+    <path d="M 204.8 192.4 L 222.7 194.9" stroke="#f0abfc" stroke-width="2.6" opacity="0.8" />
+    <path d="M 198.9 201.7 L 209.1 212.7" stroke="#c4b5fd" stroke-width="2.4" opacity="0.7" />
+    <path d="M 188.6 208 L 189.3 227"     stroke="#7dd3fc" stroke-width="2.6" opacity="0.75" />
+    <path d="M 178.5 204.1 L 170.7 215.7" stroke="#5eead4" stroke-width="2.2" opacity="0.6" />
+    <path d="M 169.8 195.6 L 153.6 200.5" stroke="#a5b4fc" stroke-width="2.5" opacity="0.7" />
+    <path d="M 173.1 184.3 L 157.2 178.2" stroke="#c4b5fd" stroke-width="2.3" opacity="0.62" />
+    <path d="M 180 175 L 172 160"         stroke="#7dd3fc" stroke-width="2.4" opacity="0.66" />
+    <path d="M 192.7 172.6 L 197.8 153.3" stroke="#f0abfc" stroke-width="2.6" opacity="0.72" />
+    <path d="M 200.6 180.2 L 213.2 170.3" stroke="#5eead4" stroke-width="2.2" opacity="0.58" />
   </g>
-  <circle cx="158.7" cy="182.4" r="2.4" fill="#c4b5fd" opacity="0.7" />
-  <circle cx="194.4" cy="146.7" r="2.1" fill="#f0abfc" opacity="0.66" />
-  <circle cx="235.7" cy="161.7" r="2.2" fill="#7dd3fc" opacity="0.62" />
-  <circle cx="245.3" cy="197.6" r="1.7" fill="#5eead4" opacity="0.55" />
-  <circle cx="213.4" cy="232.5" r="1.9" fill="#f0abfc" opacity="0.58" />
-  <circle cx="163.9" cy="212.0" r="1.5" fill="#c4b5fd" opacity="0.5" />
-  <circle cx="249.0" cy="172.9" r="1.2" fill="#c4b5fd" opacity="0.44" />
-  <circle cx="193.0" cy="241.2" r="1.2" fill="#7dd3fc" opacity="0.42" />
 </svg>
