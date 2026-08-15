@@ -114,9 +114,11 @@ The other direction — an application whose record says it is running when its
 container has crashed, exited or gone unhealthy — is `ephemeral status` for one
 application, and `ephemeral watch` for all of them continuously.
 
-`watch` is also the only thing that can enforce a wall-clock limit, because a
-limit is a promise about *elapsed* time and nothing else in a one-shot CLI is
-around to notice it elapse. It runs in the foreground and stops with Ctrl-C —
+`watch` is also the only thing that can enforce a wall-clock or disk limit,
+because both are promises about what happens *over time*, and nothing else in a
+one-shot CLI is around to watch it pass. Disk is measured over the application's
+own data directory rather than asked of Docker, since that directory is a host
+bind mount and is the thing that actually grows. It runs in the foreground and stops with Ctrl-C —
 deliberately the least commitment available, since nothing about it decides
 whether Ephemeral eventually has a background service, and a desktop shell can
 host the same sweep unchanged.

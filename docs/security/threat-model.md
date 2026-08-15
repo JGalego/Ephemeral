@@ -157,12 +157,17 @@ assumption that nothing survives.
 | | |
 |---|---|
 | **Mitigation** | CPU, memory (with swap pinned equal, so the ceiling cannot be evaded), process count, and a wall-clock limit enforced by `ephemeral watch`. Generation is bounded on repairs, wall clock and spend |
-| **Status** | ⚠️ Container limits ✅; the wall-clock limit needs `ephemeral watch` to be running, and nothing starts it automatically |
-| **Residual risk** | Disk. The per-application storage ceiling is declared and not enforced |
+| **Status** | ⚠️ Container limits ✅; wall-clock and disk ceilings are enforced by `ephemeral watch`, and nothing starts it automatically |
+| **Residual risk** | Both time and disk go unenforced whenever nothing is watching |
 
-**Not mitigated:** an application that fills its data directory. `storage_mib`
-is in every manifest and nothing applies it. Recorded rather than quietly
-dropped.
+**Partially mitigated:** the disk ceiling is measured over the application's own
+data directory rather than asked of Docker, because that directory is a host
+bind mount and is the thing that actually grows. The walk is bounded, and it
+under-reports rather than hangs — erring towards leaving an application running.
+
+**Not mitigated:** an application that fills its disk between sweeps, or while
+`ephemeral watch` is not running. A background supervisor would close this; the
+hosting decision it needs has not been made.
 
 ### T9 — Network egress from generated code
 
@@ -228,7 +233,8 @@ get missed.
    delete the same logs.
 5. **A hosted provider learning the user's intent.** Inherent; the answer is a
    local model, not a promise.
-6. **Disk exhaustion.** Declared in every manifest, enforced nowhere.
+6. **Disk and time ceilings when nothing is watching.** Both are enforced by
+   `ephemeral watch`, and nothing starts it for you.
 7. **Malicious dependencies of generated code.** Confined, not vetted.
 8. **Anything at all, once `NativeRuntime` exists.** It does not exist, and
    [ADR-0015](../architecture/decisions/0015-defer-the-native-runtime.md)

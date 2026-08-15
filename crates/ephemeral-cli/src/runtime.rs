@@ -458,19 +458,30 @@ fn sweep(home: &Path, runtime: &DockerRuntime) -> Result<usize> {
 
         let mut changed = false;
 
-        // The time limit first. An application past its ceiling should be
-        // stopped even if its container looks perfectly healthy — that is what
-        // the ceiling is for.
-        if let Some(over) = overran(&manifest, ephemeral_core::now()) {
-            let reason = format!(
-                "it reached its {} limit {} ago",
-                manifest
-                    .resources
-                    .max_runtime
-                    .map_or_else(|| "time".to_owned(), RetentionPeriod::describe),
-                RetentionPeriod::seconds(over).describe()
-            );
+        // Ceilings first. An application past one should be stopped even if its
+        // container looks perfectly healthy — that is what a ceiling is for.
+        let data_dir = workspace.layout().app(&id).data();
+        let breach = overran(&manifest, ephemeral_core::now())
+            .map(|over| {
+                format!(
+                    "it reached its {} limit {} ago",
+                    manifest
+                        .resources
+                        .max_runtime
+                        .map_or_else(|| "time".to_owned(), RetentionPeriod::describe),
+                    RetentionPeriod::seconds(over).describe()
+                )
+            })
+            .or_else(|| {
+                overfilled(&manifest, &data_dir).map(|over| {
+                    format!(
+                        "it is using {over} MiB more disk than its {} MiB limit",
+                        manifest.resources.storage_mib
+                    )
+                })
+            });
 
+        if let Some(reason) = breach {
             println!("{} {id} — {reason}", output::warn("Stopping"));
 
             runtime.stop(&id).ok();
@@ -509,6 +520,54 @@ fn sweep(home: &Path, runtime: &DockerRuntime) -> Result<usize> {
     Ok(acted)
 }
 
+/// How much disk an application's own storage is using, in mebibytes.
+///
+/// Measured rather than asked of Docker: the application's data lives on a host
+/// bind mount, so Docker's own storage accounting does not cover the thing that
+/// actually grows. Returns `None` if the directory cannot be read, which is a
+/// reason to say nothing rather than to stop an application.
+fn storage_used_mib(directory: &Path) -> Option<u64> {
+    fn total(directory: &Path, budget: &mut u32) -> Option<u64> {
+        // A bounded walk. A symlink loop or a pathologically deep tree must not
+        // turn a routine check into a hang, and stopping early under-reports —
+        // which errs towards leaving an application running.
+        if *budget == 0 {
+            return None;
+        }
+        *budget -= 1;
+
+        let mut bytes = 0;
+        for entry in std::fs::read_dir(directory).ok()? {
+            let entry = entry.ok()?;
+
+            // `symlink_metadata`, so a link out of the directory is counted as
+            // a link rather than followed to whatever it points at.
+            let metadata = entry.metadata().ok()?;
+            if metadata.is_dir() {
+                bytes += total(&entry.path(), budget)?;
+            } else if metadata.is_file() {
+                bytes += metadata.len();
+            }
+        }
+        Some(bytes)
+    }
+
+    let mut budget = 10_000_u32;
+    total(directory, &mut budget).map(|bytes| bytes / (1024 * 1024))
+}
+
+/// How far past its disk ceiling an application is, in mebibytes.
+///
+/// `None` when it is within it, or when the directory could not be measured.
+fn overfilled(manifest: &AppManifest, data_dir: &Path) -> Option<u64> {
+    let limit = u64::from(manifest.resources.storage_mib);
+    let used = storage_used_mib(data_dir)?;
+
+    // `then`, not `then_some`: the latter evaluates its argument whatever the
+    // condition, and an application inside its ceiling would underflow here.
+    (used > limit).then(|| used - limit)
+}
+
 /// When an application's container was started, according to its own history.
 ///
 /// Read from the manifest rather than from Docker: this is when *Ephemeral*
@@ -533,7 +592,9 @@ fn overran(manifest: &AppManifest, now: ephemeral_core::Timestamp) -> Option<i64
     let limit = manifest.resources.max_runtime?.as_seconds();
     let elapsed = (now - running_since(manifest)?).num_seconds();
 
-    (elapsed > limit).then_some(elapsed - limit)
+    // `then`, not `then_some`, for the same reason as `overfilled`: the
+    // subtraction must not happen unless the comparison already said it should.
+    (elapsed > limit).then(|| elapsed - limit)
 }
 
 /// A container Ephemeral is holding that no application accounts for.
@@ -1251,6 +1312,44 @@ mod tests {
             app: app.map(|id| AppId::parse(id).unwrap()),
             state,
         }
+    }
+
+    /// An application inside its ceiling must not be stopped, and an
+    /// unreadable directory is a reason to say nothing rather than to stop
+    /// something.
+    #[test]
+    fn an_application_within_its_disk_ceiling_is_left_alone() {
+        let data = tempfile::tempdir().unwrap();
+        let manifest = running(None);
+
+        assert_eq!(storage_used_mib(data.path()), Some(0));
+        assert_eq!(overfilled(&manifest, data.path()), None);
+
+        // A directory that is not there cannot be measured, and an application
+        // must not be stopped because Ephemeral could not look.
+        assert_eq!(
+            overfilled(&manifest, &data.path().join("missing")),
+            None,
+            "an unreadable directory must not stop an application"
+        );
+    }
+
+    /// Past the ceiling, by how much. The ceiling was in every manifest and
+    /// enforced by nothing until this existed.
+    #[test]
+    fn an_application_past_its_disk_ceiling_is_reported() {
+        let data = tempfile::tempdir().unwrap();
+
+        let mut manifest = running(None);
+        manifest.resources.storage_mib = 1;
+
+        // Two mebibytes, in a nested directory so the walk is exercised.
+        let nested = data.path().join("output/rows");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("big.csv"), vec![b'x'; 2 * 1024 * 1024]).unwrap();
+
+        assert_eq!(storage_used_mib(data.path()), Some(2));
+        assert_eq!(overfilled(&manifest, data.path()), Some(1));
     }
 
     /// A container belonging to an application that is genuinely running must
