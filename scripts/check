@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+#
+# Run everything CI runs, in the same order, so local failures match remote
+# ones. Run this before pushing.
+#
+#   ./scripts/check
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+BOLD=$'\033[1m'; GREEN=$'\033[32m'; RESET=$'\033[0m'
+if [ ! -t 1 ]; then BOLD=""; GREEN=""; RESET=""; fi
+step() { printf '\n%s==> %s%s\n' "$BOLD" "$1" "$RESET"; }
+
+step "Formatting"
+cargo fmt --all -- --check
+
+step "Lints"
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+step "Tests"
+cargo test --workspace --all-features
+
+step "Documentation builds"
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
+
+# The domain layer must not acquire host I/O. Building ephemeral-core without
+# default features is what keeps that honest (ADR-0002).
+step "Domain purity (ephemeral-core without host I/O)"
+cargo build -p ephemeral-core --no-default-features
+cargo test -p ephemeral-core --no-default-features
+
+if cargo deny --version >/dev/null 2>&1; then
+  step "Supply chain"
+  cargo deny check
+else
+  printf '\n(skipping supply-chain checks: cargo-deny not installed)\n'
+fi
+
+printf '\n%sAll checks passed.%s\n\n' "$GREEN" "$RESET"
