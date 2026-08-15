@@ -102,6 +102,28 @@ jobs:
       - run: cargo build -p ephemeral-runtime --no-default-features
       - run: cargo test -p ephemeral-runtime --no-default-features
 
+  # CI never makes a live model call (ADR-0008). Generation is exercised
+  # entirely through the deterministic mock provider, so this job proves the
+  # loop works without a credential, a network connection, or a bill.
+  generation:
+    name: Generation runs against the mock only
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p ephemeral-agent
+      - name: No network client in the agent crate
+        run: |
+          if grep -rniE 'reqwest|hyper|ureq|api\.anthropic|api\.openai' \
+               crates/ephemeral-agent/src crates/ephemeral-agent/Cargo.toml; then
+            echo "A network client appeared in the agent crate."
+            echo "Live model calls must stay out of CI (ADR-0008)."
+            exit 1
+          fi
+          echo "No network client in the agent crate."
+
   supply-chain:
     name: Supply chain
     runs-on: ubuntu-latest
@@ -140,6 +162,7 @@ jobs:
       - test
       - security-invariants
       - domain-purity
+      - generation
       - supply-chain
       - lockfile
     steps:

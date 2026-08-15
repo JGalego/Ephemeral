@@ -39,6 +39,15 @@ step "Sandbox purity (ephemeral-runtime without a daemon)"
 cargo build -p ephemeral-runtime --no-default-features
 cargo test -p ephemeral-runtime --no-default-features
 
+# CI never makes a live model call (ADR-0008). Generation is exercised entirely
+# through the deterministic mock provider.
+step "Generation uses no network client"
+if grep -rniE 'reqwest|hyper|ureq|api\.anthropic|api\.openai' \
+     crates/ephemeral-agent/src crates/ephemeral-agent/Cargo.toml; then
+  echo "A network client appeared in the agent crate. Live model calls must stay out of CI."
+  exit 1
+fi
+
 if cargo deny --version >/dev/null 2>&1; then
   step "Supply chain"
   cargo deny check

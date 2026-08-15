@@ -20,6 +20,7 @@
 //! | [`retention`] | How ephemeral an application is |
 //! | [`storage`] | The per-application storage layout and the app store |
 //! | [`actor`] | Who caused something to happen |
+//! | [`version`] | What an application *is*, named by a digest of itself |
 
 //!
 //! ## What does not live here
@@ -57,6 +58,7 @@ pub mod manifest;
 pub mod permission;
 pub mod retention;
 pub mod storage;
+pub mod version;
 
 pub use actor::Actor;
 pub use error::{Error, Result};
@@ -65,6 +67,7 @@ pub use lifecycle::{Lifecycle, LifecycleEvent, LifecycleState, Transition};
 pub use manifest::{AppManifest, SCHEMA_VERSION};
 pub use permission::{AppPermission, Decision, Grant, MetaPermission, PermissionLedger};
 pub use retention::RetentionPolicy;
+pub use version::{PermissionDelta, Recipe, Version, VersionDigest};
 
 /// A point in time, always in UTC.
 ///

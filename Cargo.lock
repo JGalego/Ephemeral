@@ -205,6 +205,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ephemeral-agent"
+version = "0.1.0"
+dependencies = [
+ "ephemeral-core",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+]
+
+[[package]]
 name = "ephemeral-cli"
 version = "0.1.0"
 dependencies = [
