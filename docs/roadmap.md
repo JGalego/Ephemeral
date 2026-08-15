@@ -6,7 +6,7 @@ honest record of where that line currently sits.
 
 ## Where we are
 
-**Phase 1 — Local runtime.** In progress.
+**Phase 2 — Generation.** In progress.
 
 ### Done
 
@@ -73,9 +73,23 @@ there rather than here.
 
 ### Phase 2 — Generation
 
-The `AgentProvider` trait, a deterministic mock provider, and the bounded
-plan → generate → build → test → inspect → repair loop
-([ADR-0008](architecture/decisions/0008-agent-provider-abstraction.md)).
+Done so far:
+
+| | |
+|---|---|
+| Content-addressed versions, and the permission delta between two ([ADR-0011](architecture/decisions/0011-immutable-content-addressed-versions.md)) | ✅ |
+| `AgentProvider`, with model output as validated proposals rather than commands | ✅ |
+| The deterministic mock provider, and a CI job that keeps generation offline | ✅ |
+| The bounded plan → generate → build → test → repair loop | ✅ |
+| `ephemeral generate` — an application reaching `Ready` without anybody writing code | ✅ |
+
+Still to do:
+
+| | |
+|---|---|
+| A real provider, behind the same trait | |
+| Regenerating an existing application, with the permission delta put to the user | |
+| Rolling back to a version that worked | |
 
 **Done when:** the CSV comparator can be built from a natural-language request
 end to end, with CI exercising the whole journey against the mock provider and

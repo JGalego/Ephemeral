@@ -16,6 +16,7 @@
 
 mod commands;
 mod doctor;
+mod generate;
 mod output;
 mod parse;
 mod runtime;
@@ -162,6 +163,15 @@ enum Command {
         /// How many of the most recent entries to show.
         #[arg(long, default_value_t = 25)]
         limit: usize,
+    },
+
+    /// Build an application from the intent already recorded for it.
+    Generate {
+        /// Which application.
+        app: String,
+        /// Which model provider to use.
+        #[arg(long, default_value = "mock")]
+        provider: String,
     },
 
     /// Show the lifecycle state machine, or where one application sits in it.
@@ -318,6 +328,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::Purge { app, yes } => commands::purge(&home, &app, yes),
         Command::Logs { app, lines } => commands::logs(&home, &app, lines),
         Command::Audit { app, limit } => commands::audit(&home, app.as_deref(), limit),
+        Command::Generate { app, provider } => generate::run(&home, &app, &provider),
         Command::States { app } => commands::states(&home, app.as_deref()),
         Command::Doctor => {
             doctor::run(&home);

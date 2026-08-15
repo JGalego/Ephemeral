@@ -243,6 +243,12 @@ impl AgentProvider for MockProvider {
                     "FROM {IMAGE}\nWORKDIR /app\nCOPY . /app\nCMD [\"python\", \"main.py\"]\n"
                 ),
                 entrypoint: vec!["python".to_owned(), "main.py".to_owned()],
+                test_command: vec![
+                    "python".to_owned(),
+                    "-m".to_owned(),
+                    "unittest".to_owned(),
+                    "discover".to_owned(),
+                ],
             },
             Self::cost(),
         ))
