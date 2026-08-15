@@ -50,6 +50,16 @@ pub struct ApplicationSummary {
     /// How many capabilities it has been given.
     pub granted: usize,
 
+    /// The highest risk among what it holds, if it holds anything.
+    ///
+    /// A count alone does not separate "reads one folder" from "can reach the
+    /// whole internet", and on a list those two looked identical — an
+    /// application holding everything was drawn exactly like one that can see
+    /// nothing of yours. Carried here so a client can draw the difference
+    /// without recomputing it, which is how two clients start disagreeing about
+    /// which applications are dangerous.
+    pub highest_granted_risk: Option<String>,
+
     /// How many it has asked for and not been given.
     ///
     /// The number a client turns into a badge, because an application waiting
@@ -67,11 +77,23 @@ impl ApplicationSummary {
         let state = manifest.lifecycle.state();
         let subject = Principal::app(manifest.id.clone());
 
-        let granted = ledger
+        // Meta-permissions are Ephemeral's own authority and never an
+        // application's, so they are no part of what an application holds.
+        // The ledger already refuses to grant one against an app principal, so
+        // this filter is not what enforces the separation — it mirrors
+        // `PermissionsView` so that the count on the list and the list on the
+        // page can never disagree about what an application holds.
+        let held: Vec<RiskLevel> = ledger
             .active_grants(&subject)
             .iter()
             .filter(|grant| grant.decision.is_allowed())
-            .count();
+            .filter_map(|grant| match &grant.permission {
+                ephemeral_core::permission::Permission::App(permission) => Some(permission.risk()),
+                ephemeral_core::permission::Permission::Meta(_) => None,
+            })
+            .collect();
+
+        let highest_granted_risk = held.iter().max().map(|risk| risk.as_str().to_owned());
 
         Self {
             id: manifest.id.to_string(),
@@ -82,7 +104,8 @@ impl ApplicationSummary {
             runnable: state.is_runnable(),
             running: state.requires_runtime(),
             put_away: matches!(state, LifecycleState::Archived | LifecycleState::Deleted),
-            granted,
+            granted: held.len(),
+            highest_granted_risk,
             awaiting_decision: crate::outstanding_requests(manifest, ledger).len(),
             updated_at: manifest.updated_at,
         }

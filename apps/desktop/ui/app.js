@@ -29,11 +29,27 @@ function reportProblem(message) {
   banner.hidden = false;
 }
 
+/** Re-reads the list without deciding which page is on screen.
+ *
+ * Kept separate from `refresh` because a decision has to update the list — the
+ * badge counting what is still waiting — while leaving the person where they
+ * were. Reloading and navigating were once the same function, and the result
+ * was that answering a permission threw you back to the list, so the page
+ * confirming what you had just allowed was never seen. Filming the window is
+ * what showed it: the recording simply walked out of the page mid-sentence.
+ */
+async function reload() {
+  const summaries = await ask('applications');
+  show(applicationList(summaries));
+  document.getElementById('problem').hidden = true;
+}
+
+/** Goes to the list. */
 async function refresh() {
   try {
-    const summaries = await ask('applications');
-    show(applicationList(summaries));
-    document.getElementById('problem').hidden = true;
+    await reload();
+    document.getElementById('applications').hidden = false;
+    document.getElementById('detail').hidden = true;
   } catch (error) {
     // The message from the core is already written for a person; adding to it
     // would be inventing detail this layer does not have.
@@ -41,12 +57,17 @@ async function refresh() {
   }
 }
 
+/** Goes to one application's page. */
 async function open(id) {
   try {
     const detail = await ask('application', { id });
     const panel = document.getElementById('detail');
     panel.replaceChildren(applicationDetail(detail));
     panel.hidden = false;
+    // Replace the list rather than stacking beneath it. The first recording of
+    // this window showed both at once, which reads as two pages at the same
+    // time.
+    document.getElementById('applications').hidden = true;
   } catch (error) {
     reportProblem(String(error.message ?? error));
   }
@@ -74,14 +95,23 @@ async function decide(item, answer) {
       target: null,
       allow: answer !== 'deny',
     });
+    // Stay on the page and re-render it, so what was just decided is visible as
+    // decided. The list is re-read too, because its badge is now wrong, but
+    // re-reading it must not navigate away from what somebody is reading.
     await open(page.dataset.id);
-    await refresh();
+    await reload();
   } catch (error) {
     reportProblem(String(error.message ?? error));
   }
 }
 
 document.addEventListener('click', (event) => {
+  const back = event.target.closest('button.back');
+  if (back) {
+    refresh();
+    return;
+  }
+
   const button = event.target.closest('button[data-decision]');
   if (button) {
     const item = button.closest('li.permission');

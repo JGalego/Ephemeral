@@ -58,11 +58,84 @@ li.application {
 .reason { color: var(--quiet); font-style: italic; }
 .no-reason { color: var(--high); }
 
+/* The risk colour belongs on what a permission would let an application do, not
+   on the sentence reassuring you it can be undone. Rendered in crimson bold
+   next to a critical request, "You can take this back at any time" reads as a
+   warning, which is the opposite of what it says. */
+.revocable { color: var(--quiet); font-weight: 400; }
+
+/* Pinned to the viewport rather than dropped at the end of the page. A film of
+   this window showed somebody type the wrong word into a critical permission,
+   click Confirm, and see nothing happen — the sentence explaining that nothing
+   had been granted was rendered below the fold, hundreds of pixels past where
+   they were looking. A refusal nobody can see is the same as no refusal. */
 .problem {
+  position: fixed;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  max-width: min(40rem, calc(100vw - 2rem));
+  margin: 0;
   border: 1px solid var(--high);
   border-radius: 8px;
   padding: 0.75rem 1rem;
+  background: #fff6f4;
   color: var(--high);
+  box-shadow: 0 2px 12px rgb(0 0 0 / 12%);
+}
+
+/* What an application already holds, said quietly on the list — loud enough to
+   separate "reads one folder" from "can reach anywhere", quiet enough not to
+   compete with the badge for something still waiting on an answer. */
+.grants {
+  font-size: 0.85rem;
+  margin-top: 0.25rem;
 }
 
 .empty { color: var(--quiet); }
+
+/* A granted permission and an unanswered one must not look the same. Looking at
+   the first recording of this window is what showed that they did. */
+li.permission {
+  border-left: 3px solid currentColor;
+  padding: 0.5rem 0 0.5rem 0.75rem;
+  margin-bottom: 1rem;
+  list-style: none;
+}
+
+/* Held is marked by the tick, the tinted ground and the control offering to
+   take it back — never by recolouring the risk. Granting something does not
+   make it safer, and the first version of this rule painted a green stripe over
+   an application that had just been allowed to reach the entire internet, then
+   faded it to 75% for good measure. A film of the window is what showed it:
+   the most dangerous grant on the page was the calmest thing on screen. The
+   tint is neutral grey precisely so it cannot be read as reassurance. */
+li.permission.held {
+  background: #f6f6f6;
+  border-radius: 0 5px 5px 0;
+}
+
+li.permission.held .wants::before {
+  content: "✓ ";
+  color: var(--low);
+}
+
+h3.holds, h3.waiting { font-size: 0.95rem; margin: 1.5rem 0 0.5rem; }
+h3.waiting { color: var(--high); }
+
+.decide { margin-top: 0.4rem; }
+.decide button, .decide input {
+  font: inherit;
+  padding: 0.2rem 0.7rem;
+  margin-right: 0.4rem;
+  border: 1px solid var(--edge);
+  border-radius: 5px;
+  background: white;
+  cursor: pointer;
+}
+.decide input { cursor: text; min-width: 9rem; }
+.decide button.deny, .decide button.revoke { color: var(--quiet); }
+
+/* The detail replaces the list rather than piling up under it. */
+#applications[hidden] { display: none; }

@@ -238,4 +238,79 @@ mod tests {
             "a view must not carry terminal formatting"
         );
     }
+
+    /// A count alone does not separate "reads one folder" from "can reach the
+    /// whole internet", and a list drawn from the count alone showed those two
+    /// identically. Filming the desktop window is what made that visible.
+    #[test]
+    fn a_summary_reports_the_worst_thing_an_application_holds() {
+        let mut manifest = manifest("csv-comparator", "CSV comparator");
+        let reading = AppPermission::read(scope());
+        let anywhere = AppPermission::outbound(
+            ephemeral_core::permission::HostScope::parse("*").expect("anywhere is a valid scope"),
+        );
+
+        let mut ledger = PermissionLedger::new();
+        let subject = Principal::app(manifest.id.clone());
+
+        let empty = ApplicationSummary::of(&manifest, &ledger);
+        assert_eq!(empty.granted, 0);
+        assert_eq!(
+            empty.highest_granted_risk, None,
+            "an application holding nothing reports no risk, rather than a low one"
+        );
+
+        for permission in [&reading, &anywhere] {
+            manifest.permissions.request(permission);
+            ledger
+                .allow(
+                    subject.clone(),
+                    Permission::App(permission.clone()),
+                    Actor::User,
+                    "because I said so",
+                )
+                .expect("the user may grant");
+        }
+
+        let summary = ApplicationSummary::of(&manifest, &ledger);
+
+        assert_eq!(summary.granted, 2);
+        assert_eq!(
+            summary.highest_granted_risk.as_deref(),
+            Some(anywhere.risk().as_str()),
+            "the worst of them, not the first or the last"
+        );
+    }
+
+    /// A meta-permission is Ephemeral's own authority and never an
+    /// application's. Charging one to an application would report Ephemeral's
+    /// risk against that application, on the very line a person reads to decide
+    /// which of theirs is dangerous.
+    ///
+    /// The summary filters meta-permissions out, but that filter is not what
+    /// makes this safe and this test does not pretend otherwise: the ledger
+    /// refuses the grant outright, so the state the filter guards against
+    /// cannot be reached through it. Asserting the refusal is asserting the
+    /// thing that actually holds.
+    #[test]
+    fn ephemerals_own_authority_cannot_be_charged_to_an_application() {
+        let manifest = manifest("csv-comparator", "CSV comparator");
+        let mut ledger = PermissionLedger::new();
+
+        let refused = ledger.allow(
+            Principal::app(manifest.id.clone()),
+            Permission::Meta(ephemeral_core::permission::MetaPermission::NetworkAccess),
+            Actor::User,
+            "Ephemeral may reach a model provider",
+        );
+
+        assert!(
+            refused.is_err(),
+            "an application must not be able to hold Ephemeral's own authority"
+        );
+
+        let summary = ApplicationSummary::of(&manifest, &ledger);
+        assert_eq!(summary.granted, 0, "so it holds nothing");
+        assert_eq!(summary.highest_granted_risk, None, "and risks nothing");
+    }
 }
