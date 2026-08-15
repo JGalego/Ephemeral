@@ -133,8 +133,11 @@ identity cannot be retrofitted onto history that was never recorded.
 somebody else, and run under permissions *they* granted — with an update that
 wants more than the version they approved refused until they decide.
 
-**Blocked on a product decision:** where shared session state lives. See
-[ADR-0013](architecture/decisions/0013-how-several-people-share-an-application.md#open-question).
+**Decided:** a group operates its own relay, and there is no other kind —
+Ephemeral does not run one and there is no third-party opt-in. That costs reach
+deliberately: a group where nobody will keep a device on does not get a shared
+session. [ADR-0013](architecture/decisions/0013-how-several-people-share-an-application.md)
+is accepted.
 
 ## Things deliberately not being built yet
 

@@ -1,7 +1,9 @@
 # ADR-0013: How several people share one application
 
-- **Status:** **proposed.** The shape below is agreed; what remains open is who
-  operates a relay, which is an infrastructure commitment. Nothing is built.
+- **Status:** accepted. The open question — who operates a relay when a group
+  does not run its own — is answered below: nobody. Nothing is built yet; this
+  is Phase 7, and [the threat model](../../../SECURITY.md#threat-model) comes
+  first.
 - **Date:** 2026-08-15
 - **Deciders:** Ephemeral maintainers
 - **Phase:** 7 — Sharing
@@ -73,17 +75,29 @@ frequently more sensitive than what was said. The invariant:
 
 Which means:
 
-- **The group operates its own relay by default** — a member's device or one
-  they self-host. Then the operator is somebody who can already read the
-  messages, so metadata reveals nothing additional. This is the default, not a
-  fallback.
+- **The group operates its own relay. There is no other kind.** A member's
+  device, or something they self-host. The operator is therefore always
+  somebody who can already read the messages, so the relay learns nothing a
+  participant does not already know. This is not a default with an escape
+  hatch; it is the only supported arrangement.
 - **Per-room identities**, so nothing correlates a person across rooms.
 - **Sealed sender**, so a relay sees "a message for this room" rather than who
   sent it.
 - **Padding and batching**, to blunt size and timing analysis.
 
-Using a third-party relay is then an explicit opt-in with a named cost, rather
-than the default with a footnote in the documentation.
+The consequence is a real cost in reach, and it is the point rather than an
+oversight: **a group with nobody able to run a relay cannot have a session.**
+Somebody has to keep a device on, or pay for something small to keep running.
+
+The alternative was an Ephemeral-operated relay, offered as an opt-in with the
+cost named. Rejected because "opt-in with a named cost" is how a default
+arrives: it would be the path of least resistance for every group that found
+self-hosting inconvenient, which is most of them. Within a year the honest
+sentence would be "Ephemeral sees who talks to whom, unless you configure
+otherwise" — and no amount of blinding makes that the sentence this project
+wants to be able to say. Third-party relays were rejected on the same ground
+plus a second: the security story stops being something a non-technical user
+can be told in one line.
 
 What cannot be honestly promised is the elimination of metadata while any
 intermediary exists. The intermediary can be made blind; it cannot be made
@@ -188,8 +202,12 @@ replication itself.
 
 A guest gets materially weaker guarantees than a member, stated plainly rather
 than smoothed over. Some intermediary exists, and it can observe some metadata
-even when blinded — which is why the default is that the intermediary is the
-group itself.
+even when blinded — which is why the intermediary is always the group itself.
+
+**Sessions need somebody willing to run a relay.** A group of people who all
+want to close their laptops does not get a shared session. That is a feature the
+product declines to offer rather than a limitation it apologises for, and the
+interface has to say so at the point somebody tries, not in a footnote.
 
 Mobile coverage is **borrowed rather than intrinsic**: a mobile member's
 application executes on the control plane ([ADR-0007](0007-mobile-control-plane.md)),
@@ -217,6 +235,11 @@ New concerns:
 
 ## Revisit when
 
-- The relay-operation question is answered, at which point this can be accepted.
+- Somebody demonstrates a relay design where the operator provably cannot
+  observe metadata — not merely one where it is inconvenient to. That would
+  remove the reason for the restriction, not merely the discomfort.
 - Browser code-integrity attestation becomes real enough to narrow the gap
   between the two tiers.
+- The reach cost turns out to be the thing stopping people using sharing at
+  all, in which case the question is worth reopening **with** that evidence,
+  rather than pre-emptively on the assumption that it will be.
