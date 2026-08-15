@@ -10,9 +10,9 @@
 //! [ADR-0005]: https://github.com/JGalego/Ephemeral/blob/main/docs/architecture/decisions/0005-docker-first-runtime-abstraction.md
 
 use std::path::Path;
-use std::process::Command;
 
 use ephemeral_core::storage::Workspace;
+use ephemeral_runtime::{Runtime as _, docker::DockerRuntime};
 
 use crate::output;
 
@@ -126,38 +126,24 @@ fn storage(home: &Path) -> Verdict {
 }
 
 /// Is there a container runtime, and is it usable?
+///
+/// Asks the runtime itself rather than probing Docker here. Two places deciding
+/// whether Docker works would eventually disagree, and the one a user reads
+/// would be the wrong one.
 fn docker_check() -> Verdict {
-    let Ok(version) = Command::new("docker").arg("--version").output() else {
-        return Verdict::Note(
-            "Docker is not installed".to_owned(),
-            "Not required. Everything except running generated applications works without \
-             it, and Ephemeral will ask before installing anything."
-                .to_owned(),
-        );
-    };
+    let availability = DockerRuntime::new().availability();
 
-    if !version.status.success() {
-        return Verdict::Note(
-            "Docker is installed but did not respond".to_owned(),
-            "Try `docker --version` yourself to see what it says.".to_owned(),
-        );
+    if availability.usable {
+        return Verdict::Ok(availability.explanation);
     }
 
-    let reported = String::from_utf8_lossy(&version.stdout).trim().to_owned();
-
-    // Installed is not the same as running: on macOS and Windows the daemon
-    // lives in a VM that is very often stopped.
-    match Command::new("docker").arg("info").output() {
-        Ok(info) if info.status.success() => Verdict::Ok(format!("{reported}, and running")),
-        Ok(_) => Verdict::Note(
-            format!("{reported}, but the daemon is not reachable"),
-            "Start Docker Desktop, or `systemctl start docker` on Linux.".to_owned(),
-        ),
-        Err(error) => Verdict::Note(
-            format!("{reported}, but it could not be queried: {error}"),
-            "Check that your user is allowed to talk to the Docker socket.".to_owned(),
-        ),
-    }
+    // A missing runtime is never a failure. Everything except running a
+    // generated application works without it, and reporting its absence as an
+    // error would teach people to ignore this output (ADR-0005).
+    Verdict::Note(
+        "no container runtime is available".to_owned(),
+        availability.explanation,
+    )
 }
 
 /// Is what is on disk consistent and trustworthy?

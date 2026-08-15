@@ -212,6 +212,7 @@ dependencies = [
  "chrono",
  "clap",
  "ephemeral-core",
+ "ephemeral-runtime",
  "tempfile",
 ]
 

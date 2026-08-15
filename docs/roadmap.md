@@ -6,14 +6,14 @@ honest record of where that line currently sits.
 
 ## Where we are
 
-**Phase 0 — Foundation.** In progress.
+**Phase 1 — Local runtime.** In progress.
 
 ### Done
 
 | | |
 |---|---|
 | Repository, licence, contribution guide, security policy | ✅ |
-| [ARCHITECTURE.md](../ARCHITECTURE.md) and ten [ADRs](architecture/decisions/) | ✅ |
+| [ARCHITECTURE.md](../ARCHITECTURE.md) and fourteen [ADRs](architecture/decisions/) | ✅ |
 | CI: format, lint, docs, tests on Linux/macOS/Windows, supply chain | ✅ |
 | One-command development bootstrap | ✅ |
 | `ephemeral-core`: identity, actors, errors | ✅ |
@@ -27,6 +27,8 @@ honest record of where that line currently sits.
 | `ephemeral-cli` — the same domain model, driven from a terminal | ✅ |
 | `ephemeral doctor` — environment diagnostics | ✅ |
 | Reference documentation | ✅ |
+| `ephemeral-runtime` — the sandbox, and the Docker implementation of it | ✅ |
+| `ephemeral run`, `stop`, `pause`, `resume` | ✅ |
 
 Phase 0 is complete. Everything that does not need a runtime or a model provider
 works end to end: ask for an application, inspect it, move it through its
@@ -40,19 +42,32 @@ $ ephemeral inspect <app>
 $ ephemeral audit
 ```
 
-## What comes next
+Phase 1 has the sandbox: the `Runtime` trait, the Docker implementation
+([ADR-0005](architecture/decisions/0005-docker-first-runtime-abstraction.md),
+[ADR-0014](architecture/decisions/0014-drive-docker-through-its-cli.md)),
+detection with a remedy, container lifecycle, approved mounts, loopback port
+exposure, resource limits, logs, health inspection and teardown.
 
-### Phase 1 — Local runtime
+The confinement is decided by pure functions, so what it holds is a set of
+tests rather than a claim: capabilities dropped, no network unless granted,
+read grants mounted read-only, ports on 127.0.0.1, non-root, no whole-root
+mount, and a refusal rather than a weaker substitute when a control cannot be
+applied.
 
-The `Runtime` trait and a Docker implementation ([ADR-0005](architecture/decisions/0005-docker-first-runtime-abstraction.md)):
-detection, image pull and build, container lifecycle, approved mounts, explicit
-port exposure, resource limits, log collection, health inspection, teardown and
-orphan cleanup. Applications can be created, run, inspected, archived and
-deleted — by hand, with no generation yet.
+### Still to do in Phase 1
+
+| | |
+|---|---|
+| Building an image from generated source rather than pulling one | |
+| Orphan cleanup — reaping what a crash left behind | |
+| The supervisor: wall-clock limits, health polling, crash detection | |
+| `NativeRuntime`, for what genuinely cannot be containerised | |
 
 **Done when:** an application whose source somebody wrote by hand can be run,
 stopped, archived, restored and deleted through the CLI, on a machine with
 Docker and on one without.
+
+## What comes next
 
 ### Phase 2 — Generation
 

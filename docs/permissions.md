@@ -211,10 +211,17 @@ grant something other than what you typed.
 
 ## What is enforced today
 
-Phase 0 delivers the **model**: the types, the ledger, the decision rules and
-the tests that state them. Enforcement at the runtime boundary — mounts, egress
-filtering, device access — arrives with the runtime in Phase 1 and the sandbox
-in Phase 3. See [roadmap.md](roadmap.md).
+Phase 0 delivered the **model**: the types, the ledger, the decision rules and
+the tests that state them. Phase 1 connects it to a running process — a granted
+scope becomes a mount, an inbound port becomes a loopback binding, and an
+application with an empty ledger gets a container that can see nothing of yours.
+[sandbox.md](sandbox.md) is the list of exactly what that buys.
+
+Two things are still model rather than enforcement. A **hostname allow-list**
+cannot be applied by Docker, so an application granted one refuses to start
+rather than running with more access than its owner allowed. **Device access** —
+camera, microphone, location — is recorded and shown but not yet mediated, and
+arrives with the platform adapters in Phase 3. See [roadmap.md](roadmap.md).
 
 The security suite in `crates/ephemeral-core/tests/security.rs` is the list of
 promises this page makes, written as executable assertions. If one of them

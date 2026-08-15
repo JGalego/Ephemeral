@@ -15,6 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 ephemeral-core.workspace = true
+ephemeral-runtime.workspace = true
 
 anyhow.workspace = true
 chrono.workspace = true
