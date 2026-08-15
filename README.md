@@ -88,10 +88,10 @@ next one starts. See [the roadmap](docs/roadmap.md) for detail, and
 | 0 | Repo, docs, architecture, CI, app model, state machine | ✅ done |
 | 1 | Docker runtime, sandbox, run/stop/watch, logs, cleanup | ✅ done |
 | 2 | Provider abstraction, generation agent, build/test/repair loop | 🚧 in progress |
-| 3 | Meta-permissions, app permissions, permission UI, audit, sandboxing | ⏳ planned |
+| 3 | Meta-permissions, app permissions, permission UI, audit, sandboxing | 🚧 enforcement done, UI is the CLI |
 | 4 | Desktop application and dashboard | ⏳ planned |
 | 5 | Windows, macOS, Linux, then mobile | ⏳ planned |
-| 6 | Threat model, security testing, supply chain, release automation | ⏳ planned |
+| 6 | Threat model, security testing, supply chain, release automation | 🚧 [threat model](docs/security/threat-model.md) written |
 | 7 | Sharing, publishing, and shared sessions | 🚧 publish/install done |
 
 **What you can do today.** Describe what you want, have Ephemeral write and
@@ -108,10 +108,25 @@ $ ephemeral run <app>
 $ ephemeral publish <app> ./my-app  # an ordinary directory; git init and push
 ```
 
-**What you cannot do yet.** Use a real model. Only the deterministic `mock`
-provider exists — it produces a fixed example application without a credential,
-a network connection or a bill, which is what CI runs against. Real providers
-are the rest of Phase 2.
+**What you cannot do yet.**
+
+- **Use a real model.** Only the deterministic `mock` provider exists. It
+  produces a genuine, working CSV comparator without a credential, a network
+  connection or a bill, and it is what CI runs against — but it is a fixture,
+  not a model. Real providers are the rest of Phase 2.
+- **Open a window.** There is no desktop application yet; the CLI is the whole
+  interface, and both are clients of the same core.
+- **Give an application a scoped list of hosts it may reach.** Docker cannot
+  filter egress by destination, so an application granted one refuses to start
+  rather than quietly receiving the whole internet. See
+  [docs/sandbox.md](docs/sandbox.md).
+- **Share a running session with other people.** Designed in
+  [ADR-0013](docs/architecture/decisions/0013-how-several-people-share-an-application.md),
+  not built.
+
+The [threat model](docs/security/threat-model.md) lists what Ephemeral does
+*not* defend against. It is the most useful page here for anyone deciding
+whether to trust this.
 
 ## Try it (development)
 
