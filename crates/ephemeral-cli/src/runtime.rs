@@ -34,12 +34,18 @@ use ephemeral_runtime::{
 use crate::output;
 
 /// Starts an application.
-pub(crate) fn run(home: &Path, reference: &str) -> Result<()> {
+pub(crate) fn run(home: &Path, reference: &str, arguments: &[String]) -> Result<()> {
     let mut workspace = crate::commands::open(home)?;
     let mut manifest = crate::commands::find(&workspace, reference)?;
 
     ensure_allowed(&manifest, LifecycleEvent::Start)?;
-    let spec = specification(&workspace, &manifest)?;
+    let mut spec = specification(&workspace, &manifest)?;
+
+    // Appended to the entrypoint rather than replacing it: an application's
+    // entry point is part of what it *is*, recorded in its version, and letting
+    // a command line replace it would let somebody run something other than the
+    // application they are looking at.
+    spec.entrypoint.extend(arguments.iter().cloned());
     let runtime = usable_runtime()?;
 
     // Intent first, and only if the state machine allows it. Asking Docker to

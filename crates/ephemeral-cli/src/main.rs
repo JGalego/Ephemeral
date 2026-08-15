@@ -212,6 +212,9 @@ enum Command {
     Run {
         /// Which application.
         app: String,
+        /// Arguments for the application itself, after `--`.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        arguments: Vec<String>,
     },
 
     /// Stop a running application.
@@ -362,7 +365,7 @@ fn run(cli: Cli) -> Result<()> {
             doctor::run(&home);
             Ok(())
         }
-        Command::Run { app } => runtime::run(&home, &app),
+        Command::Run { app, arguments } => runtime::run(&home, &app, &arguments),
         Command::Stop { app } => runtime::stop(&home, &app),
         Command::Pause { app } => runtime::pause(&home, &app),
         Command::Resume { app } => runtime::resume(&home, &app),

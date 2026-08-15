@@ -36,6 +36,9 @@ use crate::output;
 /// The file a build recipe is written to.
 const DOCKERFILE: &str = "Dockerfile";
 
+/// The provisional tag a build carries before its version is known.
+const BUILDING_TAG: &str = "building";
+
 /// Builds an application from the intent already recorded for it.
 pub(crate) fn run(home: &Path, reference: &str, provider_name: &str) -> Result<()> {
     let mut workspace = crate::commands::open(home)?;
@@ -132,6 +135,7 @@ pub(crate) fn run(home: &Path, reference: &str, provider_name: &str) -> Result<(
             &outcome,
             provider.name(),
             regenerating,
+            &runtime,
         ),
         Err(error) => {
             fail(&mut workspace, &mut manifest, &error)?;
@@ -269,8 +273,26 @@ fn finish(
     outcome: &Outcome,
     provider: &str,
     regenerating: bool,
+    runtime: &DockerRuntime,
 ) -> Result<()> {
     let (recorded, delta) = apply_success(manifest, outcome, provider)?;
+
+    // The image Ephemeral built, not the base image it was built from. Running
+    // the base image would run something that has never seen the generated
+    // source — which is exactly what happened the first time this was run for
+    // real, and no argument-vector test could have caught it.
+    if let Some(version) = manifest.current_version() {
+        let digest = version.digest.short().to_owned();
+        let built = ephemeral_runtime::docker::command::building_tag(&manifest.id);
+
+        let named = runtime
+            .name_image(&built, &manifest.id, &digest)
+            .with_context(|| format!("could not name the image built for {}", manifest.id))?;
+
+        if let Some(spec) = manifest.runtime.as_mut() {
+            spec.image = Some(named);
+        }
+    }
 
     // The question ADR-0011 exists to answer. A new version that wants more
     // than the one already approved must not inherit that approval, so anything
@@ -474,7 +496,11 @@ impl Builder for DockerBuilder<'_> {
             // Not the version digest: this tag is overwritten on every repair
             // attempt, and a digest that changed under a tag would be a lie.
             // The recorded version is taken once the build finally works.
-            version: "building".to_owned(),
+            // Provisional. The version digest covers the *repaired* source and
+            // is not known until the build finally works, so the image is
+            // renamed afterwards rather than tagged with a digest that might
+            // still change.
+            version: BUILDING_TAG.to_owned(),
             context: self.source_dir.clone(),
             dockerfile: self.source_dir.join(DOCKERFILE),
         };
