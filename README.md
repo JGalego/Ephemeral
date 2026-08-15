@@ -1,2 +1,146 @@
-# Ephemeral
-🫧 Software that exists only while it’s useful
+# Ephemeral 🫧
+
+**Software that exists only while it's useful.**
+
+---
+
+## What is this?
+
+Today, if you need a tool, you go looking for an app. You install it, it asks for
+permissions you don't understand, and it stays on your machine forever — even
+though you needed it for ten minutes.
+
+Ephemeral flips that around. You describe what you want to do:
+
+> "Compare these two CSV files and show me what's different."
+
+Ephemeral builds a small application that does exactly that, runs it in a safe
+box, shows it to you, and throws it away when you're done.
+
+You never have to know how it was built.
+
+**Software, on demand.**
+
+---
+
+## How it works, in plain language
+
+1. **You ask.** In your own words.
+2. **Ephemeral plans.** It decides what kind of program is needed and what it
+   will need access to.
+3. **Ephemeral builds it.** It writes the program and sets up everything the
+   program needs to run.
+4. **Ephemeral tests it.** If it doesn't work, Ephemeral fixes it and tries
+   again — up to a limit you control.
+5. **Ephemeral asks permission.** Before the program touches your files, your
+   network, or your camera, you get a plain-language question with a real
+   answer to "why?".
+6. **You use it.**
+7. **It disappears.** Immediately, in a day, in a week, or never — your choice.
+
+Every step is visible. When something is happening, Ephemeral tells you what and
+why. No unexplained spinners.
+
+---
+
+## The two permission systems
+
+This is the part that matters most, so it's worth saying twice.
+
+**Ephemeral has permissions.** These control what the Ephemeral app itself may
+do on your machine: run Docker, install runtimes, read directories, reach the
+network.
+
+**Every generated app has its own, separate permissions.** A generated app does
+*not* inherit Ephemeral's permissions. Ephemeral may be allowed to read your
+whole home directory; the CSV comparator it just built is allowed to read
+exactly `~/Downloads/apartments` and nothing else.
+
+Both sets are explicit, inspectable, and revocable at any time.
+
+Generated code is treated as untrusted code. Always. An LLM wrote it — that is
+not a reason to trust it.
+
+---
+
+## Status
+
+**Phase 0 — Foundation.** The repository, architecture, documentation, CI, the
+application model, the permission model, and the lifecycle state machine.
+
+Ephemeral is being built in phases, and each phase must demonstrably work before
+the next one starts. See [the roadmap](docs/roadmap.md) for what exists today
+and what is coming.
+
+| Phase | Scope | Status |
+|-------|-------|--------|
+| 0 | Repo, docs, architecture, CI, app model, state machine | 🚧 in progress |
+| 1 | Docker runtime, app creation, lifecycle, logs, archive/delete | ⏳ planned |
+| 2 | Provider abstraction, generation agent, build/test/repair loop | ⏳ planned |
+| 3 | Meta-permissions, app permissions, permission UI, audit, sandboxing | ⏳ planned |
+| 4 | Desktop application and dashboard | ⏳ planned |
+| 5 | Windows, macOS, Linux, then mobile | ⏳ planned |
+| 6 | Threat model, security testing, supply chain, release automation | ⏳ planned |
+
+---
+
+## Try it (development)
+
+Prerequisites and a one-command bootstrap:
+
+```bash
+./scripts/bootstrap        # macOS / Linux
+scripts\bootstrap.ps1      # Windows
+```
+
+Then:
+
+```bash
+cargo run -p ephemeral-cli -- doctor
+cargo run -p ephemeral-cli -- states
+```
+
+See [docs/development.md](docs/development.md) for the full development guide
+and [docs/install.md](docs/install.md) for end-user installation (once packages
+are published).
+
+---
+
+## Documentation
+
+| Document | What's in it |
+|----------|--------------|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | How the system is put together |
+| [SECURITY.md](SECURITY.md) | Security model and how to report a vulnerability |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | How to work on Ephemeral |
+| [docs/concepts.md](docs/concepts.md) | The vocabulary: apps, intents, principals, retention |
+| [docs/lifecycle.md](docs/lifecycle.md) | The application lifecycle state machine |
+| [docs/permissions.md](docs/permissions.md) | Both permission systems, in detail |
+| [docs/architecture/decisions/](docs/architecture/decisions/) | Architecture Decision Records |
+| [docs/roadmap.md](docs/roadmap.md) | Phased plan |
+
+---
+
+## Design principles
+
+1. Security before convenience.
+2. Explicit permissions before implicit access.
+3. Generated code is untrusted.
+4. Every important operation is observable.
+5. Everything is recoverable where practical.
+6. The state machine is a first-class domain model.
+7. The UI explains system behaviour rather than hiding it.
+8. Provider and runtime independence.
+9. Local-first on desktop.
+10. No unnecessary cloud dependency.
+11. No premature microservices.
+12. Prefer boring infrastructure where it works.
+13. Make the common path extremely simple.
+14. Never sacrifice security for a flashy demo.
+15. Build vertically and keep the system runnable.
+
+---
+
+## Licence
+
+[Apache License 2.0](LICENSE).
