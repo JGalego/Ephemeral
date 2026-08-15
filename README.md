@@ -103,7 +103,7 @@ delete or purge it.
 ```console
 $ ephemeral create "compare these two CSV files and show me what's different"
 $ ephemeral generate <app>          # plan, write, build, test — bounded and cancellable
-$ ephemeral grant <app> read:'~/Downloads/**' --why "to compare them"
+$ ephemeral review <app>            # decide what it may do, one question at a time
 $ ephemeral run <app>
 ```
 

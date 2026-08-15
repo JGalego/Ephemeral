@@ -19,6 +19,7 @@ mod doctor;
 mod generate;
 mod output;
 mod parse;
+mod review;
 mod runtime;
 
 use std::path::{Path, PathBuf};
@@ -172,6 +173,12 @@ enum Command {
         /// Which model provider to use.
         #[arg(long, default_value = "mock")]
         provider: String,
+    },
+
+    /// Decide what an application may do, one question at a time.
+    Review {
+        /// Which application.
+        app: String,
     },
 
     /// Show the lifecycle state machine, or where one application sits in it.
@@ -329,6 +336,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::Logs { app, lines } => commands::logs(&home, &app, lines),
         Command::Audit { app, limit } => commands::audit(&home, app.as_deref(), limit),
         Command::Generate { app, provider } => generate::run(&home, &app, &provider),
+        Command::Review { app } => review::run(&home, &app),
         Command::States { app } => commands::states(&home, app.as_deref()),
         Command::Doctor => {
             doctor::run(&home);

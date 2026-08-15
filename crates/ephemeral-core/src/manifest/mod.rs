@@ -61,6 +61,17 @@ mod resources;
 mod runtime;
 
 pub use metadata::{Artifacts, ExecutionLocation, Metadata};
+
+/// One capability an application asked for, and the reason it gave.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PermissionRationale {
+    /// What was asked for.
+    pub permission: crate::permission::AppPermission,
+
+    /// Why, in the user's terms, as stated by whatever asked.
+    pub reason: String,
+}
 pub use resources::{GenerationBudget, ResourceLimits};
 pub use runtime::{AppInterface, RuntimeKind, RuntimeSpec};
 
@@ -203,6 +214,15 @@ pub struct AppManifest {
     #[serde(default)]
     pub metadata: Metadata,
 
+    /// Why the application says it wants each thing it asked for.
+    ///
+    /// Kept because a permission prompt has to answer "why does it need this?",
+    /// and the answer is produced at planning time and needed much later. It is
+    /// the *application's claim*, not a justification, and the interface says so
+    /// — but a request with no reason cannot be put to a person honestly.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rationale: Vec<PermissionRationale>,
+
     /// Every version this application has been, oldest first.
     ///
     /// Kept rather than replaced, so a user can see what changed and go back to
@@ -257,6 +277,7 @@ impl AppManifest {
             budget,
             artifacts: Artifacts::default(),
             metadata: Metadata::default(),
+            rationale: Vec::new(),
             versions: Vec::new(),
         }
     }
@@ -473,6 +494,18 @@ impl AppManifest {
     /// Records that the application changed.
     pub fn touch(&mut self) {
         self.updated_at = now();
+    }
+
+    /// What the application said when it asked for `permission`.
+    ///
+    /// `None` when nothing was recorded, which the interface must present as
+    /// "it gave no reason" rather than inventing one.
+    #[must_use]
+    pub fn reason_for(&self, permission: &crate::permission::AppPermission) -> Option<&str> {
+        self.rationale
+            .iter()
+            .find(|entry| entry.permission == *permission)
+            .map(|entry| entry.reason.as_str())
     }
 
     /// What this application currently is, by digest.

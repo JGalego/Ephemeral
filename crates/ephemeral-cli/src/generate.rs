@@ -25,7 +25,7 @@ use ephemeral_core::{
     Actor, AppManifest,
     audit::AuditEvent,
     lifecycle::{LifecycleEvent, TransitionRequest},
-    manifest::RuntimeSpec,
+    manifest::{PermissionRationale, RuntimeSpec},
     permission::AppPermissions,
     storage::{AppStore as _, Workspace},
 };
@@ -207,6 +207,19 @@ fn apply_success(
     // Requests, never grants. The manifest records what the application wants;
     // the ledger — which only a person writes to — records what it has.
     manifest.permissions = requested_permissions(&outcome.app);
+
+    // The reasons travel with the requests, because a prompt has to answer
+    // "why does it need this?" long after planning produced the answer.
+    manifest.rationale = outcome
+        .app
+        .plan
+        .requests
+        .iter()
+        .map(|request| PermissionRationale {
+            permission: request.permission.clone(),
+            reason: request.reason.clone(),
+        })
+        .collect();
 
     apply(
         manifest,
