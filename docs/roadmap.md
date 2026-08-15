@@ -24,14 +24,21 @@ honest record of where that line currently sits.
 | Hash-chained audit log with redaction on write | ✅ |
 | Storage layout and application store | ✅ |
 | Security invariant test suite | ✅ |
+| `ephemeral-cli` — the same domain model, driven from a terminal | ✅ |
+| `ephemeral doctor` — environment diagnostics | ✅ |
+| Reference documentation | ✅ |
 
-### Remaining
+Phase 0 is complete. Everything that does not need a runtime or a model provider
+works end to end: ask for an application, inspect it, move it through its
+lifecycle, grant and revoke permissions, read the audit trail, delete it,
+restore it, purge it.
 
-| | |
-|---|---|
-| `ephemeral-cli` — the same domain model, driven from a terminal | ⏳ |
-| `ephemeral doctor` — environment diagnostics | ⏳ |
-| Reference documentation for the concepts above | 🚧 |
+```console
+$ ephemeral create "compare these two CSV files and show me what's different"
+$ ephemeral grant <app> read:'~/Downloads/apartments/**' --why "to compare them"
+$ ephemeral inspect <app>
+$ ephemeral audit
+```
 
 ## What comes next
 
