@@ -17,6 +17,7 @@
 | [permissions.md](permissions.md) | Both permission systems, in detail |
 | [manifest.md](manifest.md) | The versioned application manifest |
 | [sandbox.md](sandbox.md) | What confines a running application, and what it will not do |
+| [security/threat-model.md](security/threat-model.md) | What Ephemeral defends against, and — more usefully — what it does not |
 | [sharing.md](sharing.md) | Design: giving an app to somebody else, publishing it, and shared instances |
 
 ## Working on it
@@ -34,7 +35,6 @@
 | [install.md](install.md) | Installation, where files go, uninstalling |
 | [../SECURITY.md](../SECURITY.md) | The security model, and how to report a vulnerability |
 
-| [security/threat-model.md](security/threat-model.md) | What Ephemeral defends against, and — more usefully — what it does not |
 
 ## Not written yet
 
