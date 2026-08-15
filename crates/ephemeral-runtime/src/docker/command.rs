@@ -422,6 +422,19 @@ mod tests {
         assert!(found, "expected `{flag} {value}` in {args:?}");
     }
 
+    /// A path under the test home, rendered the way this host renders paths.
+    ///
+    /// A mount source is a *host* path, so its separators are the host's. An
+    /// assertion written with forward slashes would pass on Linux and fail on
+    /// Windows for no reason connected to what is being tested.
+    fn under_home(relative: &str) -> String {
+        relative
+            .split('/')
+            .fold(PathBuf::from("/home/ana"), |path, part| path.join(part))
+            .to_string_lossy()
+            .into_owned()
+    }
+
     #[track_caller]
     fn assert_flag(args: &[String], flag: &str) {
         assert!(
@@ -559,10 +572,11 @@ mod tests {
             PathScope::parse("~/Downloads/apartments/**").unwrap(),
         )]);
         let args = run(&reader).unwrap();
+        let granted = under_home("Downloads/apartments");
 
         let mount = args
             .windows(2)
-            .find(|pair| pair[0] == "--mount" && pair[1].contains("/home/ana/Downloads/apartments"))
+            .find(|pair| pair[0] == "--mount" && pair[1].contains(&granted))
             .map(|pair| pair[1].clone())
             .expect("the granted directory should be mounted");
 
@@ -576,10 +590,11 @@ mod tests {
             PathScope::parse("~/Reports/**").unwrap(),
         )]);
         let args = run(&writer).unwrap();
+        let granted = under_home("Reports");
 
         let mount = args
             .windows(2)
-            .find(|pair| pair[0] == "--mount" && pair[1].contains("/home/ana/Reports"))
+            .find(|pair| pair[0] == "--mount" && pair[1].contains(&granted))
             .map(|pair| pair[1].clone())
             .expect("the granted directory should be mounted");
 
