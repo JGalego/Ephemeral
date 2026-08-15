@@ -92,7 +92,7 @@ next one starts. See [the roadmap](docs/roadmap.md) for detail, and
 | 4 | Desktop application and dashboard | ⏳ planned |
 | 5 | Windows, macOS, Linux, then mobile | ⏳ planned |
 | 6 | Threat model, security testing, supply chain, release automation | ⏳ planned |
-| 7 | Sharing, publishing, and shared sessions | ⏳ planned |
+| 7 | Sharing, publishing, and shared sessions | 🚧 publish/install done |
 
 **What you can do today.** Describe what you want, have Ephemeral write and
 build it, watch it fix its own build when it breaks, run the result in a
@@ -105,6 +105,7 @@ $ ephemeral create "compare these two CSV files and show me what's different"
 $ ephemeral generate <app>          # plan, write, build, test — bounded and cancellable
 $ ephemeral review <app>            # decide what it may do, one question at a time
 $ ephemeral run <app>
+$ ephemeral publish <app> ./my-app  # an ordinary directory; git init and push
 ```
 
 **What you cannot do yet.** Use a real model. Only the deterministic `mock`

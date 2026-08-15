@@ -278,6 +278,32 @@ intermediary has to exist — peer-to-peer needs rendezvous, offline delivery
 needs store-and-forward, and mobile needs a push service. The intermediary can
 be made blind; it cannot be made absent.
 
+## What works today
+
+`ephemeral publish` writes an ordinary directory — `git init` it and push it
+anywhere. `ephemeral install` shows the recipient what it is and what it will
+want, and installs nothing until they say so.
+
+```console
+$ ephemeral publish csv-comparator ./csv-comparator
+$ ephemeral install ./csv-comparator            # shows it; changes nothing
+$ ephemeral install ./csv-comparator --accept   # takes it, with no permissions
+```
+
+What travels: the manifest, the source, its tests, and the version digest.
+What does not: the data, the logs, the audit record, the lifecycle history, the
+sender's own installation id, their tags, their retention choice, the names of
+any settings they held — and **every permission decision they made**. The
+recipient's copy arrives with nothing and is asked about each request
+separately, with the reason the application itself gave.
+
+Two publishes of the same application produce the same package, so two people
+can check they received the same thing.
+
+Shared *sessions* — several people using one running application — are
+[ADR-0013](architecture/decisions/0013-how-several-people-share-an-application.md)
+and are not built.
+
 ### What would reopen this
 
 [ADR-0013](architecture/decisions/0013-how-several-people-share-an-application.md)

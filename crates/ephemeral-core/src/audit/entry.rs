@@ -121,6 +121,25 @@ pub enum AuditEvent {
         reason: String,
     },
 
+    /// An application was written out for somebody else to build.
+    ///
+    /// Publishing is an outbound data flow, so it is recorded like one: what
+    /// left, and where it went.
+    AppPublished {
+        /// Which application.
+        app: AppId,
+        /// Where it was written.
+        destination: String,
+    },
+
+    /// An application somebody else published was accepted.
+    AppInstalled {
+        /// The id it was given here. A new installation, not the sender's.
+        app: AppId,
+        /// Where it came from.
+        origin: String,
+    },
+
     /// A principal read a secret.
     ///
     /// The **name** is recorded. The value is not, and cannot be: there is no
@@ -171,6 +190,8 @@ impl AuditEvent {
             Self::AppCreated { .. } => "app_created",
             Self::AppDeleted { .. } => "app_deleted",
             Self::AppPurged { .. } => "app_purged",
+            Self::AppPublished { .. } => "app_published",
+            Self::AppInstalled { .. } => "app_installed",
             Self::SandboxCreated { .. } => "sandbox_created",
             Self::SandboxDestroyed { .. } => "sandbox_destroyed",
             Self::SecretAccessed { .. } => "secret_accessed",
@@ -191,7 +212,9 @@ impl AuditEvent {
             | Self::SandboxCreated { app, .. }
             | Self::SandboxDestroyed { app, .. }
             | Self::GenerationStarted { app, .. }
-            | Self::GenerationFinished { app, .. } => Some(app),
+            | Self::GenerationFinished { app, .. }
+            | Self::AppPublished { app, .. }
+            | Self::AppInstalled { app, .. } => Some(app),
             Self::PermissionRequested { principal, .. }
             | Self::PermissionDecided { principal, .. }
             | Self::PermissionRevoked { principal, .. }
@@ -271,6 +294,12 @@ impl AuditEvent {
                 let outcome = if *succeeded { "finished" } else { "gave up on" };
                 format!("{outcome} building {app} after {repairs} repair attempt(s)")
             }
+            Self::AppPublished { app, destination } => {
+                format!("published {app} to {destination}")
+            }
+            Self::AppInstalled { app, origin } => {
+                format!("installed {app} from {origin}, with no permissions")
+            }
             Self::SettingChanged { setting, value } => {
                 format!("changed {setting} to {value}")
             }
@@ -298,6 +327,10 @@ impl AuditEvent {
             }
             Self::SettingChanged { value, .. } => redactor.redact_in_place(value),
             Self::GenerationStarted { provider, .. } => redactor.redact_in_place(provider),
+            // A path can carry a secret — somebody's token in a directory name
+            // is not hypothetical — so both ends of a share are redacted.
+            Self::AppPublished { destination, .. } => redactor.redact_in_place(destination),
+            Self::AppInstalled { origin, .. } => redactor.redact_in_place(origin),
             // The remaining variants carry only identifiers, names, enums and
             // counts. There is nowhere in them for a secret to hide.
             Self::PermissionDecided { .. }

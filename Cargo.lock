@@ -226,6 +226,7 @@ dependencies = [
  "ephemeral-agent",
  "ephemeral-core",
  "ephemeral-runtime",
+ "serde_norway",
  "tempfile",
 ]
 

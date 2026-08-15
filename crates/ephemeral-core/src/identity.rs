@@ -105,6 +105,27 @@ impl AppId {
         Ok(Self(id))
     }
 
+    /// A stable identifier derived from a name alone.
+    ///
+    /// No random suffix, so the same name always yields the same id. Used where
+    /// an id must not carry information about *this* installation — publishing a
+    /// package, above all, where the sender's own id would otherwise travel and
+    /// two publishes of the same application would differ for no reason.
+    ///
+    /// Not for creating applications: two on one machine could collide.
+    #[must_use]
+    pub fn from_name(name: &str) -> Self {
+        let slug = slugify(name);
+        let stem: String = slug.chars().take(MAX_ID_LENGTH).collect();
+        let stem = stem.trim_end_matches('-');
+
+        Self(if stem.is_empty() {
+            "app".to_owned()
+        } else {
+            stem.to_owned()
+        })
+    }
+
     /// Derives a unique identifier from a human-readable name.
     ///
     /// The name is slugified and a short random suffix is appended, so two apps
