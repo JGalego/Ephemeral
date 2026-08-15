@@ -1,0 +1,43 @@
+# Supply-chain policy, enforced in CI.
+#
+# Ephemeral runs untrusted generated code, so the code we ship to do the
+# confining has to be code we can account for. See SECURITY.md.
+
+[graph]
+all-features = true
+
+[advisories]
+# Any known vulnerability fails the build. If one has no fix yet, add it here
+# with a comment saying why the exposure is acceptable and when to revisit —
+# never silently.
+yanked = "deny"
+ignore = []
+
+[licences]
+# Permissive licences only, matching our own Apache-2.0.
+version = 2
+confidence-threshold = 0.9
+allow = [
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "MIT",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Unicode-3.0",
+  "Zlib",
+  "CC0-1.0",
+]
+
+[bans]
+# Two versions of the same crate mean two copies of its bugs, and a larger
+# surface to audit. Warn rather than deny while the tree is still small.
+multiple-versions = "warn"
+wildcards = "deny"
+# Nothing in the tree may depend on these.
+deny = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
