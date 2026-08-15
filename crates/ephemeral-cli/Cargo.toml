@@ -17,6 +17,7 @@ path = "src/main.rs"
 ephemeral-core.workspace = true
 ephemeral-runtime.workspace = true
 ephemeral-agent.workspace = true
+serde_norway.workspace = true
 
 anyhow.workspace = true
 chrono.workspace = true

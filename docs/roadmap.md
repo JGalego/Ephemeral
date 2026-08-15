@@ -149,6 +149,18 @@ One part is **not** deferrable to Phase 7: immutable, content-addressed versions
 belong with Phase 2, because that is when versions start being produced and
 identity cannot be retrofitted onto history that was never recorded.
 
+Done so far:
+
+| | |
+|---|---|
+| `ephemeral publish` — a package that is an ordinary, reviewable directory | ✅ |
+| `ephemeral install` — review first, accept second, with no permissions | ✅ |
+| Grants and everything local kept out of a package | ✅ |
+
+Still to do: updating an installed application, with the permission delta put
+to the recipient before it applies; optional signing, scoped honestly to
+authorship; and shared sessions, which need the relay design in ADR-0013.
+
 **Done when:** an application can be published to a git host, installed by
 somebody else, and run under permissions *they* granted — with an update that
 wants more than the version they approved refused until they decide.

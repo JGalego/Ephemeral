@@ -21,6 +21,7 @@ mod output;
 mod parse;
 mod review;
 mod runtime;
+mod share;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -181,6 +182,23 @@ enum Command {
         app: String,
     },
 
+    /// Write an application out for somebody else to build.
+    Publish {
+        /// Which application.
+        app: String,
+        /// Where to write it.
+        into: PathBuf,
+    },
+
+    /// Look at an application somebody published, and accept it if you want it.
+    Install {
+        /// The directory it was published to.
+        from: PathBuf,
+        /// Accept it. Without this, it only shows you what it is.
+        #[arg(long)]
+        accept: bool,
+    },
+
     /// Show the lifecycle state machine, or where one application sits in it.
     States {
         /// Which application. Omit to see the machine itself.
@@ -337,6 +355,8 @@ fn run(cli: Cli) -> Result<()> {
         Command::Audit { app, limit } => commands::audit(&home, app.as_deref(), limit),
         Command::Generate { app, provider } => generate::run(&home, &app, &provider),
         Command::Review { app } => review::run(&home, &app),
+        Command::Publish { app, into } => share::publish(&home, &app, &into),
+        Command::Install { from, accept } => share::install(&home, &from, accept),
         Command::States { app } => commands::states(&home, app.as_deref()),
         Command::Doctor => {
             doctor::run(&home);
