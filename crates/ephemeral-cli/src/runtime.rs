@@ -19,7 +19,7 @@ use std::path::Path;
 use anyhow::{Context as _, Result, bail};
 use ephemeral_core::{
     Actor, AppId, AppManifest, Principal,
-    audit::{AuditEvent, AuditLog},
+    audit::AuditEvent,
     lifecycle::{LifecycleEvent, LifecycleState, TransitionRequest},
     manifest::RuntimeKind,
     permission::{AppPermission, Permission},
@@ -27,7 +27,7 @@ use ephemeral_core::{
 };
 use ephemeral_runtime::{
     ContainerSpec, ContainerState, ContainerStatus, HostPaths, ManagedContainer, Runtime as _,
-    RuntimeError, Secrets, docker::DockerRuntime,
+    Secrets, docker::DockerRuntime,
 };
 
 use crate::output;
@@ -771,24 +771,6 @@ fn report_started(manifest: &AppManifest, spec: &ContainerSpec, container: Optio
             ))
         );
     }
-}
-
-/// Reports a runtime failure as a lifecycle fact, without a running container.
-///
-/// Kept here so that `RuntimeError` never has to be understood by the audit
-/// module, which knows about applications rather than about Docker.
-#[allow(dead_code, reason = "used by the supervisor in Phase 2")]
-fn note_crash(audit: &mut AuditLog, app: &AppId, error: &RuntimeError) {
-    audit.append(
-        Actor::Runtime,
-        AuditEvent::LifecycleTransition {
-            app: app.clone(),
-            from: LifecycleState::Running,
-            to: LifecycleState::RuntimeFailed,
-            event: LifecycleEvent::RuntimeCrashed,
-            reason: error.to_string(),
-        },
-    );
 }
 
 #[cfg(test)]
