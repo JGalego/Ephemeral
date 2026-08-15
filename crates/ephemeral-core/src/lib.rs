@@ -18,9 +18,9 @@
 //! | [`identity`] | Application ids and the principals that hold permissions |
 //! | [`audit`] | The append-only, hash-chained security record |
 //! | [`retention`] | How ephemeral an application is |
+//! | [`storage`] | The per-application storage layout and the app store |
 //! | [`actor`] | Who caused something to happen |
-//!
-//! Landing next, in Phase 0: the storage layout and the application store.
+
 //!
 //! ## What does not live here
 //!
@@ -56,6 +56,7 @@ pub mod lifecycle;
 pub mod manifest;
 pub mod permission;
 pub mod retention;
+pub mod storage;
 
 pub use actor::Actor;
 pub use error::{Error, Result};

@@ -41,6 +41,10 @@ pub enum Error {
     #[error(transparent)]
     Audit(#[from] crate::audit::AuditError),
 
+    /// Storage could not be read or written.
+    #[error(transparent)]
+    Storage(#[from] crate::storage::StorageError),
+
     /// The requested application does not exist.
     #[error("no application with id {id}")]
     AppNotFound {
