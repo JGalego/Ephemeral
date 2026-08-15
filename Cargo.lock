@@ -217,6 +217,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ephemeral-api"
+version = "0.1.0"
+dependencies = [
+ "ephemeral-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "ephemeral-cli"
 version = "0.1.0"
 dependencies = [
