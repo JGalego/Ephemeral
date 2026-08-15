@@ -13,7 +13,7 @@
 use std::path::PathBuf;
 
 use ephemeral_api::{ApplicationDetail, ApplicationSummary, AuditEntryView};
-use ephemeral_core::{AppId, storage::Workspace};
+use ephemeral_core::{AppId, storage::{AppStore as _, Workspace}};
 
 /// Where Ephemeral keeps its state, unless told otherwise.
 const HOME_VARIABLE: &str = "EPHEMERAL_HOME";
