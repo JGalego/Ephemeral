@@ -285,7 +285,8 @@ impl Runtime for DockerRuntime {
             self.ensure_isolated_network()?;
         }
 
-        self.run_checked(&args, &environment)?;
+        self.run_checked(&args, &environment)
+            .map_err(|error| explain_isolation_failure(error, &spec))?;
         self.status(&spec.app)
     }
 
@@ -369,6 +370,40 @@ impl Runtime for DockerRuntime {
     fn managed_containers(&self) -> Result<Vec<ManagedContainer>, RuntimeError> {
         let listing = self.run_checked(&command::list_managed(), &[])?;
         Ok(parse_container_listing(&listing))
+    }
+}
+
+/// Recognises the one confinement Ephemeral cannot verify without a daemon.
+///
+/// An application that listens but may not call out is put on an `--internal`
+/// network so it is reachable from this machine and unable to reach off it.
+/// Whether Docker will publish a port on such a network is not something the
+/// argument-vector tests can establish, so if it refuses, the failure is named
+/// rather than handed over as a raw daemon error.
+///
+/// The result is still a refusal. If this combination turns out to be
+/// unsupported, an application that listens does not run — it does not quietly
+/// get ordinary networking instead.
+fn explain_isolation_failure(error: RuntimeError, spec: &ContainerSpec) -> RuntimeError {
+    let RuntimeError::CommandFailed { stderr, .. } = &error else {
+        return error;
+    };
+
+    let about_the_network = stderr.contains("conflicting options")
+        || (stderr.contains("port") && stderr.contains("network"));
+
+    if !about_the_network || spec.ports.is_empty() {
+        return error;
+    }
+
+    RuntimeError::CannotEnforce {
+        control: "letting this app be reached without letting it reach out".to_owned(),
+        reason: format!(
+            "Docker refused to publish a port on an internal network: {stderr}. Ephemeral \
+             will not fall back to ordinary networking, because that would give this \
+             application the whole internet when its owner allowed none of it. Granting it \
+             outbound access explicitly would let it run."
+        ),
     }
 }
 
@@ -536,6 +571,47 @@ mod tests {
     /// The one-line message should be the error, with `BuildKit`'s step marker
     /// out of the way. Every line of that output starts with `#`, which is why
     /// the marker cannot be used to tell noise from signal.
+    /// This is the one confinement no test here can establish, so the failure
+    /// it would produce is at least legible.
+    #[test]
+    fn a_refused_port_on_an_internal_network_is_named_rather_than_relayed() {
+        let mut spec = ContainerSpec::minimal(app(), "alpine", vec![]);
+        spec.ports = vec![crate::PortBinding::loopback(8080, 8080)];
+
+        let raw = RuntimeError::CommandFailed {
+            command: "docker run ...".to_owned(),
+            status: "exit status 125".to_owned(),
+            stderr: "conflicting options: port publishing and the container type network mode"
+                .to_owned(),
+        };
+
+        let explained = explain_isolation_failure(raw, &spec);
+        let RuntimeError::CannotEnforce { reason, .. } = &explained else {
+            panic!("expected a refusal, got {explained:?}");
+        };
+
+        assert!(reason.contains("will not fall back"), "{reason}");
+        assert!(reason.contains("whole internet"), "{reason}");
+    }
+
+    /// An unrelated failure must not be dressed up as this one.
+    #[test]
+    fn an_unrelated_failure_is_left_alone() {
+        let mut spec = ContainerSpec::minimal(app(), "alpine", vec![]);
+        spec.ports = vec![crate::PortBinding::loopback(8080, 8080)];
+
+        let raw = RuntimeError::CommandFailed {
+            command: "docker run ...".to_owned(),
+            status: "exit status 125".to_owned(),
+            stderr: "no such image: alpine".to_owned(),
+        };
+
+        assert!(matches!(
+            explain_isolation_failure(raw, &spec),
+            RuntimeError::CommandFailed { .. }
+        ));
+    }
+
     #[test]
     fn a_build_failure_is_summarised_by_its_error() {
         let output = concat!(

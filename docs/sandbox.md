@@ -81,6 +81,26 @@ audit log.
 That is what makes the audit record worth reading: Ephemeral can write the
 command it ran verbatim, and you can paste it into a terminal yourself.
 
+## The one claim you should check yourself
+
+Every other claim on this page is a unit test. This one is not: whether Docker
+will publish a port on an `--internal` network cannot be established without a
+daemon, and there is none in CI. If it turns out not to work, an application
+that listens **refuses to start** rather than quietly receiving ordinary
+networking — the failure mode is safe — but the feature would be broken and
+worth knowing about.
+
+Ten seconds on a machine with Docker settles it:
+
+```console
+$ docker network create --internal ephemeral-isolated
+$ docker run --rm --network ephemeral-isolated -p 127.0.0.1:8080:80 \
+    alpine sh -c 'echo it published'
+```
+
+If that prints `it published`, the combination works. If Docker refuses it,
+Ephemeral says so in those terms rather than relaying the raw error.
+
 ## How this is tested
 
 The confinement is decided by pure functions — a specification in, an argument
