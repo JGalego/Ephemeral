@@ -34,10 +34,9 @@
 | [install.md](install.md) | Installation, where files go, uninstalling |
 | [../SECURITY.md](../SECURITY.md) | The security model, and how to report a vulnerability |
 
+| [security/threat-model.md](security/threat-model.md) | What Ephemeral defends against, and — more usefully — what it does not |
+
 ## Not written yet
 
-- **`security/threat-model.md`** — required before the MVP is declared complete,
-  and a Phase 6 deliverable. Scope is listed in
-  [SECURITY.md](../SECURITY.md#threat-model).
 - **`api.md`** — the versioned Core API between clients and the core, once there
   is more than one client to hold it honest.

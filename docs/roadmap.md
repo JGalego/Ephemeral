@@ -122,8 +122,14 @@ Windows, macOS and Linux to parity, then the mobile control plane and clients
 The [threat model](../SECURITY.md#threat-model), security testing, supply-chain
 work, performance, recovery, installers and release automation.
 
-**Done when:** the threat model is written and every mitigation it names either
-exists or is recorded as accepted risk.
+[The threat model](security/threat-model.md) is written. Every mitigation it
+names either exists with a test, or is listed as a gap — including the ones that
+are uncomfortable: a container escape defeats the sandbox, a user who approves
+everything is barely protected, disk ceilings are declared and unenforced, and
+a persuasive lie in a permission request is not detected by anything.
+
+**Done when:** the remaining gaps are either closed or accepted deliberately,
+and release signing and SBOMs exist — which needs there to be releases.
 
 ### Phase 7 — Sharing
 

@@ -104,13 +104,16 @@ issue, and the user can cancel at any time.
 
 ## Threat model
 
-A full threat model covering malicious generated code, prompt injection,
-malicious external content, dependency and supply-chain attacks, container
-escape, privilege escalation, secret exfiltration, a compromised AI provider, a
-compromised runtime, malicious plugins, filesystem and network attacks, resource
-exhaustion and persistence after deletion is a required deliverable before the
-MVP is declared complete. It will live at `docs/security/threat-model.md` and is
-tracked as a Phase 6 item in [the roadmap](docs/roadmap.md).
+[docs/security/threat-model.md](docs/security/threat-model.md) covers malicious
+generated code, prompt injection, secret exfiltration, dependency and
+supply-chain attacks, a compromised model provider, persistence after deletion,
+resource exhaustion, network egress, tampering with Ephemeral's own records, and
+the shared sessions that are designed but not built.
+
+Read the sections marked *not mitigated* first. A threat model that concludes
+the system is safe is a marketing document; the value is in what it admits.
+Every mitigation it marks as implemented has a test that fails if the property
+stops holding.
 
 ## Supply chain
 
