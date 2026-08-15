@@ -54,11 +54,14 @@ remote pass. It is worth the thirty seconds.
 export EPHEMERAL_HOME=/tmp/ephemeral-scratch
 
 cargo run -p ephemeral-cli -- create "compare two CSV files"
-cargo run -p ephemeral-cli -- list
-cargo run -p ephemeral-cli -- grant <app-id> read:'~/Downloads/**' --why "to compare them"
-cargo run -p ephemeral-cli -- inspect <app-id>
+cargo run -p ephemeral-cli -- generate <app-id>   # needs Docker; uses the mock provider
+cargo run -p ephemeral-cli -- review <app-id>     # decide what it may do
+cargo run -p ephemeral-cli -- run <app-id>
 cargo run -p ephemeral-cli -- audit
 ```
+
+Everything except `generate` and `run` works without Docker. `ephemeral doctor`
+says what this machine is missing and what would fix it.
 
 Delete the directory when you are done. Nothing outside it was touched.
 
@@ -71,6 +74,9 @@ crates/
                      APIs. This is where the security-critical logic lives.
   ephemeral-runtime/ the sandbox. What actually confines generated code, and
                      the Docker implementation of it.
+  ephemeral-agent/   the boundary with whatever writes the code. Model output
+                     is a validated proposal, never a command. The mock
+                     provider here is what CI runs against.
   ephemeral-cli/     a client of the above. Decides nothing itself.
 docs/
   architecture/decisions/   ADRs — read 0001 first
