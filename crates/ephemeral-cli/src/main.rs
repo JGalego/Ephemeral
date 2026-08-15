@@ -1,0 +1,380 @@
+//! The Ephemeral command line.
+//!
+//! The CLI is not a wrapper around the desktop application: both are clients of
+//! the same domain model in `ephemeral-core`, so anything one can express the
+//! other can too, and a permission decision means the same thing in both
+//! ([`ARCHITECTURE.md` §5](https://github.com/JGalego/Ephemeral/blob/main/ARCHITECTURE.md)).
+//!
+//! Phase 0 gives you everything that does not need a runtime or a model
+//! provider: creating an application record, inspecting it, moving it through
+//! its lifecycle, granting and revoking permissions, reading the audit trail,
+//! and diagnosing the environment. Commands that need Phase 1 or Phase 2 say so
+//! plainly rather than pretending.
+
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
+
+mod commands;
+mod doctor;
+mod output;
+mod parse;
+
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+
+use anyhow::{Context as _, Result};
+use clap::{Parser, Subcommand};
+
+/// Where Ephemeral keeps its state, unless told otherwise.
+const HOME_ENV: &str = "EPHEMERAL_HOME";
+
+#[derive(Parser)]
+#[command(
+    name = "ephemeral",
+    version,
+    about = "Software that exists only while it's useful.",
+    long_about = "Ephemeral builds small applications from a description, runs them in a \
+                  sandbox, and throws them away when you're done.\n\n\
+                  This is Phase 0: the application model, the lifecycle and the permission \
+                  system are here; runtimes and generation are not yet. Commands that need \
+                  them will tell you so.",
+    propagate_version = true
+)]
+struct Cli {
+    /// Where Ephemeral keeps its applications, permissions and audit log.
+    #[arg(long, global = true, env = HOME_ENV, value_name = "PATH")]
+    home: Option<PathBuf>,
+
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Ask for an application.
+    #[command(
+        long_about = "Records what you want. Generation arrives in Phase 2; until then \
+                            this creates the application's identity, intent and retention \
+                            policy so the rest of its life can be exercised."
+    )]
+    Create {
+        /// What you want the application to do, in your own words.
+        intent: String,
+
+        /// A name for it. Derived from the intent if you don't give one.
+        #[arg(long)]
+        name: Option<String>,
+
+        /// How long to keep it: one-shot, ephemeral, temporary, reusable, persistent.
+        #[arg(long, default_value = "temporary")]
+        retention: String,
+    },
+
+    /// List your applications.
+    List {
+        /// Include archived and deleted ones.
+        #[arg(long, short)]
+        all: bool,
+    },
+
+    /// Show everything about one application.
+    Inspect {
+        /// Which application.
+        app: String,
+    },
+
+    /// Show what an application is allowed to do.
+    Permissions {
+        /// Which application, or `ephemeral` for the product itself.
+        app: String,
+    },
+
+    /// Allow something.
+    #[command(
+        long_about = "Grants a permission. Only you can do this — no autonomous part of \
+                            Ephemeral can grant itself or anything else access."
+    )]
+    Grant {
+        /// Which application, or `ephemeral` for the product itself.
+        app: String,
+        /// What to allow, e.g. `read:~/Downloads/**`.
+        permission: String,
+        /// Why you are allowing it. Recorded in the audit log.
+        #[arg(long)]
+        why: Option<String>,
+    },
+
+    /// Take a permission back.
+    Revoke {
+        /// Which application, or `ephemeral` for the product itself.
+        app: String,
+        /// What to revoke.
+        permission: String,
+    },
+
+    /// Put an application away, keeping its data.
+    Archive {
+        /// Which application.
+        app: String,
+    },
+
+    /// Bring an archived application back.
+    Restore {
+        /// Which application.
+        app: String,
+    },
+
+    /// Delete an application: destroy its runtime access and revoke everything.
+    #[command(
+        long_about = "Deleting withdraws every permission immediately and stops the \
+                            application doing anything. Its record and data are kept so you \
+                            can restore it; `purge` is what destroys them."
+    )]
+    Delete {
+        /// Which application.
+        app: String,
+    },
+
+    /// Destroy an application and all its data, irreversibly.
+    Purge {
+        /// Which application.
+        app: String,
+        /// Confirm that you mean it.
+        #[arg(long)]
+        yes: bool,
+    },
+
+    /// Show an application's history: what happened to it and why.
+    Logs {
+        /// Which application.
+        app: String,
+    },
+
+    /// Show the security record.
+    Audit {
+        /// Only entries for this application.
+        #[arg(long)]
+        app: Option<String>,
+        /// How many of the most recent entries to show.
+        #[arg(long, default_value_t = 25)]
+        limit: usize,
+    },
+
+    /// Show the lifecycle state machine, or where one application sits in it.
+    States {
+        /// Which application. Omit to see the machine itself.
+        app: Option<String>,
+    },
+
+    /// Check this machine for problems.
+    Doctor,
+
+    /// Start an application.
+    Run {
+        /// Which application.
+        app: String,
+    },
+
+    /// Stop a running application.
+    Stop {
+        /// Which application.
+        app: String,
+    },
+
+    /// Suspend a running application.
+    Pause {
+        /// Which application.
+        app: String,
+    },
+}
+
+/// Where each platform expects an application to keep its data.
+///
+/// Written out rather than taken from a crate: the obvious dependency for this
+/// pulls in a weak-copyleft transitive dependency, and the supply-chain policy
+/// in `deny.toml` allows permissive licences only. Thirty lines of documented
+/// path logic is a better trade than an exception to that policy, and it is one
+/// fewer thing in the dependency tree of a product that runs untrusted code.
+///
+/// Taking the environment as arguments rather than reading it makes this
+/// testable on every platform at once, instead of only on whichever one CI
+/// happens to be running.
+fn data_dir_for(
+    os: &str,
+    home: Option<&Path>,
+    xdg_data_home: Option<&Path>,
+    appdata: Option<&Path>,
+) -> Option<PathBuf> {
+    match os {
+        "windows" => appdata.map(|base| base.join("Ephemeral")),
+        "macos" => home.map(|base| base.join("Library/Application Support/Ephemeral")),
+        _ => {
+            // The XDG spec says a relative XDG_DATA_HOME is invalid and must be
+            // ignored, rather than resolved against the working directory.
+            let base = xdg_data_home
+                .filter(|path| path.is_absolute())
+                .map(Path::to_path_buf)
+                .or_else(|| home.map(|base| base.join(".local/share")))?;
+            Some(base.join("ephemeral"))
+        }
+    }
+}
+
+/// Resolves where Ephemeral keeps its state.
+///
+/// `--home` or `EPHEMERAL_HOME` wins; otherwise the platform's own data
+/// directory, so Ephemeral puts its files where each operating system expects
+/// rather than scattering dotfiles.
+fn resolve_home(explicit: Option<PathBuf>) -> Result<PathBuf> {
+    if let Some(path) = explicit {
+        return Ok(path);
+    }
+
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty());
+    let xdg = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from);
+    let appdata = std::env::var_os("APPDATA").map(PathBuf::from);
+
+    data_dir_for(
+        std::env::consts::OS,
+        home.as_deref(),
+        xdg.as_deref(),
+        appdata.as_deref(),
+    )
+    .context(
+        "could not work out where to keep Ephemeral's files on this system; \
+         set EPHEMERAL_HOME or pass --home",
+    )
+}
+
+fn run(cli: Cli) -> Result<()> {
+    let home = resolve_home(cli.home)?;
+
+    match cli.command {
+        Command::Create {
+            intent,
+            name,
+            retention,
+        } => commands::create(&home, &intent, name.as_deref(), &retention),
+        Command::List { all } => commands::list(&home, all),
+        Command::Inspect { app } => commands::inspect(&home, &app),
+        Command::Permissions { app } => commands::permissions(&home, &app),
+        Command::Grant {
+            app,
+            permission,
+            why,
+        } => commands::grant(&home, &app, &permission, why.as_deref()),
+        Command::Revoke { app, permission } => commands::revoke(&home, &app, &permission),
+        Command::Archive { app } => commands::archive(&home, &app),
+        Command::Restore { app } => commands::restore(&home, &app),
+        Command::Delete { app } => commands::delete(&home, &app),
+        Command::Purge { app, yes } => commands::purge(&home, &app, yes),
+        Command::Logs { app } => commands::logs(&home, &app),
+        Command::Audit { app, limit } => commands::audit(&home, app.as_deref(), limit),
+        Command::States { app } => commands::states(&home, app.as_deref()),
+        Command::Doctor => {
+            doctor::run(&home);
+            Ok(())
+        }
+        Command::Run { app } => commands::not_yet(&app, "run", 1, "the Docker runtime"),
+        Command::Stop { app } => commands::not_yet(&app, "stop", 1, "the Docker runtime"),
+        Command::Pause { app } => commands::not_yet(&app, "pause", 1, "the Docker runtime"),
+    }
+}
+
+fn main() -> ExitCode {
+    let cli = Cli::parse();
+
+    match run(cli) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("{} {error}", output::bad("error:"));
+            // Causes matter here: "could not save the ledger" is not actionable
+            // without "permission denied on /var/lib/ephemeral".
+            for cause in error.chain().skip(1) {
+                eprintln!("  {} {cause}", output::dim("caused by:"));
+            }
+            ExitCode::FAILURE
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory as _;
+
+    /// clap's own consistency checks: duplicate names, bad argument
+    /// combinations, missing help. Cheap, and catches a whole class of mistakes
+    /// that would otherwise only show up when somebody runs the command.
+    #[test]
+    fn the_command_line_is_well_formed() {
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn an_explicit_home_wins_over_the_platform_default() {
+        let explicit = PathBuf::from("/tmp/somewhere");
+        assert_eq!(resolve_home(Some(explicit.clone())).unwrap(), explicit);
+    }
+
+    #[test]
+    fn each_platform_gets_the_directory_it_expects() {
+        let home = Path::new("/home/ana");
+        let appdata = Path::new("C:/Users/ana/AppData/Roaming");
+
+        assert_eq!(
+            data_dir_for("linux", Some(home), None, None).unwrap(),
+            PathBuf::from("/home/ana/.local/share/ephemeral")
+        );
+        assert_eq!(
+            data_dir_for("macos", Some(Path::new("/Users/ana")), None, None).unwrap(),
+            PathBuf::from("/Users/ana/Library/Application Support/Ephemeral")
+        );
+        assert_eq!(
+            data_dir_for("windows", None, None, Some(appdata)).unwrap(),
+            PathBuf::from("C:/Users/ana/AppData/Roaming/Ephemeral")
+        );
+    }
+
+    #[test]
+    fn xdg_data_home_is_honoured_when_it_is_set() {
+        assert_eq!(
+            data_dir_for(
+                "linux",
+                Some(Path::new("/home/ana")),
+                Some(Path::new("/data/xdg")),
+                None
+            )
+            .unwrap(),
+            PathBuf::from("/data/xdg/ephemeral")
+        );
+    }
+
+    /// The XDG specification says a relative value is invalid and must be
+    /// ignored rather than resolved against the working directory — which would
+    /// put a user's applications wherever they happened to be standing.
+    #[test]
+    fn a_relative_xdg_data_home_is_ignored() {
+        assert_eq!(
+            data_dir_for(
+                "linux",
+                Some(Path::new("/home/ana")),
+                Some(Path::new("relative/path")),
+                None
+            )
+            .unwrap(),
+            PathBuf::from("/home/ana/.local/share/ephemeral")
+        );
+    }
+
+    #[test]
+    fn nowhere_to_put_anything_is_an_error_rather_than_a_guess() {
+        assert_eq!(data_dir_for("linux", None, None, None), None);
+        assert_eq!(
+            data_dir_for("windows", Some(Path::new("/home/ana")), None, None),
+            None
+        );
+    }
+}

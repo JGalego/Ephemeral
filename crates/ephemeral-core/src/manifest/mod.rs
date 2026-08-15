@@ -69,7 +69,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     Timestamp,
     identity::AppId,
-    lifecycle::Lifecycle,
+    lifecycle::{Lifecycle, Transition, TransitionRequest},
     now,
     permission::{AppPermissions, RiskLevel},
 };
@@ -429,6 +429,36 @@ impl AppManifest {
         )
     }
 
+    /// Applies a lifecycle transition, refusing any that would leave the
+    /// manifest invalid.
+    ///
+    /// Some transitions are legal for the state machine but not for this
+    /// particular application. Restoring from the archive moves an application
+    /// to `Ready`, which requires a runtime — and an application that was
+    /// cancelled during planning never got one. The state machine cannot know
+    /// that; the manifest can.
+    ///
+    /// On refusal the lifecycle is left exactly as it was, so a rejected
+    /// transition never leaves a half-applied record behind.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::Error::Lifecycle`] if the transition is not permitted, or
+    /// [`crate::Error::Manifest`] if applying it would produce an invalid
+    /// manifest.
+    pub fn apply(&mut self, request: TransitionRequest) -> Result<Transition, crate::Error> {
+        let before = self.lifecycle.clone();
+        let transition = self.lifecycle.apply(request)?.clone();
+
+        if let Err(error) = self.validate() {
+            self.lifecycle = before;
+            return Err(error.into());
+        }
+
+        self.touch();
+        Ok(transition)
+    }
+
     /// Records that the application changed.
     pub fn touch(&mut self) {
         self.updated_at = now();
@@ -784,6 +814,62 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    /// A transition the state machine allows but this application cannot
+    /// satisfy is refused, and refusing it changes nothing.
+    #[test]
+    fn a_transition_that_would_invalidate_the_manifest_is_refused() {
+        use crate::actor::Actor;
+        use crate::lifecycle::{LifecycleEvent, LifecycleState};
+
+        // Cancelled during planning, so it never acquired a runtime, then put
+        // away. Restoring would move it to Ready, which requires one.
+        let mut manifest = AppManifest::requested(id("csv-comparator"), "CSV Comparator");
+        for event in [LifecycleEvent::Cancel, LifecycleEvent::Archive] {
+            manifest
+                .apply(TransitionRequest::new(
+                    event,
+                    Actor::User,
+                    "changed my mind",
+                ))
+                .unwrap();
+        }
+        assert_eq!(manifest.lifecycle.state(), LifecycleState::Archived);
+
+        let error = manifest
+            .apply(TransitionRequest::new(
+                LifecycleEvent::Restore,
+                Actor::User,
+                "actually I do want it",
+            ))
+            .unwrap_err();
+
+        assert!(matches!(error, crate::Error::Manifest(_)));
+        assert_eq!(
+            manifest.lifecycle.state(),
+            LifecycleState::Archived,
+            "a refused transition must leave the application exactly where it was"
+        );
+        manifest.validate().unwrap();
+    }
+
+    #[test]
+    fn a_transition_that_keeps_the_manifest_valid_is_applied() {
+        use crate::actor::Actor;
+        use crate::lifecycle::{LifecycleEvent, LifecycleState};
+
+        let mut manifest = apartment_comparator();
+        let transition = manifest
+            .apply(TransitionRequest::new(
+                LifecycleEvent::Plan,
+                Actor::Ephemeral,
+                "working out what this needs",
+            ))
+            .unwrap();
+
+        assert_eq!(transition.to, LifecycleState::Planning);
+        assert_eq!(manifest.lifecycle.state(), LifecycleState::Planning);
     }
 
     #[test]
