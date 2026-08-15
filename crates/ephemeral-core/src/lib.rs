@@ -13,11 +13,12 @@
 //! | Module | Responsibility |
 //! |--------|----------------|
 //! | [`lifecycle`] | The explicit state machine every application moves through |
+//! | [`permission`] | Both permission systems, and the ledger that decides |
 //! | [`identity`] | Application ids and the principals that hold permissions |
 //! | [`actor`] | Who caused something to happen |
 //!
-//! Landing next, in Phase 0: the versioned application manifest, both permission
-//! systems, retention policies, the audit log and the storage layout.
+//! Landing next, in Phase 0: the versioned application manifest, retention
+//! policies, the audit log and the storage layout.
 //!
 //! ## What does not live here
 //!
@@ -29,7 +30,7 @@
 //! ## The invariants this crate exists to hold
 //!
 //! 1. A generated application inherits **nothing** from Ephemeral's own
-//!    permissions.
+//!    permissions ([`permission`]).
 //! 2. Permission checks are **default-deny**, and an explicit denial wins.
 //! 3. Lifecycle transitions are **total and explicit** — an illegal transition is
 //!    a typed error, never a silent state change ([`lifecycle`]).
@@ -48,11 +49,13 @@ pub mod actor;
 pub mod error;
 pub mod identity;
 pub mod lifecycle;
+pub mod permission;
 
 pub use actor::Actor;
 pub use error::{Error, Result};
 pub use identity::{AppId, PluginId, Principal};
 pub use lifecycle::{Lifecycle, LifecycleEvent, LifecycleState, Transition};
+pub use permission::{AppPermission, Decision, Grant, MetaPermission, PermissionLedger};
 
 /// A point in time, always in UTC.
 ///
