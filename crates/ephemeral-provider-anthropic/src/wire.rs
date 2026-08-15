@@ -38,7 +38,12 @@ pub const DEFAULT_MODEL: &str = "claude-sonnet-5";
 /// unreadable, so the whole attempt is wasted. That asymmetry argues for a
 /// generous ceiling, since the cost of one that is too high is paid only when a
 /// response genuinely needs the room.
-const MAX_TOKENS: u32 = 64_000;
+///
+/// It is not free, though. The reply is not streamed, so a bigger ceiling means
+/// a longer wait before *anything* arrives — see
+/// [`crate::transport`]'s timeout, which has to be large enough for a reply
+/// this size. The two move together.
+pub(crate) const MAX_TOKENS: u32 = 32_000;
 
 /// The ceiling has to leave room for reasoning *and* an application, because
 /// both are spent from it. Checked at compile time rather than by a test, since
