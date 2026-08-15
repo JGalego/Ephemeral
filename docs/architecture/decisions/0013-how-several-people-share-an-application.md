@@ -1,8 +1,7 @@
 # ADR-0013: How several people share one application
 
-- **Status:** **proposed** — the recommendation changed once the question was
-  put properly; see [Open question](#open-question). Needs a product decision
-  before anything is built.
+- **Status:** **proposed.** The shape below is agreed; what remains open is who
+  operates a relay, which is an infrastructure commitment. Nothing is built.
 - **Date:** 2026-08-15
 - **Deciders:** Ephemeral maintainers
 - **Phase:** 7 — Sharing
@@ -11,248 +10,213 @@
 
 [ADR-0012](0012-sharing-distributes-recipes.md) covers giving somebody an
 application: they rebuild it, with their own data and their own permission
-decisions. That model is safe precisely because nothing is shared at runtime.
+decisions. That is safe precisely because nothing is shared at runtime.
 
 It does not cover the thing people most want to demonstrate:
 
 > "Build me a group chat, and let my friends join with a link."
 
-Here there is **one** application, **one** body of state, and **several
-people**. That is a different problem in three ways the current design does not
-handle:
+Here there is one application, one body of state, and several people. That
+breaks the current design in three ways:
 
 **There is more than one user.** `Actor::User` is a singleton today — "the
-person at this machine", unnamed. The moment somebody joins by invite, the
-person using the application is not the person who granted its permissions.
+person at this machine", unnamed. Somebody joining by invite is not the person
+who granted the application's permissions.
 
-**The application processes other people's data.** Everything in the permission
-model reasons about protecting *the user* from *the application*. A shared
-instance also has to reason about protecting participants from each other, and
-all of them from whoever runs it.
+**The application handles other people's data.** The permission model protects
+*the user* from *the application*. Sharing also has to protect participants from
+each other, and all of them from whoever holds the shared state.
 
-**It has to be somewhere.** A local-first application that several people use at
-once is a contradiction unless something is reachable by all of them. Desktop
-Ephemeral has no such thing today, and ports bind to loopback by design.
-
-The temptation is to treat this as a networking feature. It is not. It is a
-change to who the product is protecting, from whom.
+**The state has to be somewhere.** Several people cannot share something unless
+it is reachable by all of them, and ports bind to loopback by design.
 
 ## Decision
 
-**Wherever a shared session lives, whoever holds it can read it — and Ephemeral
-says so.**
+**Separate the application from the session.**
 
-That is the truth about shared state, and the design's job is to make it legible
-rather than obscure it, the same way execution location is surfaced rather than
-hidden ([ADR-0007](0007-mobile-control-plane.md)). What varies between the
-options below is *who* that is: one participant, an operator, or nobody but the
-participants themselves.
+The application does not need a shared home. It is already distributable as a
+recipe, and a recipe the recipient rebuilt is *theirs*: it runs on their device
+under permissions they granted, and it survives the author deleting theirs.
 
-The rest of this decision holds whichever option wins.
+What genuinely needs a shared home is the **session** — the conversation. That
+is a much smaller problem, because a relay moves data rather than code.
+
+### Two tiers, labelled
+
+Requiring Ephemeral on every device is the price of the guarantees, and it is a
+real cost to reach. So there are two ways to take part, and the difference is
+stated rather than hidden — the same way `NativeRuntime` admits it is less
+isolated than a container ([ADR-0005](0005-docker-first-runtime-abstraction.md)).
+
+| | Member | Guest |
+|---|---|---|
+| Needs Ephemeral | Yes | No — a browser |
+| Where the app runs | Their own device | Their browser, served by a member or the relay |
+| Who decided its permissions | They did | Nobody: it has no local access to give |
+| Confined by Ephemeral's sandbox | Yes | **No**, and the interface says so |
+| Survives every other participant leaving | Yes | Only while some member remains |
+
+A guest cannot be given a member's guarantee, and the reason is fundamental
+rather than an implementation gap: **whoever serves the code can break the
+encryption.** A relay that ships the browser code holding the keys can ship
+backdoored code instead. This is the standing objection to browser-delivered
+end-to-end encryption; subresource integrity and code signing do not close it,
+because the same origin serves the checker. The tier is therefore presented as
+weaker, and "get Ephemeral for the full thing" is the honest call to action.
+
+### Metadata is a requirement, not a disclosure
+
+Content encryption alone is not enough. Who talks to whom, and when, is
+frequently more sensitive than what was said. The invariant:
+
+> **The relay never learns more than a participant already knows.**
+
+Which means:
+
+- **The group operates its own relay by default** — a member's device or one
+  they self-host. Then the operator is somebody who can already read the
+  messages, so metadata reveals nothing additional. This is the default, not a
+  fallback.
+- **Per-room identities**, so nothing correlates a person across rooms.
+- **Sealed sender**, so a relay sees "a message for this room" rather than who
+  sent it.
+- **Padding and batching**, to blunt size and timing analysis.
+
+Using a third-party relay is then an explicit opt-in with a named cost, rather
+than the default with a footnote in the documentation.
+
+What cannot be honestly promised is the elimination of metadata while any
+intermediary exists. The intermediary can be made blind; it cannot be made
+absent — see [the alternatives](#alternatives-considered).
 
 ### Identity
 
-Each Ephemeral installation holds a keypair, generated on first use and kept in
-platform-native secure storage. A participant *is* a public key, with an
-optional display name that is a label rather than an identity. No accounts, no
-directory, nothing central.
+Each installation holds a keypair, generated on first use and kept in
+platform-native secure storage. A participant *is* a public key, with a display
+name that is a label rather than an identity. No accounts, no directory, nothing
+central.
 
-### An invite is a capability, not a link to a door
+### An invite is a capability
 
-An invite is a signed, scoped token naming exactly what it confers, and it is
-presented in the same terms as a permission:
-
-> **Ana is inviting you to Group Chat.**
->
-> You will be able to: read and send messages in this room.
-> You will not be able to: change the app, or see other rooms.
->
-> The app runs on your device, under permissions you grant. Messages are shared
-> with everyone in the room.
->
-> This invite expires in 7 days and Ana can revoke it at any time.
-
-The specific disclosure depends on where the session lives, and must name it
-exactly — "stored on Ana's computer, where Ana can read them" is a different
-sentence from "shared directly between participants", and a user deciding
-whether to join needs the true one.
-
-Invites are scoped, expiring by default, individually revocable, and recorded in
-the audit log on both sides. Accepting one is a decision with the same weight as
-granting a permission, because that is what it is.
+Signed, scoped, expiring by default, individually revocable, and audited on both
+sides. Revocation must take effect on a live session — ending access
+immediately, not merely declining to issue new invites. Accepting one carries
+the weight of a permission decision, because that is what it is.
 
 ### Three planes of permission, kept apart
 
-Collapsing any two of these is how this goes wrong:
-
 | Plane | Governs | Decided by |
 |-------|---------|------------|
-| Each participant's app permissions | What that participant's copy may touch on **their own** device — their camera, a file they pick | That participant, on their own machine |
+| Each participant's app permissions | What their copy may touch on **their own** device | That participant |
 | Session membership | Who is in the room at all | Whoever holds the session, via invites |
-| Participation capability | What a member may do **inside** the application — send messages, invite others, moderate | The inviter, via the invite |
+| Participation capability | What a member may do **inside** the app — send, invite, moderate | The inviter, via the invite |
 
-The third is new. Application-level authorisation is the application's own
-concern, but Ephemeral supplies the primitive so that generated code does not
-reinvent it — badly — every time. A generated application must not be the thing
-deciding who is allowed to use it.
+The third is new. Ephemeral supplies the primitive so that generated code does
+not reinvent authorisation badly; a generated application must not be the thing
+deciding who may use it.
 
-### Sharing is an explicit, revocable state
+### Sharing is explicit and revocable
 
-An application is not shareable by default. Starting a shared session is a
-distinct action with its own consent, its own audit trail, and its own off
-switch that ends every participant's access immediately — revocation has to take
-effect on a live session, not merely stop new invites being issued.
+An application is not shareable by default. Starting a shared session is its own
+action, with its own consent, audit trail, and off switch that ends every
+participant's access at once.
 
-If the chosen option requires accepting inbound connections, that is part of the
-same decision and is never implied by anything else. It would be the single
-largest change to the desktop attack surface so far, which is one of the
-arguments against the options that need it.
+## Alternatives considered
 
-## Open question
+### Host it on the author's device; guests connect
 
-**Where does the shared part actually live?** This determines the privacy
-properties, the operating cost, and how much infrastructure the project takes
-on. It is a product decision rather than a technical one, so it is recorded here
-unresolved.
+Guests need no install, which is the best reach of any option. Rejected as the
+model: the application dies when the author closes their laptop, the author sees
+everything by construction, it needs inbound connections — the largest change to
+the desktop attack surface so far — and **a phone can never host**, having no
+container runtime and no background residency. A group of phone users would have
+nobody able to run it.
 
-### Option A — On the host's own device
+### Host it on an Ephemeral control plane
 
-The person who created the application runs it; guests connect to them.
+Always available, no NAT problem, and mobile needs a control plane anyway
+([ADR-0007](0007-mobile-control-plane.md)). Rejected as the model because
+everyone's data leaves every device, and it makes the project operate
+multi-tenant execution of untrusted generated code — a high-value target holding
+many users' data. Local-first would stop being true for the feature people demo
+most.
 
-- **For:** no infrastructure to operate; local-first is preserved; data stays on
-  one identifiable person's machine; the trust boundary matches an intuition
-  people already have from hosting a game server. Costs nothing to run.
-- **Against:** the host must be online for anyone to use it; NAT traversal needs
-  at least a rendezvous service, so "no infrastructure" is not quite true; the
-  host's address is exposed to guests; effectively unavailable as a *host* on
-  mobile.
+### Pure peer-to-peer
 
-### Option B — On an Ephemeral control plane
+The most attractive on privacy: no relay, no host, nobody positioned to observe
+anything. An earlier draft of this ADR dismissed group membership as unsolved,
+which was **wrong and out of date** — MLS ([RFC 9420](https://www.rfc-editor.org/rfc/rfc9420.html))
+is a standardised answer to group key agreement and membership changes.
 
-The instance runs on servers, as mobile execution already will.
+Rejected anyway, because it does not remove infrastructure and it loses on the
+two properties that matter most here:
 
-- **For:** always available; no NAT problem; works when the author's laptop is
-  shut; the mobile design needs a control plane regardless
-  ([ADR-0007](0007-mobile-control-plane.md)), so this reuses it.
-- **Against:** everyone's data leaves every device; the project takes on
-  hosting, cost, abuse and moderation; it creates a high-value target holding
-  many users' data and running untrusted generated code multi-tenantly;
-  local-first stops being true for the feature people will demo most.
+- **Rendezvous.** Peers behind NAT cannot find each other unaided. Hole-punching
+  fails routinely on mobile networks, and the fallback is a TURN relay that
+  carries the traffic — so there is a relay regardless, just for the hard cases.
+- **Offline delivery.** If one person is asleep, a message waits until both are
+  online at once. For a chat application that is fatal, and every fix is
+  store-and-forward at a peer or a relay — something holds the data either way.
+- **Mobile push.** Phones cannot hold persistent connections. Waking an
+  application requires APNs or FCM, third parties that observe metadata whatever
+  else is done.
 
-### Option C — Peer-to-peer with replicated state
-
-No host at all; participants exchange updates directly.
-
-- **For:** no server, no host who can read everything, nothing to operate.
-- **Against:** substantially the hardest; generated applications would have to
-  be written against a conflict-free replication model, which is a strong
-  constraint on what a model can produce; presence and discovery still need a
-  rendezvous; "who is allowed to join" without a host is an unsolved-enough
-  problem that it would dominate the schedule.
-
-### Option D — Distribute the app, relay only the session
-
-Do not host the application at all. Every participant runs **their own copy**,
-built from the shared recipe ([ADR-0012](0012-sharing-distributes-recipes.md)),
-under permissions they granted. What is shared is the *session state* — the
-conversation — carried by a relay.
-
-- **For:** works on every platform, because each participant's app runs wherever
-  their apps already run, including the control plane on mobile
-  ([ADR-0007](0007-mobile-control-plane.md)) — no new hosting story. Survives
-  anybody leaving: everyone owns the application, and the state is replicated
-  rather than held by one device. A relay moves *data*, not code, so it is a far
-  smaller trust and infrastructure surface than running untrusted generated code
-  multi-tenantly — and it can be end-to-end encrypted, so the relay operator
-  cannot read the contents. The relay is self-hostable, which makes "run your
-  own" a real answer rather than a slogan.
-- **Against:** generated applications must be written against a shared-state
-  primitive rather than arbitrary networking. That is a genuine constraint on
-  what a model may produce — though a much narrower one than Option C's "write
-  your own conflict-free replication", because Ephemeral supplies the primitive
-  and the application only reads and writes it. Some infrastructure still
-  exists, and although contents can be encrypted, *metadata* — who is in a room,
-  when they are active — is visible to whoever runs the relay. Conflict
-  resolution has to be answered once, in the primitive, rather than avoided.
-
-### Recommendation
-
-**D.**
-
-The first three options all took "share a running app" literally and went
-looking for somewhere to run it. That framing conflates two separable things.
-The **application** is already distributable as a recipe, and a recipe the
-recipient rebuilt is *theirs* — it survives the author deleting theirs, and it
-runs wherever that person's apps run. The only thing that genuinely needs a
-shared home is the **session state**.
-
-Separating them answers both of the questions that decide this:
-
-| | A: host's device | B: control plane | C: peer-to-peer | D: distribute + relay |
-|---|---|---|---|---|
-| Works on every platform | Desktop hosts only — a phone can never host | Yes | Worst: *every* peer needs the runtime | Yes |
-| Survives the author deleting it | No — it dies with their machine | Only with an ownership model | Yes | Yes |
-| Who can read the contents | The host, entirely | Whoever operates it | Participants only | Participants only |
-| Infrastructure to operate | A rendezvous service | Multi-tenant untrusted execution | A rendezvous service | A relay, self-hostable |
-
-D also keeps the existing security model intact rather than bolting a second one
-beside it: every participant's application is confined by *their* Ephemeral,
-under permissions *they* granted, which is the property
-[ADR-0012](0012-sharing-distributes-recipes.md) exists to protect.
-
-An earlier draft of this ADR recommended A with B as an opt-in. That was wrong,
-and it was wrong because it accepted the framing instead of questioning it.
+The decision above is therefore not "relay instead of peer-to-peer" but **direct
+connections where they work, a blind relay where they do not** — which is what
+the alternative reduces to in practice once offline delivery and mobile are
+required.
 
 ## Consequences
 
 ### What this makes easier
 
-The demo everybody wants — an application built from a sentence, shared by link,
-used by several people. A vocabulary for multi-user applications that generated
-code can rely on instead of improvising. A migration path towards
-capability-based delegation, which
-[ADR-0003](0003-two-tier-permission-model.md) deliberately left room for.
+The application survives anybody leaving, because everyone owns their copy.
+Participation works on every platform. The existing security model stays intact
+rather than gaining a second one beside it: each participant's application is
+confined by *their* Ephemeral under permissions *they* granted.
 
 ### What this makes harder
 
-Nearly everything. Identity, key management, transport security, NAT traversal,
-revocation that actually takes effect on a running session, and — the deepest
-one — a permission model that currently assumes a single user learning to
-express several. `Actor::User` becomes an identity rather than a singleton,
-which touches the lifecycle, the ledger and the audit log.
+Full participation requires installing Ephemeral, which is the steepest
+onboarding cost in the product and the reason the guest tier exists at all.
+Generated applications must be written against a shared-state primitive rather
+than doing their own networking — a real constraint on what a model may produce,
+though a much narrower one than asking it to implement conflict-free
+replication itself.
 
 ### What we are accepting
 
-That a shared instance is not local-first for its guests, whichever option wins,
-and that the host can read everything. We accept both and disclose them
-prominently rather than designing an illusion of privacy we cannot deliver.
+A guest gets materially weaker guarantees than a member, stated plainly rather
+than smoothed over. Some intermediary exists, and it can observe some metadata
+even when blinded — which is why the default is that the intermediary is the
+group itself.
+
+Mobile coverage is **borrowed rather than intrinsic**: a mobile member's
+application executes on the control plane ([ADR-0007](0007-mobile-control-plane.md)),
+not on the handset. Participation works everywhere; "runs on your own device"
+does not, and the interface must not claim otherwise.
 
 ## Security implications
 
-This is the largest expansion of the threat model since the product began, and
-it must not be built before
-[the threat model](../../../SECURITY.md#threat-model) exists. New concerns, none
-of which the current design addresses:
+The largest expansion of the threat model since the product began. It must not
+be built before [the threat model](../../../SECURITY.md#threat-model) exists.
+New concerns:
 
-- A **malicious session holder** — under A or B they see everything by
-  construction, and the design must state that rather than pretend to mitigate
-  it. Under D, end-to-end encryption reduces it to metadata, which must still be
-  disclosed rather than described as "private".
-- A **malicious guest** — attacking the application, the host's machine, or
-  other participants through the application.
-- **Invite leakage** — an invite is a capability, so treating it as a secret,
-  scoping it, expiring it and revoking it are all load-bearing.
-- **Prompt injection through other people's content** — a message written by a
-  guest is untrusted input that may later reach a generation or repair run. This
-  is the existing prompt-injection problem with a new, cheap delivery route.
-- **Exposure beyond loopback** — under A, the single largest change to the
-  desktop attack surface so far, and the reason hosting would be its own
-  explicit decision. Option D avoids it entirely: no participant accepts inbound
-  connections.
-- **Revocation must be real** — ending a session must terminate access
-  immediately, not merely stop issuing new invites.
+- **A malicious relay operator** — mitigated by content encryption and the
+  metadata measures above, and by the default that the operator is a
+  participant.
+- **A malicious member** — sees all session content by construction; the design
+  states this rather than pretending to prevent it.
+- **Code delivery to guests** — whoever serves the browser bundle can subvert
+  it. Not solvable within the browser; handled by labelling the tier honestly.
+- **Invite leakage** — an invite is a capability, so scoping, expiry and real
+  revocation are load-bearing rather than conveniences.
+- **Prompt injection through other people's content** — a message written by
+  another participant is untrusted input that may later reach a generation or
+  repair run. The existing problem with a new and very cheap delivery route.
 
 ## Revisit when
 
-The open question is answered. Until then this ADR is a description of the
-problem and not a licence to build.
+- The relay-operation question is answered, at which point this can be accepted.
+- Browser code-integrity attestation becomes real enough to narrow the gap
+  between the two tiers.

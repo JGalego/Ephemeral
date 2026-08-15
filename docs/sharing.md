@@ -180,42 +180,98 @@ thing deciding who is allowed to use it.
 
 ### The app and the session are different things
 
-The instinct is to ask "where does the shared app run?" — and that question
-conflates two separable things.
+The instinct is to ask "where does the shared app run?" — and that conflates two
+separable things.
 
-The **application** does not need a shared home. It is already distributable as
-a recipe, and a recipe the recipient rebuilt is *theirs*: it runs on their
-device under permissions they granted, and it survives the author deleting
-theirs entirely.
+The **application** needs no shared home. It is distributable as a recipe, and a
+recipe the recipient rebuilt is *theirs*: it runs on their device under
+permissions they granted, and it survives the author deleting theirs.
 
-What genuinely needs a shared home is the **session** — the conversation. That
-is a much smaller problem: a relay moves data, not code, so it can be end-to-end
-encrypted, self-hosted, and does not involve running untrusted generated code on
-somebody else's behalf.
+What needs a shared home is the **session** — the conversation. That is a much
+smaller problem, because a relay moves data rather than code, so it can be
+blinded and self-hosted.
 
-Separating them is what makes shared applications work on every platform (each
-participant's copy runs wherever their apps already run) and survive anyone
-leaving (everyone owns the app; the state is replicated). The comparison and the
-reasoning are in
-[ADR-0013](architecture/decisions/0013-how-several-people-share-an-application.md), which
-remains **proposed** pending a decision.
+### What it looks like
 
-The cost is a real constraint: generated applications would have to be written
-against a shared-state primitive Ephemeral supplies, rather than arbitrary
-networking.
+Ana wants a group chat.
 
-## What has to exist first
+**She asks for it.**
 
-Sharing sits on top of most of the product, which is why it is Phase 7:
+```console
+$ ephemeral create "a group chat for me and my flatmates"
+$ ephemeral share flat-chat --invite --expires 7d
+```
 
-| Needs | For |
-|-------|-----|
-| Phase 1 — runtime | Something to build and run a received recipe |
-| Phase 2 — generation | Something to produce versions in the first place |
-| Phase 3 — sandboxing | The confinement that makes accepting a stranger's app reasonable |
-| Phase 6 — threat model | Shared instances are the largest expansion of the threat model so far and must not be built before it exists |
+Sharing is a deliberate act with its own switch. Applications are not shareable
+by default.
 
-The versioning groundwork in
-[ADR-0011](architecture/decisions/0011-immutable-content-addressed-versions.md)
-belongs with Phase 2, because that is when versions start being produced and
-retrofitting identity onto history that was never recorded is not possible.
+**Bob has Ephemeral.** The link opens there, and before anything runs:
+
+> **Ana is inviting you to Flat Chat.**
+>
+> Ephemeral will build this on your device. It wants to save messages in
+> `~/Ephemeral/flat-chat`. It does not want your camera, your location, or the
+> rest of your files.
+>
+> You will be able to read and send messages in this room. You will not be able
+> to change the app.
+>
+> Expires in 7 days. Ana can revoke it.
+
+He approves, his copy builds, he is in — **his copy, his permissions**. Ana's
+decisions did not travel.
+
+**Carla is on her phone with no Ephemeral.** The same link opens a web page. She
+can chat, and she is told why it is not the same:
+
+> You are joining as a guest. This runs in your browser rather than on your
+> device, so Ephemeral cannot protect it the way it protects members.
+
+**Nobody is the server.** Messages sync between members' copies through a relay
+that cannot read them. Ana closing her laptop changes nothing.
+
+**Ana deletes her copy.** Bob's still works — it was always his, and the
+conversation survives.
+
+**Ana revokes Carla's invite.** Carla is out immediately, mid-session. Not "no
+new invites": out.
+
+### Member and guest
+
+| | Member | Guest |
+|---|---|---|
+| Needs Ephemeral | Yes | No — a browser |
+| Where the app runs | Their own device | Their browser |
+| Who decided its permissions | They did | Nobody: it has no local access to give |
+| Confined by Ephemeral's sandbox | Yes | **No**, and it says so |
+| Survives everyone else leaving | Yes | Only while a member remains |
+
+Requiring Ephemeral everywhere is the price of the guarantees, and it is the
+steepest onboarding cost in the product — which is exactly why the guest tier
+exists. A guest cannot be given a member's guarantee, and the reason is
+fundamental: **whoever serves the browser code can break the encryption.**
+
+### Metadata is a requirement, not a footnote
+
+Encrypting contents is not enough. Who talks to whom, and when, is often more
+sensitive than what was said. The invariant:
+
+> **The relay never learns more than a participant already knows.**
+
+So the group operates its own relay by default — a member's device or one they
+self-host — making the operator somebody who can already read the messages.
+Per-room identities stop anything correlating across rooms, sealed sender hides
+who sent what, and padding blunts timing analysis. A third-party relay is an
+explicit opt-in with a named cost.
+
+What cannot honestly be promised is removing metadata entirely. Some
+intermediary has to exist — peer-to-peer needs rendezvous, offline delivery
+needs store-and-forward, and mobile needs a push service. The intermediary can
+be made blind; it cannot be made absent.
+
+### Still open
+
+Who operates a relay when a group does not run its own. That is an
+infrastructure commitment, so
+[ADR-0013](architecture/decisions/0013-how-several-people-share-an-application.md)
+stays **proposed** until it is answered.
