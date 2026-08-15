@@ -546,8 +546,8 @@ fn transition(
     Ok(())
 }
 
-/// Shows an application's lifecycle history.
-pub(crate) fn logs(home: &Path, reference: &str) -> Result<()> {
+/// Shows an application's lifecycle history, and what it is printing now.
+pub(crate) fn logs(home: &Path, reference: &str, lines: u32) -> Result<()> {
     let workspace = open(home)?;
     let manifest = find(&workspace, reference)?;
 
@@ -585,6 +585,11 @@ pub(crate) fn logs(home: &Path, reference: &str) -> Result<()> {
             println!("  {}", output::dim(&format!("{key}: {value}")));
         }
     }
+
+    // The history says what Ephemeral did to the application. What the
+    // application itself has to say is a different and often more useful thing,
+    // and it only exists while there is a container to ask.
+    crate::runtime::print_output(&manifest, lines);
 
     Ok(())
 }

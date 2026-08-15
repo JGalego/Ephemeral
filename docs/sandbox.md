@@ -110,14 +110,21 @@ each application's *manifest* says it should hold. When the two disagree the
 container is what is wrong, because the manifest is what you were shown. Only
 containers carrying Ephemeral's own label are ever considered.
 
+The other direction — an application whose record says it is running when its
+container has crashed, exited or gone unhealthy — is `ephemeral status`. It asks
+the runtime what is true and corrects the record. A one-shot command cannot
+watch anything, so this is where a crash is noticed: the next time somebody
+asks. A supervisor that notices while it happens is still to come.
+
 ## What is not here yet
 
 - **Building an image from generated source.** Today an application names an
   image; Phase 2 builds one.
 - **An egress proxy**, which is what would make a hostname allow-list
   enforceable instead of a refusal.
-- **The supervisor** — wall-clock limits, health polling and crash detection are
-  modelled but not yet driven.
+- **A supervisor.** Crashes, health and clean exits are detected when somebody
+  runs `ephemeral status`, not while they happen. Wall-clock limits need that
+  supervisor, so they are declared and shown but not yet applied.
 - **`NativeRuntime`**, for what genuinely cannot be containerised. It will be
   labelled as less isolated wherever it appears, because it is.
 

@@ -26,8 +26,8 @@ use ephemeral_core::{
     storage::{AppStore as _, Workspace},
 };
 use ephemeral_runtime::{
-    ContainerSpec, HostPaths, ManagedContainer, Runtime as _, RuntimeError, Secrets,
-    docker::DockerRuntime,
+    ContainerSpec, ContainerState, ContainerStatus, HostPaths, ManagedContainer, Runtime as _,
+    RuntimeError, Secrets, docker::DockerRuntime,
 };
 
 use crate::output;
@@ -224,6 +224,175 @@ pub(crate) fn resume(home: &Path, reference: &str) -> Result<()> {
         manifest.id
     );
     Ok(())
+}
+
+/// Shows what the application itself has printed, when there is one to ask.
+///
+/// Best-effort by design. This is extra context on the end of a history that is
+/// already useful, so a missing runtime or a container that has gone is a quiet
+/// omission rather than a failure of `ephemeral logs`.
+pub(crate) fn print_output(manifest: &AppManifest, lines: u32) {
+    if !manifest.lifecycle.state().requires_runtime() {
+        return;
+    }
+
+    let runtime = DockerRuntime::new();
+    if !runtime.availability().usable {
+        return;
+    }
+
+    let Ok(output) = runtime.logs(&manifest.id, lines) else {
+        return;
+    };
+
+    println!();
+    println!(
+        "{}",
+        output::heading(&format!("{} — output", manifest.name))
+    );
+    println!();
+
+    if output.trim().is_empty() {
+        println!("{}", output::dim("It has not printed anything."));
+        return;
+    }
+
+    print!("{output}");
+}
+
+/// Brings an application's recorded state back in line with its container.
+///
+/// A one-shot command cannot watch anything, so this is where crash detection,
+/// health and clean exits are noticed: the next time somebody asks. The
+/// alternative — a manifest that says Running because nothing was there to
+/// observe the container dying — is a record that lies by omission.
+pub(crate) fn status(home: &Path, reference: &str) -> Result<()> {
+    let mut workspace = crate::commands::open(home)?;
+    let mut manifest = crate::commands::find(&workspace, reference)?;
+
+    if !manifest.lifecycle.state().requires_runtime() {
+        println!(
+            "{} is {}.",
+            manifest.id,
+            output::state(manifest.lifecycle.state())
+        );
+        println!("{}", output::dim("It is not holding a container."));
+        return Ok(());
+    }
+
+    let runtime = usable_runtime()?;
+    let observed = runtime
+        .status(&manifest.id)
+        .with_context(|| format!("could not ask about {}", manifest.id))?;
+
+    let steps = implied_events(manifest.lifecycle.state(), &observed);
+    if steps.is_empty() {
+        println!(
+            "{} is {}, and its container agrees.",
+            manifest.id,
+            output::state(manifest.lifecycle.state())
+        );
+        return Ok(());
+    }
+
+    let before = manifest.lifecycle.state();
+    let explanation = steps
+        .iter()
+        .map(|(_, _, reason)| reason.clone())
+        .collect::<Vec<_>>()
+        .join(", and ");
+
+    for (event, actor, reason) in steps {
+        apply(&mut workspace, &mut manifest, event, actor, &reason)?;
+    }
+    workspace.apps_mut().save(&manifest)?;
+    workspace.save()?;
+
+    println!(
+        "{} {} was {}, and is now {}.",
+        output::warn("Updated."),
+        manifest.id,
+        output::state(before),
+        output::state(manifest.lifecycle.state())
+    );
+    println!("{}", output::dim(&explanation));
+    Ok(())
+}
+
+/// What the state machine should be told, given what the container is doing.
+///
+/// Returns an empty list when the record and the container already agree.
+///
+/// The actor on each step is not decoration. Only the runtime may report an
+/// execution *fact* — a crash, a failing health check — and only a person or
+/// Ephemeral may express an *intention* like stopping. A clean exit is
+/// therefore two steps: Ephemeral decides to stop it, and the runtime confirms
+/// it has stopped. Getting this wrong would be caught by the machine, which is
+/// the point of the machine.
+fn implied_events(
+    recorded: LifecycleState,
+    observed: &ContainerStatus,
+) -> Vec<(LifecycleEvent, Actor, String)> {
+    use ContainerState::{Absent, Dead, Exited, Paused, Running};
+    use LifecycleState as S;
+
+    let crashed = |reason: String| vec![(LifecycleEvent::RuntimeCrashed, Actor::Runtime, reason)];
+
+    match (recorded, observed.state) {
+        // Gone without being stopped. Whether it crashed or was killed from
+        // outside, the application is not running and the record said it was.
+        (S::Running | S::Unhealthy | S::Paused, Absent) => {
+            crashed("the container is gone, and Ephemeral did not stop it".to_owned())
+        }
+
+        // A clean exit is the application finishing, not failing. Two steps,
+        // because that is what the machine models: an intention and a fact.
+        (S::Running | S::Unhealthy, Exited) if observed.succeeded() => vec![
+            (
+                LifecycleEvent::Stop,
+                Actor::Ephemeral,
+                "the application finished".to_owned(),
+            ),
+            (
+                LifecycleEvent::Stopped,
+                Actor::Runtime,
+                "it exited cleanly".to_owned(),
+            ),
+        ],
+
+        (S::Running | S::Unhealthy, Exited | Dead) => crashed(match observed.exit_code {
+            Some(code) => format!("the container exited with code {code}"),
+            None => "the container died".to_owned(),
+        }),
+
+        // Health is only meaningful while it is up, and only when the image
+        // defines a check.
+        (S::Running, Running) if observed.is_unhealthy() => vec![(
+            LifecycleEvent::HealthDegraded,
+            Actor::Runtime,
+            "its health check is failing".to_owned(),
+        )],
+        (S::Unhealthy, Running) if !observed.is_unhealthy() => vec![(
+            LifecycleEvent::HealthRestored,
+            Actor::Runtime,
+            "its health check is passing again".to_owned(),
+        )],
+
+        // Somebody paused or unpaused it outside Ephemeral. The container is
+        // the fact; the record is what needs correcting.
+        (S::Running, Paused) => vec![(
+            LifecycleEvent::Pause,
+            Actor::Ephemeral,
+            "the container was paused from outside Ephemeral".to_owned(),
+        )],
+        (S::Paused, Running) => vec![(
+            LifecycleEvent::Resume,
+            Actor::Ephemeral,
+            "the container was resumed from outside Ephemeral".to_owned(),
+        )],
+
+        _ => Vec::new(),
+    }
 }
 
 /// A container Ephemeral is holding that no application accounts for.
@@ -626,6 +795,7 @@ fn note_crash(audit: &mut AuditLog, app: &AppId, error: &RuntimeError) {
 mod tests {
     use super::*;
     use ephemeral_core::{
+        lifecycle::TransitionContext,
         manifest::{AppInterface, RuntimeSpec},
         permission::PathScope,
     };
@@ -769,6 +939,114 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("native"), "{error}");
+    }
+
+    fn observed(
+        state: ephemeral_runtime::ContainerState,
+        exit: Option<i64>,
+        health: Option<&str>,
+    ) -> ContainerStatus {
+        ContainerStatus {
+            app: app(),
+            state,
+            container_id: Some("abc123".to_owned()),
+            exit_code: exit,
+            health: health.map(ToOwned::to_owned),
+        }
+    }
+
+    /// Every correction the observer can propose must be one the state machine
+    /// accepts *from the actor proposing it*. Only the runtime may report a
+    /// fact; only a person or Ephemeral may express an intention. A mismatch
+    /// here would surface as a command that fails whenever it is most needed.
+    #[test]
+    fn every_implied_correction_is_legal_for_the_actor_that_raises_it() {
+        use ephemeral_runtime::ContainerState as C;
+
+        let cases = [
+            (LifecycleState::Running, observed(C::Absent, None, None)),
+            (LifecycleState::Paused, observed(C::Absent, None, None)),
+            (LifecycleState::Unhealthy, observed(C::Absent, None, None)),
+            (LifecycleState::Running, observed(C::Exited, Some(0), None)),
+            (
+                LifecycleState::Unhealthy,
+                observed(C::Exited, Some(0), None),
+            ),
+            (
+                LifecycleState::Running,
+                observed(C::Exited, Some(137), None),
+            ),
+            (LifecycleState::Running, observed(C::Dead, None, None)),
+            (
+                LifecycleState::Running,
+                observed(C::Running, None, Some("unhealthy")),
+            ),
+            (
+                LifecycleState::Unhealthy,
+                observed(C::Running, None, Some("healthy")),
+            ),
+            (LifecycleState::Running, observed(C::Paused, None, None)),
+            (LifecycleState::Paused, observed(C::Running, None, None)),
+        ];
+
+        for (recorded, status) in cases {
+            let steps = implied_events(recorded, &status);
+            assert!(
+                !steps.is_empty(),
+                "{recorded} vs {} should imply a correction",
+                status.state
+            );
+
+            // Replayed through the machine itself rather than asserting the
+            // resulting states by hand.
+            let mut state = recorded;
+            for (event, actor, _) in steps {
+                assert!(event.permits(actor), "{actor:?} may not raise {event}");
+                state = state
+                    .next(event, &TransitionContext::default())
+                    .unwrap_or_else(|error| panic!("{recorded} --{event}--> ? : {error}"));
+            }
+            assert_ne!(state, recorded, "a correction should change something");
+        }
+    }
+
+    /// A container doing exactly what the record says must not be corrected.
+    #[test]
+    fn agreement_implies_no_correction() {
+        use ephemeral_runtime::ContainerState as C;
+
+        assert!(
+            implied_events(LifecycleState::Running, &observed(C::Running, None, None)).is_empty()
+        );
+        assert!(
+            implied_events(LifecycleState::Paused, &observed(C::Paused, None, None)).is_empty()
+        );
+        assert!(
+            implied_events(
+                LifecycleState::Running,
+                &observed(C::Running, None, Some("healthy"))
+            )
+            .is_empty()
+        );
+    }
+
+    /// An application that finished its work has not failed, and must not be
+    /// reported as having crashed.
+    #[test]
+    fn a_clean_exit_is_finishing_rather_than_crashing() {
+        use ephemeral_runtime::ContainerState as C;
+
+        let steps = implied_events(LifecycleState::Running, &observed(C::Exited, Some(0), None));
+        assert!(
+            steps
+                .iter()
+                .all(|(event, _, _)| *event != LifecycleEvent::RuntimeCrashed),
+            "{steps:?}"
+        );
+
+        let failed = implied_events(LifecycleState::Running, &observed(C::Exited, Some(1), None));
+        assert_eq!(failed[0].0, LifecycleEvent::RuntimeCrashed);
+        assert!(failed[0].2.contains("code 1"), "{failed:?}");
     }
 
     fn held(
