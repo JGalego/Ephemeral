@@ -45,3 +45,9 @@ apps/desktop/node_modules/
 apps/desktop/package-lock.json
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/gen/
+
+# Films of the window, produced by apps/desktop/tests/film.mjs and
+# film-window.sh. Regenerate them rather than committing them: a recording in
+# the tree ages into a picture of a bug somebody already fixed, and it looks
+# exactly as current as the code next to it.
+apps/desktop/recordings/

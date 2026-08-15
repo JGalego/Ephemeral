@@ -100,6 +100,7 @@ second, subtly different Ephemeral.
 
 ```bash
 cd apps/desktop/src-tauri && cargo run          # needs a display
+cd apps/desktop/src-tauri && cargo test
 cd apps/desktop && npm install playwright && node tests/render.test.mjs
 ```
 
@@ -115,6 +116,51 @@ supply chain.
 Everything that decides *what* to show is a pure function in `ui/render.js`,
 tested in headless Chromium. A desktop UI that can only be exercised by opening
 it is a UI nobody tests, and what this one renders is the permission prompt.
+
+### Looking at it without a display
+
+A UI no human has seen has problems no test finds. Both of these produce files
+rather than opening a window, so looking is possible on a machine with no
+display — CI runners, containers, a session over ssh:
+
+```bash
+cd apps/desktop
+node tests/film.mjs          # the frontend, driven through a real interaction
+tests/film-window.sh 20      # the real Tauri window, under Xvfb
+```
+
+`film.mjs` drives the actual `ui/` modules in Chromium against view data shaped
+exactly as `ephemeral-api` serialises it, and writes `recordings/` — a webm plus
+a still per step, each named for what you are meant to check in it. It needs
+Playwright. `film-window.sh` runs the built binary against a virtual X server
+and records the framebuffer with ffmpeg; it needs `xvfb` and `ffmpeg`, which is
+why neither is in `./scripts/check` or CI.
+
+Neither asserts anything. That is the point — **you have to look at the
+frames.** Everything below was found that way, with the whole suite passing:
+
+- a granted permission still offering "Allow", in the same colour as an
+  unanswered one
+- a critical permission with a `type allow` field and nothing to submit it
+- answering a request throwing you back to the list, so the page confirming
+  what you had allowed was never seen
+- a refusal rendered below the fold, hundreds of pixels from where the person
+  was looking
+- an app allowed to reach the whole internet drawn on the list exactly like one
+  that can see nothing of yours
+- granting something recolouring it green and fading it, so the most dangerous
+  grant on the page became the calmest thing on screen
+- the window telling you it "is not running inside Ephemeral" — while running
+  inside Ephemeral, because `withGlobalTauri` was unset and nothing had ever
+  connected the tested rendering to the tested commands
+
+Each has a test now, and every one of those tests was written after looking.
+When you fix something a film found, add the assertion and say in the comment
+that a film is what found it — the next person will otherwise assume the tests
+were sufficient, which is exactly the assumption that let these through.
+
+`recordings/` is gitignored. A committed film ages into a picture of a bug
+somebody already fixed, and it looks exactly as current as the code beside it.
 
 ## Testing
 
