@@ -70,10 +70,12 @@ all Linux capabilities dropped. Its own writable storage is at /data.
 Therefore:
 - The build must not need the network. No pip install, no apt-get, no npm. Use \
 only what the base image already has.
-- Write to /data or to a path the application was explicitly granted. Nowhere \
-else.
-- Every file path you produce is relative, inside the application, and contains \
-no `..`.
+- The application's own writable storage is /data, and it will be given \
+absolute paths like /data/input.csv at runtime. Accept absolute paths; do not \
+reject them, and do not require paths to be relative.
+- The `path` of each file you return is where it goes *inside the package*: \
+relative, no leading slash, no `..`. That constraint is about the files you \
+write, not about the paths the application accepts when somebody runs it.
 - Request a permission only if the application genuinely cannot work without \
 it, and give a reason a non-technical person can evaluate. Requests without \
 reasons are rejected outright.
@@ -467,6 +469,23 @@ mod tests {
         for constraint in ["no network", "read-only", "/data", "tests", "reason"] {
             assert!(SYSTEM.contains(constraint), "missing: {constraint}");
         }
+    }
+
+    /// Two different things were once called "paths" in the same breath: where
+    /// a generated file goes inside the package, and what the finished
+    /// application accepts at runtime. A real model applied the first rule to
+    /// the second and wrote something that rejected `/data/input.csv` — its own
+    /// storage — as an invalid path.
+    #[test]
+    fn the_instructions_separate_package_paths_from_runtime_paths() {
+        assert!(
+            SYSTEM.contains("Accept absolute paths"),
+            "the application must not refuse the paths it will be given"
+        );
+        assert!(
+            SYSTEM.contains("inside the package"),
+            "the relative-path rule has to say what it is about"
+        );
     }
 
     /// Every request is bounded. An unbounded response is an unbounded bill.
