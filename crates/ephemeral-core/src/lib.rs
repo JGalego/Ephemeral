@@ -16,10 +16,11 @@
 //! | [`lifecycle`] | The explicit state machine every application moves through |
 //! | [`permission`] | Both permission systems, and the ledger that decides |
 //! | [`identity`] | Application ids and the principals that hold permissions |
+//! | [`audit`] | The append-only, hash-chained security record |
 //! | [`retention`] | How ephemeral an application is |
 //! | [`actor`] | Who caused something to happen |
 //!
-//! Landing next, in Phase 0: the audit log and the storage layout.
+//! Landing next, in Phase 0: the storage layout and the application store.
 //!
 //! ## What does not live here
 //!
@@ -37,7 +38,8 @@
 //!    a typed error, never a silent state change ([`lifecycle`]).
 //! 4. The generation agent is **not a privileged actor**: it cannot grant
 //!    permissions or delete applications ([`actor`]).
-//! 5. Secrets never enter a manifest ([`manifest`]), a log, or the audit record.
+//! 5. Secrets never enter a manifest ([`manifest`]), a log, or the audit record
+//!    ([`audit`]).
 //!
 //! Each of these is covered by tests in `tests/`, and a change that weakens one
 //! should be treated as a vulnerability rather than a refactor.
@@ -47,6 +49,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 pub mod actor;
+pub mod audit;
 pub mod error;
 pub mod identity;
 pub mod lifecycle;

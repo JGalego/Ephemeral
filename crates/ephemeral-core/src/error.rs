@@ -33,6 +33,14 @@ pub enum Error {
     #[error("invalid scope: {0}")]
     Scope(#[from] crate::permission::ScopeError),
 
+    /// A manifest was not valid.
+    #[error(transparent)]
+    Manifest(#[from] crate::manifest::ManifestError),
+
+    /// The audit record could not be trusted.
+    #[error(transparent)]
+    Audit(#[from] crate::audit::AuditError),
+
     /// The requested application does not exist.
     #[error("no application with id {id}")]
     AppNotFound {
