@@ -1,0 +1,31 @@
+[package]
+name = "ephemeral-runtime"
+description = "Ephemeral's local runtime: the container sandbox that confines generated applications, and the Docker implementation of it."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+[features]
+# The sandbox definition and the argument vectors built from it are pure data,
+# so they compile and test without any way to reach a container daemon at all.
+# `daemon` adds the part that actually spawns processes. CI builds this crate
+# with `--no-default-features` to keep that split honest (ADR-0014).
+default = ["daemon"]
+daemon = []
+
+[dependencies]
+ephemeral-core.workspace = true
+
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

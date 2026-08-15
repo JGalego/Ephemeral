@@ -69,6 +69,8 @@ crates/
   ephemeral-core/    the domain: manifests, lifecycle, permissions, audit,
                      retention, storage. No Docker, no network, no platform
                      APIs. This is where the security-critical logic lives.
+  ephemeral-runtime/ the sandbox. What actually confines generated code, and
+                     the Docker implementation of it.
   ephemeral-cli/     a client of the above. Decides nothing itself.
 docs/
   architecture/decisions/   ADRs — read 0001 first
