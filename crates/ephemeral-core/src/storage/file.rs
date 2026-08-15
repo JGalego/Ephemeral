@@ -139,22 +139,7 @@ impl AppStore for FileStore {
                 problem: error.to_string(),
             })?;
 
-        // Written into the same directory so that the rename is on one
-        // filesystem, and therefore atomic.
-        let mut temporary =
-            NamedTempFile::new_in(directory).map_err(|e| io_error("write into", directory, &e))?;
-        temporary
-            .write_all(json.as_bytes())
-            .map_err(|e| io_error("write", &path, &e))?;
-        temporary
-            .as_file()
-            .sync_all()
-            .map_err(|e| io_error("flush", &path, &e))?;
-        temporary
-            .persist(&path)
-            .map_err(|e| io_error("save", &path, &e.error))?;
-
-        Ok(())
+        write_atomically(&path, json.as_bytes())
     }
 
     fn load(&self, id: &AppId) -> Result<AppManifest, StorageError> {
@@ -228,6 +213,36 @@ impl AppStore for FileStore {
             Err(error) => Err(io_error("remove", &path, &error)),
         }
     }
+}
+
+/// Writes a file so that a reader sees either the old contents or the new ones,
+/// never a mixture.
+///
+/// Used for every record Ephemeral persists — manifests, the permission ledger,
+/// the audit log. All three answer "what is this application allowed to do", and
+/// a half-written answer to that question is worse than no answer: on the next
+/// read it is either a parse failure or, at worst, a document nobody approved.
+///
+/// The temporary file is created in the destination directory so the rename
+/// stays within one filesystem, which is what makes it atomic.
+pub(crate) fn write_atomically(path: &Path, contents: &[u8]) -> Result<(), StorageError> {
+    let directory = path.parent().unwrap_or_else(|| Path::new("."));
+    create_dir_all(directory)?;
+
+    let mut temporary =
+        NamedTempFile::new_in(directory).map_err(|e| io_error("write into", directory, &e))?;
+    temporary
+        .write_all(contents)
+        .map_err(|e| io_error("write", path, &e))?;
+    temporary
+        .as_file()
+        .sync_all()
+        .map_err(|e| io_error("flush", path, &e))?;
+    temporary
+        .persist(path)
+        .map_err(|e| io_error("save", path, &e.error))?;
+
+    Ok(())
 }
 
 fn create_dir_all(path: &Path) -> Result<(), StorageError> {

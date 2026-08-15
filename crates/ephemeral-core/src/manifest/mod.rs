@@ -52,7 +52,7 @@
 //!
 //! assert_eq!(manifest.name, "Apartment Comparator");
 //! assert_eq!(manifest.permissions.capabilities().len(), 1);
-//! assert!(manifest.runtime.runs_locally());
+//! assert!(manifest.runtime.as_ref().is_some_and(|runtime| runtime.runs_locally()));
 //! # Ok::<(), ephemeral_core::manifest::ManifestError>(())
 //! ```
 
@@ -174,8 +174,14 @@ pub struct AppManifest {
     #[serde(default)]
     pub lifecycle: Lifecycle,
 
-    /// What it runs on.
-    pub runtime: RuntimeSpec,
+    /// What it runs on, once that has been decided.
+    ///
+    /// `None` until planning settles it. An application that has only been
+    /// requested genuinely does not know yet what kind of program it needs to
+    /// be, and recording a placeholder would be a guess presented as a fact.
+    /// [`AppManifest::validate`] requires it from the first build onwards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<RuntimeSpec>,
 
     /// What it is permitted to do. Empty means nothing, which is the default.
     #[serde(default)]
@@ -210,6 +216,20 @@ impl AppManifest {
     /// Everything the application is allowed to do has to be added deliberately.
     #[must_use]
     pub fn new(id: AppId, name: impl Into<String>, runtime: RuntimeSpec) -> Self {
+        Self {
+            runtime: Some(runtime),
+            ..Self::requested(id, name)
+        }
+    }
+
+    /// Creates a manifest for an application that has been asked for but not yet
+    /// planned.
+    ///
+    /// It has no runtime, no permissions and no artifacts — only an identity, a
+    /// name and the intent behind it. This is what `ephemeral create` records
+    /// before generation has done anything.
+    #[must_use]
+    pub fn requested(id: AppId, name: impl Into<String>) -> Self {
         let at = now();
         let budget = GenerationBudget::default();
         Self {
@@ -221,7 +241,7 @@ impl AppManifest {
             created_at: at,
             updated_at: at,
             lifecycle: Lifecycle::with_repair_budget(budget.max_repairs),
-            runtime,
+            runtime: None,
             permissions: AppPermissions::none(),
             resources: ResourceLimits::default(),
             budget,
@@ -303,20 +323,34 @@ impl AppManifest {
             ));
         }
 
-        // A containerised runtime without an image has nothing to run, and a
-        // web app with no port cannot be opened. Both would fail later, less
-        // legibly.
-        if self.runtime.kind.is_containerised() && self.runtime.image.is_none() {
-            return Err(ManifestError::invalid(
-                "runtime.image",
-                "a containerised runtime needs an image",
-            ));
-        }
-        if self.runtime.interface == AppInterface::Web && self.runtime.port.is_none() {
-            return Err(ManifestError::invalid(
-                "runtime.port",
-                "a web application needs a port to be reachable on",
-            ));
+        match &self.runtime {
+            None if self.lifecycle.state().requires_runtime() => {
+                return Err(ManifestError::invalid(
+                    "runtime",
+                    format!(
+                        "an application that is {} must know what it runs on",
+                        self.lifecycle.state()
+                    ),
+                ));
+            }
+            None => {}
+            Some(runtime) => {
+                // A containerised runtime without an image has nothing to run,
+                // and a web app with no port cannot be opened. Both would fail
+                // later, less legibly.
+                if runtime.kind.is_containerised() && runtime.image.is_none() {
+                    return Err(ManifestError::invalid(
+                        "runtime.image",
+                        "a containerised runtime needs an image",
+                    ));
+                }
+                if runtime.interface == AppInterface::Web && runtime.port.is_none() {
+                    return Err(ManifestError::invalid(
+                        "runtime.port",
+                        "a web application needs a port to be reachable on",
+                    ));
+                }
+            }
         }
 
         self.artifacts.validate()?;
@@ -564,11 +598,12 @@ mod tests {
             Err(ManifestError::InvalidField { field: "name", .. })
         ));
 
+        let spec = base.runtime.clone().unwrap();
         let imageless = AppManifest {
-            runtime: RuntimeSpec {
+            runtime: Some(RuntimeSpec {
                 image: None,
-                ..base.runtime.clone()
-            },
+                ..spec.clone()
+            }),
             ..base.clone()
         };
         assert!(matches!(
@@ -580,10 +615,7 @@ mod tests {
         ));
 
         let unreachable = AppManifest {
-            runtime: RuntimeSpec {
-                port: None,
-                ..base.runtime.clone()
-            },
+            runtime: Some(RuntimeSpec { port: None, ..spec }),
             ..base.clone()
         };
         assert!(matches!(
@@ -648,6 +680,59 @@ mod tests {
     }
 
     // --- round trips -----------------------------------------------------------
+
+    /// An application that has only been requested has no runtime yet, and that
+    /// is a valid manifest — planning is what decides.
+    #[test]
+    fn a_requested_application_needs_no_runtime() {
+        let requested = AppManifest::requested(id("csv-comparator"), "CSV Comparator");
+
+        assert!(requested.runtime.is_none());
+        assert_eq!(
+            requested.lifecycle.state(),
+            crate::lifecycle::LifecycleState::Requested
+        );
+        requested.validate().unwrap();
+
+        let yaml = requested.to_yaml().unwrap();
+        assert!(
+            !yaml.lines().any(|line| line.starts_with("runtime:")),
+            "an absent runtime is omitted entirely:\n{yaml}"
+        );
+        assert_eq!(AppManifest::from_yaml(&yaml).unwrap(), requested);
+    }
+
+    /// From the first build onwards it must know what it runs on, or everything
+    /// downstream is acting on a guess.
+    #[test]
+    fn an_application_that_can_build_must_have_a_runtime() {
+        use crate::actor::Actor;
+        use crate::lifecycle::{LifecycleEvent, TransitionRequest};
+
+        let mut manifest = AppManifest::requested(id("csv-comparator"), "CSV Comparator");
+        for event in [
+            LifecycleEvent::Plan,
+            LifecycleEvent::PlanCompleted,
+            LifecycleEvent::GenerationCompleted,
+        ] {
+            manifest
+                .lifecycle
+                .apply(TransitionRequest::new(event, Actor::Ephemeral, "working"))
+                .unwrap();
+        }
+
+        assert!(manifest.lifecycle.state().requires_runtime());
+        assert!(matches!(
+            manifest.validate(),
+            Err(ManifestError::InvalidField {
+                field: "runtime",
+                ..
+            })
+        ));
+
+        manifest.runtime = Some(RuntimeSpec::docker_job("alpine", vec!["true".to_owned()]));
+        manifest.validate().unwrap();
+    }
 
     #[test]
     fn manifests_round_trip_through_yaml_and_json() {
