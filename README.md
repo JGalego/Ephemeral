@@ -149,9 +149,15 @@ cargo run -p ephemeral-cli -- doctor    # check this machine
 cargo run -p ephemeral-cli -- states    # the whole lifecycle state machine
 ```
 
-See [docs/development.md](docs/development.md) for the full development guide
-and [docs/install.md](docs/install.md) for end-user installation (once packages
-are published).
+Or install a build rather than making one:
+[the releases page](https://github.com/JGalego/Ephemeral/releases) carries
+`.deb`, `.rpm` and AppImage for Linux, a universal `.dmg` for macOS, and both
+installers for Windows, alongside CLI archives for six targets. They are
+**unsigned**, so macOS and Windows will warn you they cannot tell who built
+them — [docs/install.md](docs/install.md) says exactly what you will see and
+what to do about it.
+
+See [docs/development.md](docs/development.md) for the full development guide.
 
 ## Documentation
 
