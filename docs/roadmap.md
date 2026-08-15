@@ -171,6 +171,27 @@ deliberately: a group where nobody will keep a device on does not get a shared
 session. [ADR-0013](architecture/decisions/0013-how-several-people-share-an-application.md)
 is accepted.
 
+## What cannot be built from here
+
+Two remaining pieces need something this repository does not have, and saying so
+is better than shipping a plausible-looking version of either.
+
+**A real model provider** needs a credential and network access, and
+[ADR-0008](architecture/decisions/0008-agent-provider-abstraction.md) says CI
+never makes a live model call. The `AgentProvider` trait is the whole interface
+one needs; an implementation is roughly an HTTP client, a prompt, and schema
+validation on the way back. What it must *not* do is weaken the rule that model
+output is a validated proposal — `AgentError::Unreadable` rather than a
+best-effort guess.
+
+**The desktop application** ([ADR-0002](architecture/decisions/0002-rust-core-with-platform-shells.md)
+chose Tauri v2) needs a machine with a display to build and look at. Writing one
+blind would produce a large amount of code nobody had ever run, which is the
+opposite of how the rest of this was built. The core it would sit on is
+finished: every command the CLI offers goes through `ephemeral-core`, decides
+nothing itself, and a second client would hold that boundary honest rather than
+discover it.
+
 ## Things deliberately not being built yet
 
 Not everything absent is an oversight. These are decided-against-for-now, with
