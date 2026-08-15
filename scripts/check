@@ -43,6 +43,7 @@ cargo test -p ephemeral-runtime --no-default-features
 # through the deterministic mock provider.
 step "The whole journey, sentence to running application"
 cargo test -p ephemeral-agent --test journey
+cargo test -p ephemeral-agent --test reference_app -- --nocapture
 
 step "Generation uses no network client"
 if grep -rniE 'reqwest|hyper|ureq|api\.anthropic|api\.openai' \

@@ -116,24 +116,124 @@ impl MockProvider {
     }
 
     /// The source of an application that works.
+    ///
+    /// A real CSV comparator, not a toy. It is the reference application from
+    /// the product brief, and it is what somebody running `--provider mock`
+    /// actually gets — so it has to be something worth getting: it reads two
+    /// files, reports what differs, and has tests that would fail if it did
+    /// not.
+    ///
+    /// Deliberately dependency-free. An application whose build needs the
+    /// network could not be built in a container with no network, and the whole
+    /// point of the default sandbox is that there isn\'t one.
     fn working_source() -> Vec<SourceFile> {
         vec![
             SourceFile::new(
-                "main.py",
-                "import sys\n\
-                 \n\
-                 def compare(left, right):\n\
-                 \x20   return [line for line in left if line not in right]\n\
-                 \n\
-                 if __name__ == '__main__':\n\
-                 \x20   print('ready')\n",
+                "compare.py",
+                r#""""Compare two CSV files and report what differs.
+
+Reads both files, matches rows by their first column, and reports rows that
+were added, removed, or changed.
+"""
+
+import csv
+import sys
+
+
+def read_rows(path):
+    """Returns {key: row} for a CSV file, keyed by its first column."""
+    with open(path, newline="", encoding="utf-8") as handle:
+        rows = list(csv.reader(handle))
+
+    if not rows:
+        return {}, []
+
+    header, body = rows[0], rows[1:]
+    return {row[0]: row for row in body if row}, header
+
+
+def compare(left, right):
+    """Returns (added, removed, changed) between two {key: row} mappings."""
+    added = [key for key in right if key not in left]
+    removed = [key for key in left if key not in right]
+    changed = [
+        key for key in left if key in right and left[key] != right[key]
+    ]
+    return sorted(added), sorted(removed), sorted(changed)
+
+
+def describe(left_path, right_path):
+    left, header = read_rows(left_path)
+    right, _ = read_rows(right_path)
+    added, removed, changed = compare(left, right)
+
+    lines = []
+    if not (added or removed or changed):
+        return ["The two files have the same rows."]
+
+    if header:
+        lines.append("Comparing by " + header[0] + ".")
+    for key in added:
+        lines.append("added:   " + key)
+    for key in removed:
+        lines.append("removed: " + key)
+    for key in changed:
+        lines.append("changed: " + key)
+    return lines
+
+
+def main(argv):
+    if len(argv) != 3:
+        print("usage: compare.py LEFT.csv RIGHT.csv", file=sys.stderr)
+        return 2
+
+    for line in describe(argv[1], argv[2]):
+        print(line)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
+"#,
             ),
             SourceFile::new(
-                "test_main.py",
-                "from main import compare\n\
-                 \n\
-                 def test_compare():\n\
-                 \x20   assert compare(['a'], []) == ['a']\n",
+                "test_compare.py",
+                r#""""Tests for the CSV comparator."""
+
+import unittest
+
+from compare import compare
+
+
+class CompareTest(unittest.TestCase):
+    def test_identical_files_differ_in_nothing(self):
+        rows = {"a": ["a", "1"]}
+        self.assertEqual(compare(rows, rows), ([], [], []))
+
+    def test_a_new_row_is_added(self):
+        left = {"a": ["a", "1"]}
+        right = {"a": ["a", "1"], "b": ["b", "2"]}
+        self.assertEqual(compare(left, right), (["b"], [], []))
+
+    def test_a_missing_row_is_removed(self):
+        left = {"a": ["a", "1"], "b": ["b", "2"]}
+        right = {"a": ["a", "1"]}
+        self.assertEqual(compare(left, right), ([], ["b"], []))
+
+    def test_a_different_value_is_changed(self):
+        left = {"a": ["a", "1"]}
+        right = {"a": ["a", "2"]}
+        self.assertEqual(compare(left, right), ([], [], ["a"]))
+
+    def test_everything_at_once(self):
+        left = {"a": ["a", "1"], "b": ["b", "2"]}
+        right = {"a": ["a", "9"], "c": ["c", "3"]}
+        self.assertEqual(compare(left, right), (["c"], ["b"], ["a"]))
+
+
+if __name__ == "__main__":
+    unittest.main()
+"#,
             ),
         ]
     }
@@ -144,8 +244,8 @@ impl MockProvider {
     /// it too and the fixture stays honest if it is ever run for real.
     fn broken_source() -> Vec<SourceFile> {
         vec![SourceFile::new(
-            "main.py",
-            "def compare(left, right)\n\x20   return left\n",
+            "compare.py",
+            "def compare(left, right)\n    return left\n",
         )]
     }
 
@@ -240,9 +340,9 @@ impl AgentProvider for MockProvider {
                     Self::working_source()
                 },
                 dockerfile: format!(
-                    "FROM {IMAGE}\nWORKDIR /app\nCOPY . /app\nCMD [\"python\", \"main.py\"]\n"
+                    "FROM {IMAGE}\nWORKDIR /app\nCOPY . /app\nCMD [\"python\", \"compare.py\"]\n"
                 ),
-                entrypoint: vec!["python".to_owned(), "main.py".to_owned()],
+                entrypoint: vec!["python".to_owned(), "compare.py".to_owned()],
                 test_command: vec![
                     "python".to_owned(),
                     "-m".to_owned(),
@@ -267,7 +367,7 @@ impl AgentProvider for MockProvider {
         // dependency chose to print. The mock reads its length and nothing
         // else, which is exactly as much as it should.
         let diagnosis = format!(
-            "the build failed with {} bytes of output; replacing main.py",
+            "the build failed with {} bytes of output; replacing compare.py",
             failure.len()
         );
 
@@ -343,7 +443,7 @@ mod tests {
             repaired, app.files,
             "a repair that changes nothing is not one"
         );
-        assert!(repaired.iter().any(|file| file.path == "test_main.py"));
+        assert!(repaired.iter().any(|file| file.path == "test_compare.py"));
     }
 
     /// A repair budget is only a ceiling if something can fail against it
