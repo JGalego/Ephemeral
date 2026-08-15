@@ -258,20 +258,35 @@ sensitive than what was said. The invariant:
 
 > **The relay never learns more than a participant already knows.**
 
-So the group operates its own relay by default — a member's device or one they
+So the group operates its own relay — a member's device, or something they
 self-host — making the operator somebody who can already read the messages.
 Per-room identities stop anything correlating across rooms, sealed sender hides
-who sent what, and padding blunts timing analysis. A third-party relay is an
-explicit opt-in with a named cost.
+who sent what, and padding blunts timing analysis.
+
+There is no other kind of relay. Ephemeral does not run one, and there is no
+opt-in to a third party, because "opt-in with a named cost" is how a default
+arrives: it would be the easy path for every group that found self-hosting
+inconvenient, and within a year the honest sentence would be "Ephemeral sees
+who talks to whom, unless you configure otherwise."
+
+**This costs reach, and that is the trade.** A group where nobody will keep a
+device on does not get a shared session. Ephemeral says so when somebody tries,
+rather than in a footnote.
 
 What cannot honestly be promised is removing metadata entirely. Some
 intermediary has to exist — peer-to-peer needs rendezvous, offline delivery
 needs store-and-forward, and mobile needs a push service. The intermediary can
 be made blind; it cannot be made absent.
 
-### Still open
+### What would reopen this
 
-Who operates a relay when a group does not run its own. That is an
-infrastructure commitment, so
 [ADR-0013](architecture/decisions/0013-how-several-people-share-an-application.md)
-stays **proposed** until it is answered.
+is **accepted**. Two things would justify revisiting it: a relay design where
+the operator provably *cannot* observe metadata rather than merely finding it
+inconvenient, or evidence that the reach cost is what stops people using sharing
+at all — with the evidence, rather than pre-emptively on the assumption that it
+will be.
+
+Nothing here is built. Sharing is Phase 7, and
+[the threat model](../SECURITY.md#threat-model) comes first — this is the
+largest expansion of it since the product began.
