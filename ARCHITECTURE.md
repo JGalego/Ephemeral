@@ -68,9 +68,12 @@ crates/
   ephemeral-core/      domain model: manifests, state machine, permissions,
                        audit, retention, storage traits.  No I/O to the OS,
                        no Docker, no network.  Pure, testable, portable.
+  ephemeral-runtime/   the sandbox: what confines a generated application, and
+                       the Docker implementation of it.  The container spec is
+                       data; turning it into a command line is a pure function,
+                       so every hardening flag is a test.
   ephemeral-cli/       command-line client of the core API
   (planned)
-  ephemeral-runtime/   Runtime trait + DockerRuntime + NativeRuntime
   ephemeral-agent/     AgentProvider trait + Anthropic/OpenAI/local/mock
   ephemeral-platform/  PlatformAdapter trait + per-OS implementations
   ephemeral-api/       the versioned service layer the UI and CLI consume

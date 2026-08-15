@@ -32,6 +32,13 @@ step "Domain purity (ephemeral-core without host I/O)"
 cargo build -p ephemeral-core --no-default-features
 cargo test -p ephemeral-core --no-default-features
 
+# The sandbox definition and the argument vectors built from it decide the
+# confinement, and decide it without spawning anything. Building the runtime
+# without its Docker implementation is what keeps that split real (ADR-0014).
+step "Sandbox purity (ephemeral-runtime without a daemon)"
+cargo build -p ephemeral-runtime --no-default-features
+cargo test -p ephemeral-runtime --no-default-features
+
 if cargo deny --version >/dev/null 2>&1; then
   step "Supply chain"
   cargo deny check

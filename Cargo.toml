@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/ephemeral-core", "crates/ephemeral-cli"]
+members = ["crates/ephemeral-core", "crates/ephemeral-runtime", "crates/ephemeral-cli"]
 
 [workspace.package]
 version = "0.1.0"
@@ -13,6 +13,7 @@ authors = ["The Ephemeral contributors"]
 
 [workspace.dependencies]
 ephemeral-core = { path = "crates/ephemeral-core", version = "0.1.0" }
+ephemeral-runtime = { path = "crates/ephemeral-runtime", version = "0.1.0" }
 
 anyhow = "1.0.104"
 chrono = { version = "0.4.45", default-features = false, features = [
