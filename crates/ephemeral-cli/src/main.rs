@@ -5,11 +5,12 @@
 //! other can too, and a permission decision means the same thing in both
 //! ([`ARCHITECTURE.md` §5](https://github.com/JGalego/Ephemeral/blob/main/ARCHITECTURE.md)).
 //!
-//! Phase 0 gives you everything that does not need a runtime or a model
-//! provider: creating an application record, inspecting it, moving it through
-//! its lifecycle, granting and revoking permissions, reading the audit trail,
-//! and diagnosing the environment. Commands that need Phase 1 or Phase 2 say so
-//! plainly rather than pretending.
+//! Phase 1 gives you everything that does not need a model provider: creating
+//! an application record, inspecting it, moving it through its lifecycle,
+//! granting and revoking permissions, running it in a container under exactly
+//! those permissions, reading the audit trail, and diagnosing the environment.
+//! Generating an application from a description arrives in Phase 2, and the
+//! commands that need it say so plainly rather than pretending.
 
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
@@ -17,6 +18,7 @@ mod commands;
 mod doctor;
 mod output;
 mod parse;
+mod runtime;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -34,9 +36,9 @@ const HOME_ENV: &str = "EPHEMERAL_HOME";
     about = "Software that exists only while it's useful.",
     long_about = "Ephemeral builds small applications from a description, runs them in a \
                   sandbox, and throws them away when you're done.\n\n\
-                  This is Phase 0: the application model, the lifecycle and the permission \
-                  system are here; runtimes and generation are not yet. Commands that need \
-                  them will tell you so.",
+                  This is Phase 1: the application model, the lifecycle, the permission \
+                  system and the container sandbox are here. Generating an application from \
+                  a description is not yet — see docs/roadmap.md.",
     propagate_version = true
 )]
 struct Cli {
@@ -185,6 +187,12 @@ enum Command {
         /// Which application.
         app: String,
     },
+
+    /// Pick a suspended application back up.
+    Resume {
+        /// Which application.
+        app: String,
+    },
 }
 
 /// Where each platform expects an application to keep its data.
@@ -289,9 +297,10 @@ fn run(cli: Cli) -> Result<()> {
             doctor::run(&home);
             Ok(())
         }
-        Command::Run { app } => commands::not_yet(&app, "run", 1, "the Docker runtime"),
-        Command::Stop { app } => commands::not_yet(&app, "stop", 1, "the Docker runtime"),
-        Command::Pause { app } => commands::not_yet(&app, "pause", 1, "the Docker runtime"),
+        Command::Run { app } => runtime::run(&home, &app),
+        Command::Stop { app } => runtime::stop(&home, &app),
+        Command::Pause { app } => runtime::pause(&home, &app),
+        Command::Resume { app } => runtime::resume(&home, &app),
     }
 }
 

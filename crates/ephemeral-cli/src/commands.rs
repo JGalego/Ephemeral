@@ -20,13 +20,13 @@ use std::path::Path;
 use crate::{output, parse};
 
 /// Opens the workspace, saying where it looked if that fails.
-fn open(home: &Path) -> Result<Workspace> {
+pub(crate) fn open(home: &Path) -> Result<Workspace> {
     Workspace::open(home)
         .with_context(|| format!("could not open Ephemeral's files at {}", home.display()))
 }
 
 /// Finds an application, and says something useful when it is not there.
-fn find(workspace: &Workspace, reference: &str) -> Result<AppManifest> {
+pub(crate) fn find(workspace: &Workspace, reference: &str) -> Result<AppManifest> {
     let id = AppId::parse(reference)
         .with_context(|| format!("{reference:?} is not an application id"))?;
 
@@ -720,17 +720,6 @@ pub(crate) fn states(home: &Path, app: Option<&str>) -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Reports honestly that a command needs a phase that has not landed.
-pub(crate) fn not_yet(app: &str, verb: &str, phase: u8, needs: &str) -> Result<()> {
-    bail!(
-        "cannot {verb} {app} yet: that needs {needs}, which arrives in Phase {phase}.\n\
-         \n\
-         What works today: create, list, inspect, permissions, grant, revoke, archive, \
-         restore, delete, purge, logs, audit, states, doctor.\n\
-         See docs/roadmap.md."
-    )
 }
 
 fn is_put_away(state: LifecycleState) -> bool {
