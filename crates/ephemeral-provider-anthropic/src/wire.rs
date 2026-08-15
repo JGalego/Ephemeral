@@ -28,9 +28,25 @@ pub const DEFAULT_MODEL: &str = "claude-sonnet-5";
 
 /// The ceiling on one response.
 ///
-/// Generous enough for a small application, bounded because an unbounded
-/// response is an unbounded bill.
-const MAX_TOKENS: u32 = 16_000;
+/// Bounded because an unbounded response is an unbounded bill — but the first
+/// value chosen, 16,000, was too small and every real generation hit it. A
+/// model's own reasoning is spent from this same budget before a single line of
+/// the application is written, so a ceiling sized for the output alone leaves
+/// nothing to write with.
+///
+/// Truncation is not a graceful degradation: a half-written JSON object is
+/// unreadable, so the whole attempt is wasted. That asymmetry argues for a
+/// generous ceiling, since the cost of one that is too high is paid only when a
+/// response genuinely needs the room.
+const MAX_TOKENS: u32 = 64_000;
+
+/// The ceiling has to leave room for reasoning *and* an application, because
+/// both are spent from it. Checked at compile time rather than by a test, since
+/// it is a fact about a constant and not about behaviour.
+const _: () = assert!(
+    MAX_TOKENS >= 32_000,
+    "a whole application plus the model's own reasoning does not fit"
+);
 
 /// The instructions that hold whatever is being asked for.
 ///
@@ -189,7 +205,9 @@ pub fn text_from(response: &Value) -> Result<String, AgentError> {
         && reason == "max_tokens"
     {
         return Err(unreadable(
-            "the response was cut off at the token limit, so it is incomplete",
+            "the model ran out of room before it finished, so the reply is incomplete. \
+             Asking for something smaller usually fixes it; the whole application has to \
+             arrive in one reply",
             response,
         ));
     }
@@ -613,7 +631,13 @@ x = 1\"}";
         });
 
         let error = text_from(&cut_off).expect_err("a truncated response is unusable");
-        assert!(error.to_string().contains("cut off"), "{error}");
+        let message = error.to_string();
+
+        assert!(message.contains("ran out of room"), "{message}");
+        assert!(
+            message.contains("smaller"),
+            "a truncation a user can do nothing about is not a useful error: {message}"
+        );
     }
 
     #[test]
