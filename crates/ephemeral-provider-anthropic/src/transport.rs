@@ -22,7 +22,14 @@ use serde_json::Value;
 ///
 /// Generation is bounded on wall clock by the loop above this, but a request
 /// that hangs forever would defeat that by never returning to be counted.
-const TIMEOUT_SECONDS: u32 = 300;
+///
+/// **Coupled to [`crate::wire::MAX_TOKENS`].** The reply is not streamed, so
+/// nothing arrives until the model has finished writing all of it: a larger
+/// token ceiling means a longer silence, not a longer trickle. Setting the two
+/// independently is how a request times out having received zero bytes, which
+/// is exactly what happened the first time the ceiling was raised. Raise one,
+/// look at the other.
+const TIMEOUT_SECONDS: u32 = 900;
 
 /// The arguments handed to `curl`.
 ///
