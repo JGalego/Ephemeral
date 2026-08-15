@@ -145,10 +145,13 @@ enum Command {
         yes: bool,
     },
 
-    /// Show an application's history: what happened to it and why.
+    /// Show an application's history, and what it is printing now.
     Logs {
         /// Which application.
         app: String,
+        /// How many lines of the application's own output to show.
+        #[arg(long, default_value_t = 50)]
+        lines: u32,
     },
 
     /// Show the security record.
@@ -190,6 +193,12 @@ enum Command {
 
     /// Pick a suspended application back up.
     Resume {
+        /// Which application.
+        app: String,
+    },
+
+    /// Check what an application is actually doing, and correct its record.
+    Status {
         /// Which application.
         app: String,
     },
@@ -297,7 +306,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::Restore { app } => commands::restore(&home, &app),
         Command::Delete { app } => commands::delete(&home, &app),
         Command::Purge { app, yes } => commands::purge(&home, &app, yes),
-        Command::Logs { app } => commands::logs(&home, &app),
+        Command::Logs { app, lines } => commands::logs(&home, &app, lines),
         Command::Audit { app, limit } => commands::audit(&home, app.as_deref(), limit),
         Command::States { app } => commands::states(&home, app.as_deref()),
         Command::Doctor => {
@@ -308,6 +317,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::Stop { app } => runtime::stop(&home, &app),
         Command::Pause { app } => runtime::pause(&home, &app),
         Command::Resume { app } => runtime::resume(&home, &app),
+        Command::Status { app } => runtime::status(&home, &app),
         Command::Cleanup { yes } => runtime::cleanup(&home, yes),
     }
 }

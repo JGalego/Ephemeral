@@ -30,6 +30,8 @@ honest record of where that line currently sits.
 | `ephemeral-runtime` — the sandbox, and the Docker implementation of it | ✅ |
 | `ephemeral run`, `stop`, `pause`, `resume` | ✅ |
 | Orphan cleanup — `ephemeral cleanup`, and `doctor` reporting what is left over | ✅ |
+| `ephemeral status` — crash, health and clean-exit detection against the record | ✅ |
+| `ephemeral logs` shows the application's own output, not only its history | ✅ |
 
 Phase 0 is complete. Everything that does not need a runtime or a model provider
 works end to end: ask for an application, inspect it, move it through its
@@ -60,7 +62,8 @@ applied.
 | | |
 |---|---|
 | Building an image from generated source rather than pulling one | |
-| The supervisor: wall-clock limits, health polling, crash detection | |
+| A supervisor that notices these *while* they happen, rather than when asked | |
+| Wall-clock limits, which need that supervisor to enforce them | |
 | `NativeRuntime`, for what genuinely cannot be containerised | |
 
 **Done when:** an application whose source somebody wrote by hand can be run,
