@@ -225,6 +225,13 @@ than a keystroke, so a `y` habit formed on easy questions does not carry over to
 the one that matters. Run without a terminal, it prints what it would ask and
 decides nothing.
 
+When an application is regenerated, the new version is compared with the one
+you approved. Anything it *newly* asks for loses whatever grant it had, so a
+wider version cannot inherit approval given to a narrower one — and only the
+capabilities the update touches are affected, so an update that adds network
+access does not cost you the file access you already agreed to. An update that
+asks for nothing new leaves your decisions alone.
+
 Two things are still model rather than enforcement. A **hostname allow-list**
 cannot be applied by Docker, so an application granted one refuses to start
 rather than running with more access than its owner allowed. **Device access** —

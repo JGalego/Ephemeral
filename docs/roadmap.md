@@ -83,13 +83,13 @@ Done so far:
 | The bounded plan → generate → build → test → repair loop | ✅ |
 | `ephemeral generate` — an application reaching `Ready` without anybody writing code | ✅ |
 | `ephemeral review` — the permission prompt, finally reachable | ✅ |
+| Regenerating, with a widening update's grants withdrawn rather than inherited | ✅ |
 
 Still to do:
 
 | | |
 |---|---|
 | A real provider, behind the same trait | |
-| Regenerating an existing application, with the permission delta put to the user | |
 | Rolling back to a version that worked | |
 
 **Done when:** the CSV comparator can be built from a natural-language request

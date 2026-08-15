@@ -41,21 +41,26 @@ pub(crate) fn run(home: &Path, reference: &str, provider_name: &str) -> Result<(
     let mut workspace = crate::commands::open(home)?;
     let mut manifest = crate::commands::find(&workspace, reference)?;
 
-    if manifest.runtime.is_some() {
-        bail!(
-            "{} has already been generated. Regenerating an existing application is not \
-             implemented yet — create a new one, or delete this and ask again.",
-            manifest.id
-        );
-    }
+    let regenerating = manifest.runtime.is_some();
+
     if !manifest
         .lifecycle
         .can_apply(LifecycleEvent::Plan, Actor::Ephemeral)
     {
         bail!(
-            "cannot generate {}: it is {}.",
+            "cannot {} {}: it is {}. {}",
+            if regenerating {
+                "regenerate"
+            } else {
+                "generate"
+            },
             manifest.id,
-            manifest.lifecycle.state().headline().to_lowercase()
+            manifest.lifecycle.state().headline().to_lowercase(),
+            if manifest.lifecycle.state().is_runnable() {
+                "Stop it first."
+            } else {
+                ""
+            }
         );
     }
 
@@ -121,7 +126,13 @@ pub(crate) fn run(home: &Path, reference: &str, provider_name: &str) -> Result<(
     );
 
     match outcome {
-        Ok(outcome) => finish(&mut workspace, &mut manifest, &outcome, provider.name()),
+        Ok(outcome) => finish(
+            &mut workspace,
+            &mut manifest,
+            &outcome,
+            provider.name(),
+            regenerating,
+        ),
         Err(error) => {
             fail(&mut workspace, &mut manifest, &error)?;
             Err(anyhow::Error::new(error).context(format!("could not generate {}", manifest.id)))
@@ -257,8 +268,19 @@ fn finish(
     manifest: &mut AppManifest,
     outcome: &Outcome,
     provider: &str,
+    regenerating: bool,
 ) -> Result<()> {
     let (recorded, delta) = apply_success(manifest, outcome, provider)?;
+
+    // The question ADR-0011 exists to answer. A new version that wants more
+    // than the one already approved must not inherit that approval, so anything
+    // newly requested has its existing grants withdrawn — the user is asked
+    // again rather than assumed to have agreed in advance.
+    let withdrawn = if delta.widens() {
+        withdraw_widened(workspace, &manifest.id, &delta)
+    } else {
+        0
+    };
 
     for entry in recorded {
         workspace.audit_mut().append(
@@ -286,7 +308,66 @@ fn finish(
     workspace.save()?;
 
     report(manifest, outcome, &delta);
+
+    if delta.widens() {
+        println!();
+        println!(
+            "{} {}",
+            output::warn("This update wants more."),
+            delta.describe()
+        );
+        if withdrawn > 0 {
+            println!(
+                "{}",
+                output::dim(&format!(
+                    "{withdrawn} permission(s) you had allowed were withdrawn, because they no \
+                     longer cover what it now asks for."
+                ))
+            );
+        }
+        println!(
+            "{}",
+            output::dim(&format!(
+                "Run `ephemeral review {}` to decide. Until you do, it has less than it had.",
+                manifest.id
+            ))
+        );
+    } else if regenerating {
+        println!();
+        println!(
+            "{}",
+            output::dim("This update asks for nothing new, so your existing decisions stand.")
+        );
+    }
+
     Ok(())
+}
+
+/// Withdraws grants that a widening update would otherwise silently inherit.
+///
+/// Returns how many were withdrawn. Only the ones the *new* request touches:
+/// an update that adds network access does not cost the user the file access
+/// they already agreed to.
+fn withdraw_widened(
+    workspace: &mut Workspace,
+    app: &ephemeral_core::AppId,
+    delta: &ephemeral_core::PermissionDelta,
+) -> usize {
+    let subject = ephemeral_core::Principal::app(app.clone());
+    let mut withdrawn = 0;
+
+    for permission in &delta.added {
+        withdrawn += workspace
+            .ledger_mut()
+            .revoke(
+                &subject,
+                &ephemeral_core::permission::Permission::App(permission.clone()),
+                Actor::User,
+            )
+            .unwrap_or(0);
+    }
+
+    withdrawn
 }
 
 /// Records a failed run, so the manifest says what happened.
@@ -726,6 +807,81 @@ mod tests {
         let other = outcome_from(Behaviour::Succeeds, &AlwaysBuilds);
 
         assert_eq!(one.recipe("cpu=500"), other.recipe("cpu=500"));
+    }
+
+    /// The question ADR-0011 exists to answer, reachable from a regeneration:
+    /// a version that wants more must not inherit the approval given to the one
+    /// before it.
+    #[test]
+    fn a_widening_update_withdraws_the_grants_it_would_have_inherited() {
+        use ephemeral_core::{
+            Principal,
+            permission::{HostScope, Permission},
+            storage::Workspace,
+        };
+
+        let home = tempfile::tempdir().expect("a temporary directory");
+        let mut workspace = Workspace::open(home.path()).expect("a workspace");
+        let app = AppId::parse("csv-comparator").expect("a valid id");
+
+        let reading = AppPermission::read(PathScope::parse("~/Downloads/**").expect("a scope"));
+        let calling = AppPermission::outbound(HostScope::parse("*").expect("a host"));
+
+        for permission in [&reading, &calling] {
+            workspace
+                .ledger_mut()
+                .allow(
+                    Principal::app(app.clone()),
+                    Permission::App(permission.clone()),
+                    Actor::User,
+                    "agreed earlier",
+                )
+                .expect("the user may grant");
+        }
+
+        // The update newly asks for the network, and nothing else.
+        let delta = ephemeral_core::PermissionDelta {
+            added: vec![calling.clone()],
+            removed: Vec::new(),
+        };
+
+        let withdrawn = withdraw_widened(&mut workspace, &app, &delta);
+
+        assert!(
+            withdrawn > 0,
+            "the newly requested capability loses its grant"
+        );
+        assert!(
+            !workspace.ledger().check_app(&app, &calling).is_allowed(),
+            "what the update newly wants must not be inherited"
+        );
+        assert!(
+            workspace
+                .ledger()
+                .active_grants(&Principal::app(app.clone()))
+                .iter()
+                .any(|grant| grant.permission == Permission::App(reading.clone())
+                    && grant.decision.is_allowed()),
+            "an unrelated decision the user already made must survive"
+        );
+    }
+
+    /// An update that asks for nothing new costs the user nothing.
+    #[test]
+    fn an_unchanged_update_withdraws_nothing() {
+        use ephemeral_core::storage::Workspace;
+
+        let home = tempfile::tempdir().expect("a temporary directory");
+        let mut workspace = Workspace::open(home.path()).expect("a workspace");
+        let app = AppId::parse("csv-comparator").expect("a valid id");
+
+        let withdrawn = withdraw_widened(
+            &mut workspace,
+            &app,
+            &ephemeral_core::PermissionDelta::default(),
+        );
+
+        assert_eq!(withdrawn, 0);
     }
 
     #[test]
