@@ -43,6 +43,27 @@ export function applicationItem(summary) {
   if (summary.purpose) item.appendChild(element('div', 'purpose', summary.purpose));
   item.appendChild(element('div', 'state', summary.state));
 
+  // What an application already holds, which the list said nothing about until
+  // somebody looked at a recording of it. An app that had been allowed to reach
+  // the whole internet was drawn exactly like one that can see nothing of
+  // yours: same words, same colour, no difference at all. The count alone does
+  // not carry that, so the risk comes with it.
+  if (summary.granted > 0) {
+    // Deliberately no fallback risk. Defaulting an unknown one to `low` paints
+    // a reassuring green on an application that might hold the widest
+    // permission Ephemeral offers — the one case where guessing is worst. An
+    // unknown risk is drawn as unknown, in the ordinary text colour, and says
+    // nothing it cannot support.
+    const risk = summary.highest_granted_risk;
+    const holds = element(
+      'div',
+      risk ? `grants risk-${risk}` : 'grants',
+      summary.granted === 1 ? 'Allowed 1 thing' : `Allowed ${summary.granted} things`,
+    );
+    holds.dataset.highestRisk = risk ?? '';
+    item.appendChild(holds);
+  }
+
   return item;
 }
 
@@ -71,9 +92,17 @@ export function applicationList(summaries, { showPutAway = false } = {}) {
   return list;
 }
 
-/** One permission, phrased as a question a person can answer. */
-export function permissionItem(permission) {
-  const item = element('li', `permission risk-${permission.risk}`);
+/** One permission, phrased as a question a person can answer.
+ *
+ * `held` means the person already said yes. Looking at the first film of this
+ * window showed a granted permission offering "Allow" again, in the same colour
+ * as an unanswered one — so nothing on screen distinguished what somebody had
+ * agreed to from what they were being asked. No test caught that, because every
+ * test asserted text and the problem was that two different things looked the
+ * same.
+ */
+export function permissionItem(permission, { held = false } = {}) {
+  const item = element('li', `permission risk-${permission.risk}${held ? ' held' : ''}`);
   item.dataset.capability = permission.capability;
   item.dataset.risk = permission.risk;
 
@@ -100,9 +129,20 @@ export function permissionItem(permission) {
   );
 
   item.dataset.needsConfirmation = String(permission.needs_explicit_confirmation);
-  item.appendChild(decisionControls(permission));
+  item.dataset.held = String(held);
+  item.appendChild(held ? revokeControl() : decisionControls(permission));
 
   return item;
+}
+
+/** The control for taking back something already allowed. */
+export function revokeControl() {
+  const controls = element('div', 'decide');
+  const revoke = element('button', 'revoke', 'Take this back');
+  revoke.dataset.decision = 'revoke';
+  controls.appendChild(revoke);
+
+  return controls;
 }
 
 /// The controls for answering one request.
@@ -121,6 +161,15 @@ export function decisionControls(permission) {
     field.placeholder = 'type allow';
     field.setAttribute('aria-label', `Type allow to permit: ${permission.wants}`);
     controls.appendChild(field);
+
+    // A field with nothing to submit it is a dead end. The first recording of
+    // this window had exactly that: somebody could type `allow` and nothing
+    // would happen, because the affirmative button had been removed and
+    // nothing replaced it. The button is deliberately not called "Allow" —
+    // it confirms what was typed, and typing the wrong thing still refuses.
+    const confirm = element('button', 'confirm-allow', 'Confirm');
+    confirm.dataset.decision = 'allow';
+    controls.appendChild(confirm);
   } else {
     const allow = element('button', 'allow', 'Allow');
     allow.dataset.decision = 'allow';
@@ -154,8 +203,23 @@ export function permissionsSection(permissions) {
       element('p', 'isolated', 'This app can see nothing of yours: no files, no network.'),
     );
   } else {
+    // Labelled, because an unlabelled list of capabilities next to another
+    // unlabelled list of capabilities tells a person nothing about which is
+    // which.
+    section.appendChild(
+      element(
+        'h3',
+        'holds',
+        permissions.allowed.length === 1
+          ? '1 thing you have allowed'
+          : `${permissions.allowed.length} things you have allowed`,
+      ),
+    );
+
     const allowed = element('ul', 'allowed');
-    for (const permission of permissions.allowed) allowed.appendChild(permissionItem(permission));
+    for (const permission of permissions.allowed) {
+      allowed.appendChild(permissionItem(permission, { held: true }));
+    }
     section.appendChild(allowed);
   }
 
@@ -183,6 +247,9 @@ export function permissionsSection(permissions) {
 export function applicationDetail(detail) {
   const page = element('section', 'detail');
   page.dataset.id = detail.summary.id;
+
+  const back = element('button', 'back', '← All applications');
+  page.appendChild(back);
 
   page.appendChild(element('h2', 'name', detail.summary.name));
   page.appendChild(element('p', 'explanation', detail.explanation));

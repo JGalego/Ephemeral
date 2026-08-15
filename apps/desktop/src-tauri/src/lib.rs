@@ -210,4 +210,32 @@ mod tests {
     fn the_window_reports_the_api_it_speaks() {
         assert_eq!(api_version(), ephemeral_api::API_VERSION);
     }
+
+    /// The frontend reaches Rust through `window.__TAURI__`, which Tauri v2
+    /// only injects when this is set.
+    ///
+    /// Without it the window opens, renders its header, and then says "This
+    /// window is not running inside Ephemeral" — while running inside
+    /// Ephemeral. It shipped that way, and neither the Rust tests nor the
+    /// headless rendering tests could see it: the commands were correct, the
+    /// rendering was correct, and the two were never connected. Filming the
+    /// real window under a virtual display is what found it, on the first
+    /// frame.
+    ///
+    /// The alternative is importing `@tauri-apps/api`, which means a bundler,
+    /// which means a build step and a supply chain for a window that shows a
+    /// list. This flag is the price of not having one, so it is asserted rather
+    /// than assumed.
+    #[test]
+    fn the_frontend_can_reach_rust() {
+        let configuration: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json"))
+                .expect("tauri.conf.json is valid JSON");
+
+        assert_eq!(
+            configuration["app"]["withGlobalTauri"],
+            serde_json::Value::Bool(true),
+            "the frontend calls window.__TAURI__ and has no bundler to import from"
+        );
+    }
 }
