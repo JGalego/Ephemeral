@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/logo.svg" alt="" width="136" height="136">
+<img src="docs/assets/banner.gif" alt="" width="100%">
 
 # Ephemeral 🫧
 

@@ -13,10 +13,15 @@ all-features = true
 yanked = "deny"
 ignore = []
 
-[licences]
+[licenses]
 # Permissive licences only, matching our own Apache-2.0.
 version = 2
 confidence-threshold = 0.9
+# Several entries below are pre-approved rather than currently in use, so that
+# adding an ordinary dependency does not turn CI red for a licence nobody
+# objects to. Not encountering one is not a problem worth reporting.
+unused-allowed-license = "allow"
+
 allow = [
   "Apache-2.0",
   "Apache-2.0 WITH LLVM-exception",
