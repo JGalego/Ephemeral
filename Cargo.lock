@@ -225,6 +225,7 @@ dependencies = [
  "clap",
  "ephemeral-agent",
  "ephemeral-core",
+ "ephemeral-provider-anthropic",
  "ephemeral-runtime",
  "serde_norway",
  "tempfile",
@@ -243,6 +244,16 @@ dependencies = [
  "tempfile",
  "thiserror",
  "uuid",
+]
+
+[[package]]
+name = "ephemeral-provider-anthropic"
+version = "0.1.0"
+dependencies = [
+ "ephemeral-agent",
+ "ephemeral-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

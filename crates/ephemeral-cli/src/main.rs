@@ -171,7 +171,7 @@ enum Command {
     Generate {
         /// Which application.
         app: String,
-        /// Which model provider to use.
+        /// Which model provider to use: `mock` or `anthropic`.
         #[arg(long, default_value = "mock")]
         provider: String,
     },

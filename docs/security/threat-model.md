@@ -129,12 +129,19 @@ The provider sees every intent, and chooses every line of generated code.
 | | |
 |---|---|
 | **Mitigation** | Provider-neutral interface, so a provider can be replaced; a local provider is a supported shape; output is validated as structured data rather than trusted; generated code is confined regardless of who wrote it |
-| **Status** | ⚠️ The trait and the mock exist; no real provider is implemented yet, local or remote |
+| **Status** | ⚠️ The trait, the mock and one hosted provider exist. No local provider yet, which is the only answer to "the intent leaves the machine" |
 | **Residual risk** | The provider learns what the user asked for. That is inherent to using a hosted model |
 
 **Accepted and stated:** using a hosted provider means the intent leaves the
 machine. The mitigation available is choice, not prevention — and the offline
 path is a local model, not a promise that a remote one is private.
+
+The credential never enters an argument vector: it travels to `curl` in a
+configuration document on stdin, so the command Ephemeral ran is safe to record
+and safe to show ([ADR-0016](../architecture/decisions/0016-real-providers-live-in-their-own-crates.md)).
+A provider's transport is one module, guarded by CI against growing an HTTP
+stack or spawning anything outside it, because that module is the only part of a
+provider CI cannot test.
 
 ### T7 — Persistence after deletion
 

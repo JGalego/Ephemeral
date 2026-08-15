@@ -4,6 +4,7 @@ members = [
     "crates/ephemeral-core",
     "crates/ephemeral-runtime",
     "crates/ephemeral-agent",
+    "crates/ephemeral-provider-anthropic",
     "crates/ephemeral-cli",
 ]
 
@@ -20,6 +21,7 @@ authors = ["The Ephemeral contributors"]
 ephemeral-core = { path = "crates/ephemeral-core", version = "0.1.0" }
 ephemeral-runtime = { path = "crates/ephemeral-runtime", version = "0.1.0" }
 ephemeral-agent = { path = "crates/ephemeral-agent", version = "0.1.0" }
+ephemeral-provider-anthropic = { path = "crates/ephemeral-provider-anthropic", version = "0.1.0" }
 
 anyhow = "1.0.104"
 chrono = { version = "0.4.45", default-features = false, features = [

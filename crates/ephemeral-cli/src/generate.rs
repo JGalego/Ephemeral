@@ -446,10 +446,14 @@ fn step(
 fn provider(name: &str) -> Result<Box<dyn AgentProvider>> {
     match name {
         "mock" => Ok(Box::new(MockProvider::new())),
+        "anthropic" => Ok(Box::new(
+            ephemeral_provider_anthropic::AnthropicProvider::new(),
+        )),
         other => bail!(
-            "there is no provider called {other}. Only `mock` exists so far — it produces a \
-             fixed example application without a credential, a network connection or a bill. \
-             Real providers arrive later in Phase 2; see docs/roadmap.md."
+            "there is no provider called {other}. `mock` produces a fixed example \
+             application without a credential, a network connection or a bill; `anthropic` \
+             uses a hosted model and needs {}.",
+            ephemeral_provider_anthropic::API_KEY_VARIABLE
         ),
     }
 }
@@ -884,15 +888,23 @@ mod tests {
         assert_eq!(withdrawn, 0);
     }
 
+    /// An unknown provider names the ones that exist, rather than leaving
+    /// somebody to guess.
     #[test]
-    fn there_is_no_provider_but_the_mock_yet() {
+    fn an_unknown_provider_says_what_does_exist() {
         assert!(provider("mock").is_ok(), "the mock provider should exist");
+        assert!(
+            provider("anthropic").is_ok(),
+            "a real provider should be constructible even without a credential — \
+             the missing key is reported by `availability`, not by construction"
+        );
 
-        let error = match provider("anthropic") {
-            Ok(_) => panic!("there is no Anthropic provider yet"),
+        let error = match provider("gpt") {
+            Ok(_) => panic!("there is no provider called gpt"),
             Err(error) => error.to_string(),
         };
-        assert!(error.contains("no provider called anthropic"), "{error}");
-        assert!(error.contains("roadmap"), "{error}");
+        assert!(error.contains("no provider called gpt"), "{error}");
+        assert!(error.contains("mock"), "{error}");
+        assert!(error.contains("anthropic"), "{error}");
     }
 }
