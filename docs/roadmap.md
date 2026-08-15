@@ -82,6 +82,7 @@ Done so far:
 | The deterministic mock provider, and a CI job that keeps generation offline | ✅ |
 | The bounded plan → generate → build → test → repair loop | ✅ |
 | `ephemeral generate` — an application reaching `Ready` without anybody writing code | ✅ |
+| `ephemeral review` — the permission prompt, finally reachable | ✅ |
 
 Still to do:
 

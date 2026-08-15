@@ -217,6 +217,14 @@ scope becomes a mount, an inbound port becomes a loopback binding, and an
 application with an empty ledger gets a container that can see nothing of yours.
 [sandbox.md](sandbox.md) is the list of exactly what that buys.
 
+`ephemeral review` walks through everything an application has asked for and
+not been given, one question at a time. It answers all five questions above, and
+holds two rules: nothing is granted without an answer — no default, no "allow
+all", and no timeout — and a high-risk permission takes the word `allow` rather
+than a keystroke, so a `y` habit formed on easy questions does not carry over to
+the one that matters. Run without a terminal, it prints what it would ask and
+decides nothing.
+
 Two things are still model rather than enforcement. A **hostname allow-list**
 cannot be applied by Docker, so an application granted one refuses to start
 rather than running with more access than its owner allowed. **Device access** —
