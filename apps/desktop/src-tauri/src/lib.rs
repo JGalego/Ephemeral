@@ -86,6 +86,77 @@ fn activity(limit: usize) -> Result<Vec<AuditEntryView>, Failure> {
     Ok(ephemeral_api::recent_activity(workspace.audit(), None, limit))
 }
 
+/// Records a person's decision about one thing an application asked for.
+///
+/// The window is the *asking* half and nothing more. Whether a decision is
+/// permitted, what it covers, and what it means are all decided by the ledger
+/// in `ephemeral-core` — this only carries an answer a human gave.
+///
+/// `allow` is not defaulted anywhere, and there is no bulk variant. A window
+/// that could grant several things at once would be a window that grants things
+/// nobody read.
+#[tauri::command]
+fn decide(id: String, capability: String, target: Option<String>, allow: bool) -> Result<(), Failure> {
+    let mut workspace = open()?;
+    let app = AppId::parse(&id).map_err(|error| format!("{id} is not an application id: {error}"))?;
+
+    let manifest = workspace
+        .apps()
+        .load(&app)
+        .map_err(|_| format!("There is no application called {id}."))?;
+
+    // Matched against what the application actually asked for, rather than
+    // rebuilt from strings the window sent. A client that could compose a
+    // permission out of a capability name and a path would be a client that can
+    // grant something nobody requested.
+    let permission = manifest
+        .permissions
+        .capabilities()
+        .into_iter()
+        .find(|permission| {
+            permission.capability() == capability
+                && target.as_ref().is_none_or(|wanted| &permission.describe() == wanted)
+        })
+        .ok_or_else(|| format!("{id} has not asked for {capability}."))?;
+
+    let subject = ephemeral_core::Principal::app(app.clone());
+    let decided = ephemeral_core::permission::Permission::App(permission.clone());
+    let reason = manifest
+        .reason_for(&permission)
+        .unwrap_or("no reason given")
+        .to_owned();
+
+    let ledger = workspace.ledger_mut();
+    let recorded = if allow {
+        ledger.allow(subject.clone(), decided.clone(), ephemeral_core::Actor::User, reason)
+    } else {
+        ledger.deny(
+            subject.clone(),
+            decided.clone(),
+            ephemeral_core::Actor::User,
+            "declined in the desktop window",
+        )
+    };
+    recorded.map_err(|error| format!("That decision could not be recorded: {error}"))?;
+
+    workspace.audit_mut().append(
+        ephemeral_core::Actor::User,
+        ephemeral_core::audit::AuditEvent::PermissionDecided {
+            principal: subject,
+            permission: decided,
+            decision: if allow {
+                ephemeral_core::permission::Decision::Allow
+            } else {
+                ephemeral_core::permission::Decision::Deny
+            },
+        },
+    );
+
+    workspace
+        .save()
+        .map_err(|error| format!("That decision could not be saved: {error}"))
+}
+
 /// Which view shape this window speaks.
 ///
 /// Exposed so the window can refuse to run against a service it does not
@@ -107,6 +178,7 @@ pub fn run() {
             applications,
             application,
             activity,
+            decide,
             api_version
         ])
         .run(tauri::generate_context!())

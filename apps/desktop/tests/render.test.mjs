@@ -184,6 +184,56 @@ await check('a hostile reason cannot become markup either', async () => {
   assert.equal(await page.evaluate(() => window.__pwned), undefined);
 });
 
+// The same rule the terminal holds: a critical permission takes the word, not a
+// click. Two clients disagreeing about what counts as consent would be worse
+// than either being wrong.
+await check('a critical permission is not granted by a click', async () => {
+  const result = await page.evaluate(async (data) => {
+    const { isConsent, decisionControls } = await import('./render.js');
+    return {
+      click: isConsent(data, 'allow') && !data.needs_explicit_confirmation,
+      typedWord: isConsent(data, 'allow'),
+      typedWrong: isConsent(data, 'yes'),
+      typedEmpty: isConsent(data, ''),
+      hasButton: decisionControls(data).querySelector('button.allow') !== null,
+      hasField: decisionControls(data).querySelector('input.confirm') !== null,
+    };
+  }, permission({ risk: 'critical', needs_explicit_confirmation: true }));
+
+  assert.equal(result.typedWord, true, 'the word allows it');
+  assert.equal(result.typedWrong, false, '"yes" does not');
+  assert.equal(result.typedEmpty, false, 'nor does nothing');
+  assert.equal(result.hasButton, false, 'there is no one-click affirmative');
+  assert.equal(result.hasField, true, 'there is a field to type into');
+});
+
+await check('an ordinary permission can be answered with a click', async () => {
+  const result = await page.evaluate(async (data) => {
+    const { isConsent, decisionControls } = await import('./render.js');
+    return {
+      allowed: isConsent(data, 'allow'),
+      nothing: isConsent(data, ''),
+      hasButton: decisionControls(data).querySelector('button.allow') !== null,
+    };
+  }, permission());
+
+  assert.equal(result.allowed, true);
+  assert.equal(result.nothing, false, 'silence is still not consent');
+  assert.equal(result.hasButton, true);
+});
+
+// Making "no" harder than "yes" is how consent gets manufactured.
+await check('refusing is always one click, whatever the risk', async () => {
+  for (const risk of ['low', 'critical']) {
+    const hasDeny = await page.evaluate(async (data) => {
+      const { decisionControls } = await import('./render.js');
+      return decisionControls(data).querySelector('button.deny') !== null;
+    }, permission({ risk, needs_explicit_confirmation: risk === 'critical' }));
+
+    assert.ok(hasDeny, `${risk} must be refusable in one click`);
+  }
+});
+
 // Whether data leaves the device is its own line, not buried in prose.
 await check('a remote runtime is marked differently from a local one', async () => {
   const classes = await page.evaluate(async () => {

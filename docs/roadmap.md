@@ -117,7 +117,8 @@ and the terminal show the same views worded identically.
 | `ephemeral-api` — the versioned service layer both clients consume | ✅ |
 | The window, its commands, and a frontend with no build step | ✅ |
 | Rendering tested in headless Chromium, including that untrusted names cannot become markup | ✅ |
-| Acting from the window — granting, running, generating | |
+| Deciding permissions from the window, under the same rules as the terminal | ✅ |
+| Running and generating from the window | |
 
 **Done when:** somebody can do everything the CLI does without opening a
 terminal.

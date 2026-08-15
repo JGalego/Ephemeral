@@ -232,6 +232,12 @@ capabilities the update touches are affected, so an update that adds network
 access does not cost you the file access you already agreed to. An update that
 asks for nothing new leaves your decisions alone.
 
+The desktop window asks the same questions under the same rules, because it
+renders the same views: a critical permission takes the typed word `allow`
+rather than a click, refusing is always one click — making "no" harder than
+"yes" is how consent gets manufactured — and consent is judged by a shared rule
+rather than inferred from which control was pressed.
+
 Two things are still model rather than enforcement. A **hostname allow-list**
 cannot be applied by Docker, so an application granted one refuses to start
 rather than running with more access than its owner allowed. **Device access** —

@@ -99,11 +99,50 @@ export function permissionItem(permission) {
     ),
   );
 
-  // A high-risk permission must not be accepted by the same reflex as a low-risk
-  // one, so the affirmative control is deliberately not a plain button here.
   item.dataset.needsConfirmation = String(permission.needs_explicit_confirmation);
+  item.appendChild(decisionControls(permission));
 
   return item;
+}
+
+/// The controls for answering one request.
+///
+/// A high-risk permission must not be accepted by the same reflex as a low-risk
+/// one. A plain click allows an ordinary request; a critical one requires
+/// typing the word `allow`, so a habit formed on easy questions does not carry
+/// over to the one that matters. Refusing is always one click, because making
+/// "no" harder than "yes" is how consent gets manufactured.
+export function decisionControls(permission) {
+  const controls = element('div', 'decide');
+
+  if (permission.needs_explicit_confirmation) {
+    const field = element('input', 'confirm');
+    field.type = 'text';
+    field.placeholder = 'type allow';
+    field.setAttribute('aria-label', `Type allow to permit: ${permission.wants}`);
+    controls.appendChild(field);
+  } else {
+    const allow = element('button', 'allow', 'Allow');
+    allow.dataset.decision = 'allow';
+    controls.appendChild(allow);
+  }
+
+  const deny = element('button', 'deny', 'Deny');
+  deny.dataset.decision = 'deny';
+  controls.appendChild(deny);
+
+  return controls;
+}
+
+/// Whether an answer to a request should be treated as consent.
+///
+/// The same rule the terminal holds, in the same words, because it is the same
+/// promise: nothing is granted without an answer, and a critical permission
+/// takes the word rather than a keystroke.
+export function isConsent(permission, answer) {
+  if (!permission.needs_explicit_confirmation) return answer === 'allow';
+
+  return typeof answer === 'string' && answer.trim().toLowerCase() === 'allow';
 }
 
 /** What an application is allowed to do, and what it is still asking for. */
