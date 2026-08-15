@@ -203,6 +203,16 @@ enum Command {
         app: String,
     },
 
+    /// Watch running applications: notice crashes and apply time limits.
+    Watch {
+        /// How often to look, in seconds.
+        #[arg(long, default_value_t = 15)]
+        interval: u64,
+        /// Look once and exit, instead of watching.
+        #[arg(long)]
+        once: bool,
+    },
+
     /// Remove containers left behind by a crash or a deleted application.
     Cleanup {
         /// Actually remove them. Without this, it only says what it would do.
@@ -318,6 +328,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::Pause { app } => runtime::pause(&home, &app),
         Command::Resume { app } => runtime::resume(&home, &app),
         Command::Status { app } => runtime::status(&home, &app),
+        Command::Watch { interval, once } => runtime::watch(&home, interval, once),
         Command::Cleanup { yes } => runtime::cleanup(&home, yes),
     }
 }
