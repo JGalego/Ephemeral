@@ -12,8 +12,8 @@ use std::process::{Command, Output};
 use ephemeral_core::AppId;
 
 use crate::{
-    APP_LABEL, Availability, ContainerState, ContainerStatus, ManagedContainer, Runtime,
-    RuntimeError, Secrets, spec::ContainerSpec,
+    APP_LABEL, Availability, BuildRequest, ContainerState, ContainerStatus, ManagedContainer,
+    Runtime, RuntimeError, Secrets, spec::ContainerSpec,
 };
 
 use super::command::{self, NetworkMode};
@@ -203,6 +203,33 @@ impl Runtime for DockerRuntime {
             })
     }
 
+    fn build_image(&self, request: &BuildRequest) -> Result<String, RuntimeError> {
+        let args = command::build(
+            &request.app,
+            &request.version,
+            &request.context,
+            &request.dockerfile,
+        )?;
+
+        let output = self.invoke(&args, &[])?;
+
+        if output.status.success() {
+            return Ok(command::image_tag(&request.app, &request.version));
+        }
+
+        // Both streams, in the order a person would have seen them. A build
+        // failure's cause is as often on stdout as on stderr, and the whole of
+        // it is what a repair attempt reads.
+        let mut printed = String::from_utf8_lossy(&output.stdout).into_owned();
+        printed.push_str(&String::from_utf8_lossy(&output.stderr));
+
+        Err(RuntimeError::BuildFailed {
+            app: request.app.clone(),
+            summary: last_meaningful_line(&printed),
+            output: printed,
+        })
+    }
+
     fn start(
         &self,
         spec: &ContainerSpec,
@@ -321,6 +348,62 @@ impl Runtime for DockerRuntime {
     }
 }
 
+/// The line worth showing a person from a wall of build output.
+///
+/// `BuildKit` prefixes *every* line with a step marker like `#5` or `#5 2.431`,
+/// including the error, so those markers cannot be used to tell noise from
+/// signal — they are stripped rather than filtered on. The last line mentioning
+/// an error wins; failing that, the last line of any kind.
+///
+/// This is a heuristic and only decides the one-line message. The full output is
+/// always kept, because that is what a repair attempt reads.
+fn last_meaningful_line(output: &str) -> String {
+    let lines: Vec<&str> = output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+
+    let chosen = lines
+        .iter()
+        .rfind(|line| {
+            let lowered = line.to_lowercase();
+            lowered.contains("error") || lowered.contains("failed")
+        })
+        .or_else(|| lines.last());
+
+    chosen.map_or_else(
+        || "the build produced no output".to_owned(),
+        |line| strip_step_marker(line),
+    )
+}
+
+/// Removes `BuildKit`'s `#5` or `#5 2.431` prefix from one line.
+fn strip_step_marker(line: &str) -> String {
+    let Some(rest) = line.strip_prefix('#') else {
+        return line.to_owned();
+    };
+
+    // `#5 2.431 ERROR: ...` — drop the step number, then a bare timestamp if
+    // one follows. Anything that does not match is left exactly as it was.
+    let mut parts = rest.splitn(3, ' ');
+    let (Some(step), Some(second)) = (parts.next(), parts.next()) else {
+        return line.to_owned();
+    };
+    if !step.chars().all(|c| c.is_ascii_digit()) {
+        return line.to_owned();
+    }
+
+    let looks_like_a_timestamp =
+        second.chars().all(|c| c.is_ascii_digit() || c == '.') && second.contains('.');
+
+    if looks_like_a_timestamp {
+        parts.next().unwrap_or(second).to_owned()
+    } else {
+        rest[step.len()..].trim_start().to_owned()
+    }
+}
+
 /// Reads the parts of `docker inspect` Ephemeral relies on.
 ///
 /// Deliberately partial. Docker's inspect output is large and version-dependent,
@@ -424,6 +507,48 @@ mod tests {
 
     fn app() -> AppId {
         AppId::parse("csv-comparator").unwrap()
+    }
+
+    /// The one-line message should be the error, with `BuildKit`'s step marker
+    /// out of the way. Every line of that output starts with `#`, which is why
+    /// the marker cannot be used to tell noise from signal.
+    #[test]
+    fn a_build_failure_is_summarised_by_its_error() {
+        let output = concat!(
+            "#5 [3/4] RUN pip install -r requirements.txt\n",
+            "#5 2.431 ERROR: no version of pandas matches ==99.0\n",
+            "#5 ERROR: process did not complete successfully\n",
+            "\n",
+        );
+
+        let summary = last_meaningful_line(output);
+        assert!(summary.contains("did not complete"), "{summary}");
+        assert!(!summary.starts_with('#'), "{summary}");
+    }
+
+    /// When nothing announces itself as an error, the last line is still more
+    /// useful than nothing.
+    #[test]
+    fn output_with_no_error_line_falls_back_to_the_last_line() {
+        let summary = last_meaningful_line("#1 building\n#2 something odd happened\n");
+        assert!(summary.contains("something odd"), "{summary}");
+    }
+
+    #[test]
+    fn step_markers_are_stripped_only_when_they_are_step_markers() {
+        assert_eq!(strip_step_marker("#5 2.431 ERROR: boom"), "ERROR: boom");
+        assert_eq!(strip_step_marker("#5 ERROR: boom"), "ERROR: boom");
+        assert_eq!(strip_step_marker("ERROR: boom"), "ERROR: boom");
+        assert_eq!(
+            strip_step_marker("#include <stdio.h> failed"),
+            "#include <stdio.h> failed"
+        );
+    }
+
+    #[test]
+    fn empty_build_output_still_says_something() {
+        assert!(!last_meaningful_line("").is_empty());
+        assert!(!last_meaningful_line("\n\n  \n").is_empty());
     }
 
     #[test]

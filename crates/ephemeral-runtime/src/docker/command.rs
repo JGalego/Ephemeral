@@ -19,6 +19,8 @@
 //!
 //! [ADR-0014]: https://github.com/JGalego/Ephemeral/blob/main/docs/architecture/decisions/0014-drive-docker-through-its-cli.md
 
+use std::path::Path;
+
 use ephemeral_core::{AppId, permission::HostScope};
 
 use crate::{
@@ -283,6 +285,79 @@ fn mounts(spec: &ContainerSpec) -> Result<Vec<String>, RuntimeError> {
     }
 
     Ok(args)
+}
+
+/// The tag Ephemeral gives an image it built for an application.
+///
+/// Includes the version digest, so two builds of different source never share a
+/// tag. An image tag that silently changes what it points at would defeat the
+/// point of recording a version at all.
+#[must_use]
+pub fn image_tag(app: &AppId, version: &str) -> String {
+    format!("{CONTAINER_PREFIX}{app}:{version}")
+}
+
+/// The arguments that build an application's image from its source.
+///
+/// # Errors
+///
+/// [`RuntimeError::CannotEnforce`] if the build context path cannot be given to
+/// Docker unambiguously.
+pub fn build(
+    app: &AppId,
+    version: &str,
+    context: &Path,
+    dockerfile: &Path,
+) -> Result<Vec<String>, RuntimeError> {
+    let context = readable_path(context)?;
+    let dockerfile = readable_path(dockerfile)?;
+
+    Ok(vec![
+        "build".to_owned(),
+        "--tag".to_owned(),
+        image_tag(app, version),
+        "--label".to_owned(),
+        format!("{MANAGED_LABEL}=true"),
+        "--label".to_owned(),
+        format!("{APP_LABEL}={app}"),
+        // Named explicitly rather than found by convention, so a stray
+        // `Dockerfile` somewhere in the generated tree cannot become the one
+        // that gets built.
+        "--file".to_owned(),
+        dockerfile,
+        // Human-readable output. A build is something the user is shown when it
+        // fails, and Docker's default progress display is not that.
+        "--progress=plain".to_owned(),
+        // Deliberately absent: `--pull`. The base image is pinned by the
+        // manifest, and quietly re-resolving it would make a recorded version
+        // mean something different tomorrow.
+        context,
+    ])
+}
+
+/// Checks a path can be handed to Docker as an argument without ambiguity.
+fn readable_path(path: &Path) -> Result<String, RuntimeError> {
+    let text = path.to_string_lossy().into_owned();
+
+    if text.is_empty() || text.starts_with('-') {
+        return Err(RuntimeError::CannotEnforce {
+            control: format!("building from {text}"),
+            reason: "Docker would read that path as an option rather than a path".to_owned(),
+        });
+    }
+
+    Ok(text)
+}
+
+/// The arguments that remove an image Ephemeral built.
+#[must_use]
+pub fn remove_image(app: &AppId, version: &str) -> Vec<String> {
+    vec![
+        "image".to_owned(),
+        "rm".to_owned(),
+        "--force".to_owned(),
+        image_tag(app, version),
+    ]
 }
 
 /// The arguments that fetch an image.
@@ -752,6 +827,94 @@ mod tests {
         let args = remove(&app());
         assert_flag(&args, "--volumes");
         assert_flag(&args, "--force");
+    }
+
+    /// Two builds of different source must never share a tag, or a recorded
+    /// version stops meaning anything.
+    #[test]
+    fn an_image_tag_carries_the_version() {
+        let one = image_tag(&app(), "sha256-aaa");
+        let other = image_tag(&app(), "sha256-bbb");
+
+        assert_ne!(one, other);
+        assert!(one.starts_with(CONTAINER_PREFIX), "{one}");
+        assert!(one.ends_with("sha256-aaa"), "{one}");
+    }
+
+    /// The Dockerfile is named rather than found, so a stray one somewhere in
+    /// a model-generated tree cannot become the one that gets built.
+    #[test]
+    fn a_build_names_its_dockerfile_explicitly() {
+        let args = build(
+            &app(),
+            "sha256-aaa",
+            Path::new("/apps/csv-comparator/source"),
+            Path::new("/apps/csv-comparator/source/Dockerfile"),
+        )
+        .unwrap();
+
+        assert_pair(&args, "--file", "/apps/csv-comparator/source/Dockerfile");
+        assert_pair(&args, "--tag", &image_tag(&app(), "sha256-aaa"));
+        assert_eq!(
+            args.last().unwrap(),
+            "/apps/csv-comparator/source",
+            "the context comes last"
+        );
+    }
+
+    /// `--pull` would re-resolve a pinned base image, which would make a
+    /// recorded version mean something different tomorrow.
+    #[test]
+    fn a_build_does_not_re_resolve_the_base_image() {
+        let args = build(
+            &app(),
+            "sha256-aaa",
+            Path::new("/src"),
+            Path::new("/src/Dockerfile"),
+        )
+        .unwrap();
+
+        assert!(!args.iter().any(|arg| arg == "--pull"), "{args:?}");
+    }
+
+    /// A path Docker would read as an option is refused rather than passed.
+    #[test]
+    fn a_context_path_that_looks_like_an_option_is_refused() {
+        let error = build(
+            &app(),
+            "sha256-aaa",
+            Path::new("--privileged"),
+            Path::new("/src/Dockerfile"),
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(error, RuntimeError::CannotEnforce { .. }),
+            "{error:?}"
+        );
+    }
+
+    /// Everything Ephemeral builds is labelled, so cleanup can find it.
+    #[test]
+    fn built_images_are_labelled_and_removable() {
+        let args = build(
+            &app(),
+            "sha256-aaa",
+            Path::new("/src"),
+            Path::new("/src/Dockerfile"),
+        )
+        .unwrap();
+        assert!(
+            args.iter().any(|arg| arg.contains(MANAGED_LABEL)),
+            "{args:?}"
+        );
+
+        let removal = remove_image(&app(), "sha256-aaa");
+        assert!(
+            removal
+                .iter()
+                .any(|arg| arg == &image_tag(&app(), "sha256-aaa"))
+        );
     }
 
     /// Output is requested as JSON rather than parsed out of human formatting,
