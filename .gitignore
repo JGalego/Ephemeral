@@ -34,3 +34,7 @@ apps/*/src-tauri/gen/
 *.jks
 *.mobileprovision
 credentials.json
+
+# Python bytecode from the asset tooling in scripts/
+__pycache__/
+*.pyc
