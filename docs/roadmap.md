@@ -13,7 +13,7 @@ honest record of where that line currently sits.
 | | |
 |---|---|
 | Repository, licence, contribution guide, security policy | ✅ |
-| [ARCHITECTURE.md](../ARCHITECTURE.md) and fourteen [ADRs](architecture/decisions/) | ✅ |
+| [ARCHITECTURE.md](../ARCHITECTURE.md) and fifteen [ADRs](architecture/decisions/) | ✅ |
 | CI: format, lint, docs, tests on Linux/macOS/Windows, supply chain | ✅ |
 | One-command development bootstrap | ✅ |
 | `ephemeral-core`: identity, actors, errors | ✅ |
@@ -33,6 +33,7 @@ honest record of where that line currently sits.
 | `ephemeral status` — crash, health and clean-exit detection against the record | ✅ |
 | `ephemeral logs` shows the application's own output, not only its history | ✅ |
 | `ephemeral watch` — the supervisor: crash detection and wall-clock limits | ✅ |
+| Building an image from an application's own source | ✅ |
 
 Phase 0 is complete. Everything that does not need a runtime or a model provider
 works end to end: ask for an application, inspect it, move it through its
@@ -58,16 +59,15 @@ read grants mounted read-only, ports on 127.0.0.1, non-root, no whole-root
 mount, and a refusal rather than a weaker substitute when a control cannot be
 applied.
 
-### Still to do in Phase 1
+`NativeRuntime` is **deliberately not built** — see
+[ADR-0015](architecture/decisions/0015-defer-the-native-runtime.md). The version
+that could be built without new dependencies in the trust base would be a
+sandbox in name only, and nothing generated needs it yet.
 
-| | |
-|---|---|
-| Building an image from generated source rather than pulling one | |
-| `NativeRuntime`, for what genuinely cannot be containerised | |
-
-**Done when:** an application whose source somebody wrote by hand can be run,
-stopped, archived, restored and deleted through the CLI, on a machine with
-Docker and on one without.
+**Done when:** an application can be built from its own source, run, stopped,
+archived, restored and deleted through the CLI. The build path exists and is
+tested; what it has no source to build is supplied by Phase 2, so this closes
+there rather than here.
 
 ## What comes next
 

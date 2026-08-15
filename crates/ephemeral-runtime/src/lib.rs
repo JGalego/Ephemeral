@@ -143,6 +143,21 @@ pub enum RuntimeError {
         source: std::io::Error,
     },
 
+    /// An image could not be built from the application's source.
+    ///
+    /// Carries the builder's output verbatim, because that output is the input
+    /// to a repair attempt. Summarising it here would throw away the only thing
+    /// that can fix the problem.
+    #[error("could not build {app}: {summary}")]
+    BuildFailed {
+        /// Which application.
+        app: AppId,
+        /// The first line of what went wrong, for a person.
+        summary: String,
+        /// Everything the builder printed, for a repair attempt.
+        output: String,
+    },
+
     /// The runtime's output was not what this version of Ephemeral understands.
     #[error("could not understand the output of `{command}`: {reason}")]
     UnreadableOutput {
@@ -355,6 +370,19 @@ pub trait Runtime {
     /// [`RuntimeError::ImageUnavailable`] if the image cannot be obtained.
     fn prepare_image(&self, image: &str) -> Result<(), RuntimeError>;
 
+    /// Builds an application's image from source it wrote.
+    ///
+    /// Returns the image reference to run. Building is where a model's output
+    /// first executes anything, so it is the runtime's job rather than the
+    /// generator's: the build runs under the same daemon, with the same labels,
+    /// and produces something Ephemeral can find and destroy later.
+    ///
+    /// # Errors
+    ///
+    /// [`RuntimeError::BuildFailed`] with the output, which is the input to a
+    /// repair attempt and therefore has to be preserved rather than summarised.
+    fn build_image(&self, request: &BuildRequest) -> Result<String, RuntimeError>;
+
     /// Starts an application under the confinement described by `spec`.
     ///
     /// `secrets` supplies the values for [`ContainerSpec::environment_names`].
@@ -427,6 +455,28 @@ pub trait Runtime {
     ///
     /// [`RuntimeError::CommandFailed`] if the runtime cannot be asked.
     fn managed_containers(&self) -> Result<Vec<ManagedContainer>, RuntimeError>;
+}
+
+/// What to build, and from where.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuildRequest {
+    /// Which application.
+    pub app: AppId,
+
+    /// The version being built, which becomes part of the image tag.
+    ///
+    /// Two builds of different source must never share a tag, or a recorded
+    /// version stops meaning anything.
+    pub version: String,
+
+    /// The directory handed to the builder as its context.
+    pub context: std::path::PathBuf,
+
+    /// The build recipe, named explicitly.
+    ///
+    /// Found by Ephemeral rather than by convention, so a stray `Dockerfile`
+    /// elsewhere in a model-generated tree cannot become the one that is built.
+    pub dockerfile: std::path::PathBuf,
 }
 
 /// Values for the settings an application was granted access to.

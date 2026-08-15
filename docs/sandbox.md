@@ -123,13 +123,14 @@ host the same sweep unchanged.
 
 ## What is not here yet
 
-- **Building an image from generated source.** Today an application names an
-  image; Phase 2 builds one.
 - **An egress proxy**, which is what would make a hostname allow-list
   enforceable instead of a refusal.
 - **A background supervisor.** `ephemeral watch` has to be running for crashes
   and time limits to be noticed as they happen. Nothing starts it for you yet.
-- **`NativeRuntime`**, for what genuinely cannot be containerised. It will be
-  labelled as less isolated wherever it appears, because it is.
+- **`NativeRuntime`**, for what genuinely cannot be containerised. Deliberately
+  not built ([ADR-0015](architecture/decisions/0015-defer-the-native-runtime.md)):
+  the version reachable without new dependencies in the trust base would confine
+  almost nothing, and an application declaring it is refused rather than run
+  unconfined.
 
 See [roadmap.md](roadmap.md).
