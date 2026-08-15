@@ -98,6 +98,18 @@ for why containers, and
 [ADR-0014](architecture/decisions/0014-drive-docker-through-its-cli.md) for why
 the `docker` command rather than its API.
 
+## When the record and reality disagree
+
+A crash, a kill, or a purge while something was running can leave a container
+behind. `ephemeral doctor` reports those, and `ephemeral cleanup` removes them —
+after listing them, because a leftover container may still hold a mount of your
+files and that is worth seeing before it goes.
+
+Which containers count is decided by comparing what Docker holds against what
+each application's *manifest* says it should hold. When the two disagree the
+container is what is wrong, because the manifest is what you were shown. Only
+containers carrying Ephemeral's own label are ever considered.
+
 ## What is not here yet
 
 - **Building an image from generated source.** Today an application names an
@@ -106,8 +118,6 @@ the `docker` command rather than its API.
   enforceable instead of a refusal.
 - **The supervisor** — wall-clock limits, health polling and crash detection are
   modelled but not yet driven.
-- **Orphan cleanup.** Ephemeral labels every container it creates so it can find
-  what a crash left behind; the reaper that uses those labels is not written.
 - **`NativeRuntime`**, for what genuinely cannot be containerised. It will be
   labelled as less isolated wherever it appears, because it is.
 

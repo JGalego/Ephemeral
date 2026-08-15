@@ -26,7 +26,8 @@ use ephemeral_core::{
     storage::{AppStore as _, Workspace},
 };
 use ephemeral_runtime::{
-    ContainerSpec, HostPaths, Runtime as _, RuntimeError, Secrets, docker::DockerRuntime,
+    ContainerSpec, HostPaths, ManagedContainer, Runtime as _, RuntimeError, Secrets,
+    docker::DockerRuntime,
 };
 
 use crate::output;
@@ -66,6 +67,15 @@ pub(crate) fn run(home: &Path, reference: &str) -> Result<()> {
                 Actor::Runtime,
                 &format!("running in {} as {}", runtime.name(), spec.container_name()),
             )?;
+
+            // What was exposed to the sandbox, recorded at the moment it was
+            // exposed. This is the first question an incident review asks, and
+            // reconstructing it later from the ledger would answer a different
+            // one: what was granted, rather than what was actually mounted.
+            workspace
+                .audit_mut()
+                .append(Actor::Runtime, sandbox_created(runtime.name(), &spec));
+
             workspace.apps_mut().save(&manifest)?;
             workspace.save()?;
 
@@ -126,6 +136,13 @@ pub(crate) fn stop(home: &Path, reference: &str) -> Result<()> {
         Actor::Runtime,
         "the container stopped",
     )?;
+    workspace.audit_mut().append(
+        Actor::Runtime,
+        AuditEvent::SandboxDestroyed {
+            app: manifest.id.clone(),
+            reason: "stopped from the command line".to_owned(),
+        },
+    );
     workspace.apps_mut().save(&manifest)?;
     workspace.save()?;
 
@@ -207,6 +224,166 @@ pub(crate) fn resume(home: &Path, reference: &str) -> Result<()> {
         manifest.id
     );
     Ok(())
+}
+
+/// A container Ephemeral is holding that no application accounts for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Orphan {
+    /// The container's name.
+    pub(crate) container: String,
+
+    /// Why nothing accounts for it.
+    pub(crate) reason: String,
+}
+
+/// Containers Ephemeral created that no application's state accounts for.
+///
+/// A crash, a kill, or a purge while something was running all leave a
+/// container behind. Nothing else cleans them up: they hold a name, disk, and
+/// possibly a mount of the user's files, so leaving them is a resource leak with
+/// a security edge rather than untidiness.
+///
+/// Only containers carrying Ephemeral's own label are considered. Reaping by
+/// anything looser would be an efficient way to destroy somebody's unrelated
+/// work.
+pub(crate) fn orphans(workspace: &Workspace, runtime: &DockerRuntime) -> Result<Vec<Orphan>> {
+    let held = runtime
+        .managed_containers()
+        .context("could not ask the container runtime what it is holding")?;
+
+    Ok(classify(workspace, &held))
+}
+
+/// Decides which of the containers Ephemeral is holding are unaccounted for.
+///
+/// Separated from asking Docker so that the decision — the part that could
+/// wrongly reap something — is a pure function with tests, rather than
+/// something only exercised on a machine with a daemon.
+fn classify(workspace: &Workspace, held: &[ManagedContainer]) -> Vec<Orphan> {
+    let mut found = Vec::new();
+
+    for container in held {
+        let Some(id) = &container.app else {
+            found.push(Orphan {
+                container: container.name.clone(),
+                reason: "it carries Ephemeral's label but names no application".to_owned(),
+            });
+            continue;
+        };
+
+        let reason = match workspace.apps().load(id) {
+            // The application is gone but its container is not.
+            Err(_) => Some(format!("{id} no longer exists")),
+
+            // The application exists, but its recorded state says it should not
+            // be holding a container. That disagreement is the bug: the manifest
+            // is what the user is shown, so the container is what is wrong.
+            Ok(manifest) if !manifest.lifecycle.state().requires_runtime() => Some(format!(
+                "{id} is {}, which does not hold a container",
+                manifest.lifecycle.state().headline().to_lowercase()
+            )),
+
+            Ok(_) => None,
+        };
+
+        if let Some(reason) = reason {
+            found.push(Orphan {
+                container: container.name.clone(),
+                reason,
+            });
+        }
+    }
+
+    found
+}
+
+/// Removes every container no application accounts for.
+pub(crate) fn cleanup(home: &Path, confirmed: bool) -> Result<()> {
+    let mut workspace = crate::commands::open(home)?;
+    let runtime = usable_runtime()?;
+
+    let found = orphans(&workspace, &runtime)?;
+
+    if found.is_empty() {
+        println!("{}", output::good("Nothing to clean up."));
+        println!(
+            "{}",
+            output::dim(
+                "Every container Ephemeral is holding belongs to an application that \
+                         should have one."
+            )
+        );
+        return Ok(());
+    }
+
+    for orphan in &found {
+        println!("  {} — {}", orphan.container, output::dim(&orphan.reason));
+    }
+    println!();
+
+    if !confirmed {
+        println!(
+            "{} container(s) would be removed. Run it again with --yes if you mean it.",
+            found.len()
+        );
+        return Ok(());
+    }
+
+    // Removal goes through the same path a stop does, so it cannot reach a
+    // container Ephemeral did not name.
+    let mut removed = 0;
+    for orphan in &found {
+        let Some(id) = orphan
+            .container
+            .strip_prefix(ephemeral_runtime::CONTAINER_PREFIX)
+        else {
+            continue;
+        };
+        let Ok(app) = AppId::parse(id) else { continue };
+
+        runtime
+            .remove(&app)
+            .with_context(|| format!("could not remove {}", orphan.container))?;
+
+        workspace.audit_mut().append(
+            Actor::Ephemeral,
+            AuditEvent::SandboxDestroyed {
+                app,
+                reason: format!("cleaned up: {}", orphan.reason),
+            },
+        );
+        removed += 1;
+    }
+
+    workspace.save()?;
+
+    println!("{} {removed} container(s) removed.", output::good("Done."));
+    Ok(())
+}
+
+/// The record of what a sandbox was actually given.
+fn sandbox_created(runtime: &str, spec: &ContainerSpec) -> AuditEvent {
+    AuditEvent::SandboxCreated {
+        app: spec.app.clone(),
+        runtime: runtime.to_owned(),
+        image: Some(spec.image.clone()),
+        mounts: spec
+            .mounts
+            .iter()
+            .map(|mount| {
+                format!(
+                    "{} ({})",
+                    mount.host_path.display(),
+                    if mount.writable {
+                        "read and write"
+                    } else {
+                        "read only"
+                    }
+                )
+            })
+            .collect(),
+        ports: spec.ports.iter().map(|port| port.host_port).collect(),
+    }
 }
 
 /// Refuses early if the application's state does not allow this at all.
@@ -592,6 +769,112 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("native"), "{error}");
+    }
+
+    fn held(
+        name: &str,
+        app: Option<&str>,
+        state: ephemeral_runtime::ContainerState,
+    ) -> ManagedContainer {
+        ManagedContainer {
+            name: name.to_owned(),
+            app: app.map(|id| AppId::parse(id).unwrap()),
+            state,
+        }
+    }
+
+    /// A container belonging to an application that is genuinely running must
+    /// never be reaped. This is the direction that destroys somebody's work.
+    #[test]
+    fn a_container_the_manifest_accounts_for_is_left_alone() {
+        let home = tempfile::tempdir().unwrap();
+        let mut workspace = workspace(home.path());
+
+        // Driven through the machine rather than assigned, so the test breaks
+        // if the route to a running application ever changes.
+        let mut manifest = built();
+        for (event, actor) in [
+            (LifecycleEvent::Plan, Actor::Ephemeral),
+            (LifecycleEvent::PlanCompleted, Actor::Ephemeral),
+            (LifecycleEvent::GenerationCompleted, Actor::Agent),
+            (LifecycleEvent::BuildSucceeded, Actor::Runtime),
+            (LifecycleEvent::ValidationPassed, Actor::Runtime),
+            (LifecycleEvent::Start, Actor::User),
+            (LifecycleEvent::Started, Actor::Runtime),
+        ] {
+            manifest
+                .apply(TransitionRequest::new(event, actor, "test"))
+                .unwrap_or_else(|error| panic!("{event}: {error}"));
+        }
+        assert!(manifest.lifecycle.state().requires_runtime());
+        workspace.apps_mut().save(&manifest).unwrap();
+
+        let containers = vec![held(
+            "ephemeral-csv-comparator",
+            Some("csv-comparator"),
+            ephemeral_runtime::ContainerState::Running,
+        )];
+
+        assert!(classify(&workspace, &containers).is_empty());
+    }
+
+    /// A container whose application was purged out from under it.
+    #[test]
+    fn a_container_whose_application_is_gone_is_an_orphan() {
+        let home = tempfile::tempdir().unwrap();
+        let workspace = workspace(home.path());
+
+        let containers = vec![held(
+            "ephemeral-csv-comparator",
+            Some("csv-comparator"),
+            ephemeral_runtime::ContainerState::Exited,
+        )];
+
+        let found = classify(&workspace, &containers);
+        assert_eq!(found.len(), 1);
+        assert!(found[0].reason.contains("no longer exists"), "{found:?}");
+    }
+
+    /// The manifest is what the user is shown, so when the two disagree it is
+    /// the container that is wrong.
+    #[test]
+    fn a_container_the_lifecycle_says_should_not_exist_is_an_orphan() {
+        let home = tempfile::tempdir().unwrap();
+        let mut workspace = workspace(home.path());
+
+        // Requested: created, never built, certainly never started.
+        let manifest = AppManifest::requested(app(), "CSV comparator");
+        assert!(!manifest.lifecycle.state().requires_runtime());
+        workspace.apps_mut().save(&manifest).unwrap();
+
+        let containers = vec![held(
+            "ephemeral-csv-comparator",
+            Some("csv-comparator"),
+            ephemeral_runtime::ContainerState::Running,
+        )];
+
+        let found = classify(&workspace, &containers);
+        assert_eq!(found.len(), 1);
+        assert!(
+            found[0].reason.contains("does not hold a container"),
+            "{found:?}"
+        );
+    }
+
+    /// A labelled container with no readable application id is Ephemeral's
+    /// mess either way, so it is reported rather than ignored.
+    #[test]
+    fn a_labelled_container_naming_no_application_is_an_orphan() {
+        let home = tempfile::tempdir().unwrap();
+        let workspace = workspace(home.path());
+
+        let containers = vec![held(
+            "ephemeral-something",
+            None,
+            ephemeral_runtime::ContainerState::Dead,
+        )];
+
+        assert_eq!(classify(&workspace, &containers).len(), 1);
     }
 
     /// A refusal has to say what the user asked for and why it did not happen.

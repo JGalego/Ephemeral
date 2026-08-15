@@ -29,6 +29,7 @@ honest record of where that line currently sits.
 | Reference documentation | ✅ |
 | `ephemeral-runtime` — the sandbox, and the Docker implementation of it | ✅ |
 | `ephemeral run`, `stop`, `pause`, `resume` | ✅ |
+| Orphan cleanup — `ephemeral cleanup`, and `doctor` reporting what is left over | ✅ |
 
 Phase 0 is complete. Everything that does not need a runtime or a model provider
 works end to end: ask for an application, inspect it, move it through its
@@ -59,7 +60,6 @@ applied.
 | | |
 |---|---|
 | Building an image from generated source rather than pulling one | |
-| Orphan cleanup — reaping what a crash left behind | |
 | The supervisor: wall-clock limits, health polling, crash detection | |
 | `NativeRuntime`, for what genuinely cannot be containerised | |
 

@@ -66,6 +66,7 @@ pub(crate) fn run(home: &Path) {
     println!();
     println!("{}", output::dim("Container runtime"));
     let mut docker = vec![docker_check()];
+    docker.extend(orphan_check(home));
     print_all(&docker);
     verdicts.append(&mut docker);
 
@@ -144,6 +145,41 @@ fn docker_check() -> Verdict {
         "no container runtime is available".to_owned(),
         availability.explanation,
     )
+}
+
+/// Is the container runtime holding anything no application accounts for?
+///
+/// Only asked when the runtime is usable and the workspace is readable —
+/// neither is a finding of this check, and both are reported elsewhere.
+fn orphan_check(home: &Path) -> Option<Verdict> {
+    let runtime = DockerRuntime::new();
+    if !runtime.availability().usable {
+        return None;
+    }
+
+    let workspace = Workspace::open(home).ok()?;
+    let orphans = crate::runtime::orphans(&workspace, &runtime).ok()?;
+
+    if orphans.is_empty() {
+        return Some(Verdict::Ok(
+            "no containers left over from anything".to_owned(),
+        ));
+    }
+
+    // A leftover container holds disk and a name, and may still have a mount of
+    // the user's files. That makes it worth saying out loud rather than
+    // reaping silently on somebody's behalf.
+    Some(Verdict::Note(
+        format!("{} container(s) no application accounts for", orphans.len()),
+        format!(
+            "{} — `ephemeral cleanup` lists them, `ephemeral cleanup --yes` removes them.",
+            orphans
+                .iter()
+                .map(|orphan| orphan.container.clone())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    ))
 }
 
 /// Is what is on disk consistent and trustworthy?

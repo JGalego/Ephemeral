@@ -193,6 +193,13 @@ enum Command {
         /// Which application.
         app: String,
     },
+
+    /// Remove containers left behind by a crash or a deleted application.
+    Cleanup {
+        /// Actually remove them. Without this, it only says what it would do.
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 /// Where each platform expects an application to keep its data.
@@ -301,6 +308,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::Stop { app } => runtime::stop(&home, &app),
         Command::Pause { app } => runtime::pause(&home, &app),
         Command::Resume { app } => runtime::resume(&home, &app),
+        Command::Cleanup { yes } => runtime::cleanup(&home, yes),
     }
 }
 
