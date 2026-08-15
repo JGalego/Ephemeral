@@ -76,8 +76,7 @@ pub fn run(spec: &ContainerSpec) -> Result<Vec<String>, RuntimeError> {
     args.push("--workdir".to_owned());
     args.push(spec.working_dir.clone());
 
-    args.push(spec.image.clone());
-    args.extend(spec.entrypoint.iter().cloned());
+    args.extend(entrypoint(spec));
 
     Ok(args)
 }
@@ -118,10 +117,35 @@ pub fn run_once(spec: &ContainerSpec) -> Result<Vec<String>, RuntimeError> {
     args.push("--workdir".to_owned());
     args.push(spec.working_dir.clone());
 
-    args.push(spec.image.clone());
-    args.extend(spec.entrypoint.iter().cloned());
+    args.extend(entrypoint(spec));
 
     Ok(args)
+}
+
+/// The image, and the command to run in it.
+///
+/// `--entrypoint` is set explicitly rather than letting arguments fall through
+/// to whatever the image declares. A container runtime *appends* arguments to an
+/// image's `ENTRYPOINT` instead of replacing them, so a generated Dockerfile
+/// with `ENTRYPOINT ["python", "app.py"]` turns a request to run the tests into
+/// `python app.py python -m unittest` — which fails in a way that looks exactly
+/// like the application being broken.
+///
+/// Ephemeral's recorded entrypoint is authoritative because it is part of what
+/// the application *is*: it is covered by the version digest, and somebody
+/// reading a manifest should be reading what will actually run.
+fn entrypoint(spec: &ContainerSpec) -> Vec<String> {
+    let Some((program, arguments)) = spec.entrypoint.split_first() else {
+        return vec![spec.image.clone()];
+    };
+
+    let mut args = vec![
+        "--entrypoint".to_owned(),
+        program.clone(),
+        spec.image.clone(),
+    ];
+    args.extend(arguments.iter().cloned());
+    args
 }
 
 /// The flags that hold, whatever the application was granted.
@@ -824,7 +848,11 @@ mod tests {
             .unwrap();
 
         assert!(args[..image].iter().any(|arg| arg == "--cap-drop=ALL"));
-        assert_eq!(args[image + 1], "python");
+        assert_eq!(
+            args[image + 1],
+            "main.py",
+            "the program itself is now `--entrypoint`; only its arguments follow the image"
+        );
         assert!(
             !args[image + 1..].iter().any(|arg| arg.starts_with("--")),
             "an option after the image would be an argument to the application"
@@ -989,6 +1017,45 @@ mod tests {
                 .iter()
                 .any(|arg| arg == &image_tag(&app(), "sha256-aaa"))
         );
+    }
+
+    /// A container runtime appends arguments to an image's `ENTRYPOINT` rather
+    /// than replacing them. Without an explicit override, asking a generated
+    /// application to run its tests ran the application *and then* the tests as
+    /// its arguments — which failed in a way that looked like broken code, and
+    /// burned a whole repair budget chasing it.
+    #[test]
+    fn the_recorded_entrypoint_overrides_whatever_the_image_declares() {
+        let mut spec = spec_with(&[]);
+        spec.entrypoint = vec!["python".to_owned(), "-m".to_owned(), "unittest".to_owned()];
+
+        for args in [run(&spec).unwrap(), run_once(&spec).unwrap()] {
+            assert_pair(&args, "--entrypoint", "python");
+
+            let image = args
+                .iter()
+                .position(|arg| arg == &spec.image)
+                .expect("the image is named");
+
+            assert_eq!(
+                &args[image + 1..],
+                ["-m", "unittest"],
+                "only the remaining arguments follow the image"
+            );
+        }
+    }
+
+    /// An application with no recorded entrypoint runs whatever its image says,
+    /// which is the one case where deferring is right.
+    #[test]
+    fn an_empty_entrypoint_defers_to_the_image() {
+        let mut spec = spec_with(&[]);
+        spec.entrypoint.clear();
+
+        let args = run(&spec).unwrap();
+
+        assert!(!args.iter().any(|arg| arg == "--entrypoint"), "{args:?}");
+        assert_eq!(args.last(), Some(&spec.image));
     }
 
     /// A generated test is generated code. It must not get more of the machine
