@@ -57,10 +57,17 @@ impl HostPaths {
     pub fn resolve(&self, scope: &PathScope) -> Option<PathBuf> {
         let written = scope.display_path();
 
+        // Joined segment by segment rather than in one piece. A scope is always
+        // written with forward slashes, and joining the whole tail at once
+        // would leave them embedded in the middle of an otherwise native path —
+        // `C:\Users\ana\Downloads/apartments`. That is what the user is shown
+        // and what the runtime is handed, so it should look like a path from
+        // this machine rather than from two.
         let resolved = if written == "~" {
             self.home.clone()
         } else if let Some(rest) = written.strip_prefix("~/") {
-            self.home.join(rest)
+            rest.split('/')
+                .fold(self.home.clone(), |path, segment| path.join(segment))
         } else {
             PathBuf::from(&written)
         };
@@ -637,6 +644,29 @@ mod tests {
             !plan.mounts[0].host_path.to_string_lossy().contains('~'),
             "an unresolved ~ would be mounted as a literal directory name"
         );
+    }
+
+    /// A resolved path is handed to a container runtime and shown to the user,
+    /// so it should read like a path from this machine rather than half a path
+    /// from each. Only Windows can fail this — a scope is written with forward
+    /// slashes, and gluing its tail onto a native prefix in one piece leaves
+    /// them embedded in the middle.
+    #[test]
+    fn a_resolved_path_does_not_mix_separators() {
+        let paths = paths();
+        let resolved = paths.resolve(&scope("~/Downloads/apartments/**")).unwrap();
+
+        assert_eq!(resolved, paths.home.join("Downloads").join("apartments"));
+
+        let rendered = resolved.to_string_lossy().into_owned();
+        let tail = &rendered[paths.home.to_string_lossy().len()..];
+        let foreign = if std::path::MAIN_SEPARATOR == '/' {
+            '\\'
+        } else {
+            '/'
+        };
+
+        assert!(!tail.contains(foreign), "{rendered} mixes path separators");
     }
 
     #[test]
