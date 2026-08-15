@@ -111,10 +111,15 @@ container is what is wrong, because the manifest is what you were shown. Only
 containers carrying Ephemeral's own label are ever considered.
 
 The other direction — an application whose record says it is running when its
-container has crashed, exited or gone unhealthy — is `ephemeral status`. It asks
-the runtime what is true and corrects the record. A one-shot command cannot
-watch anything, so this is where a crash is noticed: the next time somebody
-asks. A supervisor that notices while it happens is still to come.
+container has crashed, exited or gone unhealthy — is `ephemeral status` for one
+application, and `ephemeral watch` for all of them continuously.
+
+`watch` is also the only thing that can enforce a wall-clock limit, because a
+limit is a promise about *elapsed* time and nothing else in a one-shot CLI is
+around to notice it elapse. It runs in the foreground and stops with Ctrl-C —
+deliberately the least commitment available, since nothing about it decides
+whether Ephemeral eventually has a background service, and a desktop shell can
+host the same sweep unchanged.
 
 ## What is not here yet
 
@@ -122,9 +127,8 @@ asks. A supervisor that notices while it happens is still to come.
   image; Phase 2 builds one.
 - **An egress proxy**, which is what would make a hostname allow-list
   enforceable instead of a refusal.
-- **A supervisor.** Crashes, health and clean exits are detected when somebody
-  runs `ephemeral status`, not while they happen. Wall-clock limits need that
-  supervisor, so they are declared and shown but not yet applied.
+- **A background supervisor.** `ephemeral watch` has to be running for crashes
+  and time limits to be noticed as they happen. Nothing starts it for you yet.
 - **`NativeRuntime`**, for what genuinely cannot be containerised. It will be
   labelled as less isolated wherever it appears, because it is.
 

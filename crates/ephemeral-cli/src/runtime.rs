@@ -23,6 +23,7 @@ use ephemeral_core::{
     lifecycle::{LifecycleEvent, LifecycleState, TransitionRequest},
     manifest::RuntimeKind,
     permission::{AppPermission, Permission},
+    retention::RetentionPeriod,
     storage::{AppStore as _, Workspace},
 };
 use ephemeral_runtime::{
@@ -393,6 +394,146 @@ fn implied_events(
 
         _ => Vec::new(),
     }
+}
+
+/// Watches running applications and acts on what it sees.
+///
+/// A one-shot command notices a crash the next time somebody asks. This notices
+/// it while it is happening, which is also the only way a wall-clock limit can
+/// be more than a number in a manifest.
+///
+/// It runs in the foreground and is stopped with Ctrl-C. That is deliberately
+/// the least commitment available: nothing here decides whether Ephemeral
+/// eventually has a background service, and a desktop shell can host this same
+/// sweep without any of it changing.
+pub(crate) fn watch(home: &Path, interval_seconds: u64, once: bool) -> Result<()> {
+    let runtime = usable_runtime()?;
+
+    if !once {
+        println!(
+            "{}",
+            output::dim(&format!(
+                "Watching every {interval_seconds}s. Ctrl-C to stop."
+            ))
+        );
+    }
+
+    loop {
+        let acted = sweep(home, &runtime)?;
+
+        if once {
+            if acted == 0 {
+                println!("{}", output::good("Everything is as recorded."));
+            }
+            return Ok(());
+        }
+
+        std::thread::sleep(std::time::Duration::from_secs(interval_seconds));
+    }
+}
+
+/// One pass over every application that should be holding a container.
+///
+/// Returns how many applications it had to do something about.
+fn sweep(home: &Path, runtime: &DockerRuntime) -> Result<usize> {
+    let mut workspace = crate::commands::open(home)?;
+
+    let watched: Vec<AppId> = workspace
+        .load_all()?
+        .loaded
+        .iter()
+        .filter(|manifest| manifest.lifecycle.state().requires_runtime())
+        .map(|manifest| manifest.id.clone())
+        .collect();
+
+    let mut acted = 0;
+
+    for id in watched {
+        // Reloaded each time: a sweep can take a while, and acting on a
+        // manifest that was read before the previous application was dealt
+        // with would write back a stale lifecycle.
+        let Ok(mut manifest) = workspace.apps().load(&id) else {
+            continue;
+        };
+
+        let mut changed = false;
+
+        // The time limit first. An application past its ceiling should be
+        // stopped even if its container looks perfectly healthy — that is what
+        // the ceiling is for.
+        if let Some(over) = overran(&manifest, ephemeral_core::now()) {
+            let reason = format!(
+                "it reached its {} limit {} ago",
+                manifest
+                    .resources
+                    .max_runtime
+                    .map_or_else(|| "time".to_owned(), RetentionPeriod::describe),
+                RetentionPeriod::seconds(over).describe()
+            );
+
+            println!("{} {id} — {reason}", output::warn("Stopping"));
+
+            runtime.stop(&id).ok();
+            runtime.remove(&id).ok();
+
+            for (event, actor) in [
+                (LifecycleEvent::Stop, Actor::Ephemeral),
+                (LifecycleEvent::Stopped, Actor::Runtime),
+            ] {
+                apply(&mut workspace, &mut manifest, event, actor, &reason)?;
+            }
+            workspace.audit_mut().append(
+                Actor::Ephemeral,
+                AuditEvent::SandboxDestroyed {
+                    app: id.clone(),
+                    reason,
+                },
+            );
+            changed = true;
+        } else {
+            let observed = runtime.status(&id)?;
+            for (event, actor, reason) in implied_events(manifest.lifecycle.state(), &observed) {
+                println!("{} {id} — {reason}", output::warn("Noticed"));
+                apply(&mut workspace, &mut manifest, event, actor, &reason)?;
+                changed = true;
+            }
+        }
+
+        if changed {
+            workspace.apps_mut().save(&manifest)?;
+            workspace.save()?;
+            acted += 1;
+        }
+    }
+
+    Ok(acted)
+}
+
+/// When an application's container was started, according to its own history.
+///
+/// Read from the manifest rather than from Docker: this is when *Ephemeral*
+/// started it, which is the thing the limit was agreed against. Containers
+/// never restart themselves (`--restart no`), so the two cannot drift.
+fn running_since(manifest: &AppManifest) -> Option<ephemeral_core::Timestamp> {
+    manifest
+        .lifecycle
+        .history()
+        .iter()
+        .rev()
+        .find(|transition| transition.event == LifecycleEvent::Started)
+        .map(|transition| transition.at)
+}
+
+/// How far past its wall-clock ceiling an application is, in seconds.
+///
+/// `None` when it has no ceiling, has not started, or is still within it. A
+/// ceiling of `None` in the manifest means no limit, which is only appropriate
+/// for something the user asked to keep running.
+fn overran(manifest: &AppManifest, now: ephemeral_core::Timestamp) -> Option<i64> {
+    let limit = manifest.resources.max_runtime?.as_seconds();
+    let elapsed = (now - running_since(manifest)?).num_seconds();
+
+    (elapsed > limit).then_some(elapsed - limit)
 }
 
 /// A container Ephemeral is holding that no application accounts for.
@@ -921,6 +1062,75 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("native"), "{error}");
+    }
+
+    /// A manifest that has just started running, with the given ceiling.
+    ///
+    /// The tests move `now` forward rather than backdating the start: the clock
+    /// is a parameter of `overran` precisely so that testing it needs no
+    /// waiting and no fabricated history.
+    fn running(limit: Option<RetentionPeriod>) -> AppManifest {
+        let mut manifest = built();
+        manifest.resources.max_runtime = limit;
+
+        for (event, actor) in [
+            (LifecycleEvent::Plan, Actor::Ephemeral),
+            (LifecycleEvent::PlanCompleted, Actor::Ephemeral),
+            (LifecycleEvent::GenerationCompleted, Actor::Agent),
+            (LifecycleEvent::BuildSucceeded, Actor::Runtime),
+            (LifecycleEvent::ValidationPassed, Actor::Runtime),
+            (LifecycleEvent::Start, Actor::User),
+            (LifecycleEvent::Started, Actor::Runtime),
+        ] {
+            manifest
+                .apply(TransitionRequest::new(event, actor, "test"))
+                .unwrap();
+        }
+
+        manifest
+    }
+
+    /// The time a limit is measured from is when Ephemeral started it, which is
+    /// what the history records.
+    #[test]
+    fn a_running_application_knows_when_it_started() {
+        let manifest = running(None);
+        let since = running_since(&manifest).expect("a started app has a start time");
+
+        assert!((ephemeral_core::now() - since).num_seconds() < 5);
+        assert_eq!(running_since(&built()), None, "it was never started");
+    }
+
+    /// A ceiling that is not exceeded must not stop anything, and an
+    /// application with no ceiling must never be stopped for time.
+    #[test]
+    fn an_application_within_its_limit_is_left_running() {
+        let manifest = running(Some(RetentionPeriod::seconds(900)));
+        assert_eq!(overran(&manifest, ephemeral_core::now()), None);
+
+        // No ceiling means no ceiling, however long it runs.
+        let forever = running(None);
+        let much_later = ephemeral_core::now() + chrono::Duration::days(365);
+        assert_eq!(overran(&forever, much_later), None);
+    }
+
+    /// Past the ceiling, by how much.
+    #[test]
+    fn an_application_past_its_limit_is_reported_with_the_overrun() {
+        let manifest = running(Some(RetentionPeriod::seconds(900)));
+        let later = ephemeral_core::now() + chrono::Duration::seconds(1000);
+
+        assert_eq!(overran(&manifest, later), Some(100));
+    }
+
+    /// An application that was never started has no clock to be past.
+    #[test]
+    fn an_application_that_never_started_cannot_overrun() {
+        let mut manifest = built();
+        manifest.resources.max_runtime = Some(RetentionPeriod::seconds(1));
+
+        let later = ephemeral_core::now() + chrono::Duration::days(1);
+        assert_eq!(overran(&manifest, later), None);
     }
 
     fn observed(
