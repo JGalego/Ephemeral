@@ -25,6 +25,14 @@ pub enum Error {
     #[error(transparent)]
     Lifecycle(#[from] crate::lifecycle::LifecycleError),
 
+    /// A permission operation failed.
+    #[error(transparent)]
+    Permission(#[from] crate::permission::PermissionError),
+
+    /// A permission scope was not well formed.
+    #[error("invalid scope: {0}")]
+    Scope(#[from] crate::permission::ScopeError),
+
     /// The requested application does not exist.
     #[error("no application with id {id}")]
     AppNotFound {
