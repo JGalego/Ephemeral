@@ -53,14 +53,22 @@
   <circle cx="141" cy="40" r="1.8" fill="#c4b5fd" opacity="0.6" />
   <circle cx="188" cy="20" r="1.4" fill="#5eead4" opacity="0.55" />
 
-  <!-- 3. Gone. Nothing is left of the third bubble but the spray, still
-       carrying the colour of the film it came from. -->
-  <circle cx="174" cy="184" r="2.8" fill="#c4b5fd" opacity="0.75" />
-  <circle cx="203" cy="167" r="2.2" fill="#f0abfc" opacity="0.7" />
-  <circle cx="223" cy="190" r="2.5" fill="#7dd3fc" opacity="0.65" />
-  <circle cx="205" cy="212" r="1.9" fill="#5eead4" opacity="0.6" />
-  <circle cx="178" cy="212" r="1.5" fill="#f0abfc" opacity="0.58" />
-  <circle cx="236" cy="164" r="1.3" fill="#c4b5fd" opacity="0.52" />
-  <circle cx="156" cy="164" r="1.2" fill="#7dd3fc" opacity="0.48" />
-  <circle cx="221" cy="228" r="1.1" fill="#c4b5fd" opacity="0.44" />
+  <!-- 3. Gone. Spray alone says nothing — it could be dust. What says "there
+       was a bubble here" is that the last shards of film all still lie on one
+       circle, far enough apart for the eye to finish the curve itself, with the
+       droplets flying outward from that same centre. -->
+  <g fill="none" stroke-linecap="round" stroke-width="2.6">
+    <path d="M 173.8 179.7 A 30 30 0 0 1 187.9 163.5" stroke="#c4b5fd" opacity="0.62" />
+    <path d="M 217.0 164.0 A 30 30 0 0 1 228.5 175.9" stroke="#f0abfc" opacity="0.55" />
+    <path d="M 229.8 201.2 A 30 30 0 0 1 219.6 214.3" stroke="#7dd3fc" opacity="0.5" />
+    <path d="M 190.8 217.8 A 30 30 0 0 1 180.4 210.8" stroke="#5eead4" opacity="0.45" />
+  </g>
+  <circle cx="158.7" cy="182.4" r="2.4" fill="#c4b5fd" opacity="0.7" />
+  <circle cx="194.4" cy="146.7" r="2.1" fill="#f0abfc" opacity="0.66" />
+  <circle cx="235.7" cy="161.7" r="2.2" fill="#7dd3fc" opacity="0.62" />
+  <circle cx="245.3" cy="197.6" r="1.7" fill="#5eead4" opacity="0.55" />
+  <circle cx="213.4" cy="232.5" r="1.9" fill="#f0abfc" opacity="0.58" />
+  <circle cx="163.9" cy="212.0" r="1.5" fill="#c4b5fd" opacity="0.5" />
+  <circle cx="249.0" cy="172.9" r="1.2" fill="#c4b5fd" opacity="0.44" />
+  <circle cx="193.0" cy="241.2" r="1.2" fill="#7dd3fc" opacity="0.42" />
 </svg>
