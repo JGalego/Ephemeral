@@ -328,6 +328,27 @@ impl LifecycleState {
         self.kind() == StateKind::Deleted
     }
 
+    /// Whether an application in this state must already know what it runs on.
+    ///
+    /// Planning is what decides the runtime, so an application that has only
+    /// been requested genuinely does not have one yet. From the first build
+    /// onwards it must, because everything after that point acts on it.
+    #[must_use]
+    pub fn requires_runtime(self) -> bool {
+        matches!(
+            self,
+            Self::Building
+                | Self::Validating
+                | Self::Repairing
+                | Self::Ready
+                | Self::Starting
+                | Self::Running
+                | Self::Paused
+                | Self::Stopping
+                | Self::Unhealthy
+        )
+    }
+
     /// Whether an interrupted transition can resume back into this state.
     ///
     /// Only states in which Ephemeral was mid-flight qualify. Without this, a
@@ -437,6 +458,42 @@ mod tests {
         assert!(!LifecycleState::Running.is_resumable());
         assert!(!LifecycleState::Ready.is_resumable());
         assert!(!LifecycleState::Deleted.is_resumable());
+    }
+
+    /// Nothing before the first build needs a runtime, and everything that can
+    /// execute does.
+    #[test]
+    fn a_runtime_is_required_from_the_first_build_onwards() {
+        for state in [
+            LifecycleState::Requested,
+            LifecycleState::Planning,
+            LifecycleState::Generating,
+            LifecycleState::Cancelled,
+            LifecycleState::Blocked,
+            LifecycleState::PermissionRequired,
+            LifecycleState::Deleted,
+        ] {
+            assert!(
+                !state.requires_runtime(),
+                "{state} should not need a runtime"
+            );
+        }
+        for state in [
+            LifecycleState::Building,
+            LifecycleState::Ready,
+            LifecycleState::Running,
+        ] {
+            assert!(state.requires_runtime(), "{state} must have a runtime");
+        }
+
+        for state in LifecycleState::ALL {
+            if state.is_runnable() || state.holds_runtime_resources() {
+                assert!(
+                    state.requires_runtime(),
+                    "{state} can execute, so it must know what it runs on"
+                );
+            }
+        }
     }
 
     #[test]

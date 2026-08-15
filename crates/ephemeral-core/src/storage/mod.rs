@@ -15,11 +15,15 @@ mod layout;
 
 #[cfg(feature = "fs")]
 mod file;
+#[cfg(feature = "fs")]
+mod workspace;
 
 pub use layout::{APPS_DIR, AUDIT_FILE, AppPaths, MANIFEST_FILE, StorageLayout, TRASH_DIR};
 
 #[cfg(feature = "fs")]
 pub use file::FileStore;
+#[cfg(feature = "fs")]
+pub use workspace::{LEDGER_FILE, LoadedApps, Workspace};
 
 use std::collections::BTreeMap;
 
