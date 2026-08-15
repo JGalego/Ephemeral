@@ -391,6 +391,23 @@ fn readable_path(path: &Path) -> Result<String, RuntimeError> {
     Ok(text)
 }
 
+/// The arguments that give a built image its final name.
+///
+/// A build is tagged provisionally, because the version digest covers the
+/// *repaired* source and is not known until the build finally works. Renaming
+/// afterwards is what stops a tag pointing at something other than the version
+/// it names.
+#[must_use]
+pub fn tag_image(from: &str, app: &AppId, version: &str) -> Vec<String> {
+    vec!["tag".to_owned(), from.to_owned(), image_tag(app, version)]
+}
+
+/// The tag a build carries before its version is known.
+#[must_use]
+pub fn building_tag(app: &AppId) -> String {
+    image_tag(app, "building")
+}
+
 /// The arguments that remove an image Ephemeral built.
 #[must_use]
 pub fn remove_image(app: &AppId, version: &str) -> Vec<String> {
@@ -933,6 +950,21 @@ mod tests {
         assert!(
             matches!(error, RuntimeError::CannotEnforce { .. }),
             "{error:?}"
+        );
+    }
+
+    /// A build is tagged provisionally and renamed once its version is known,
+    /// so a tag never points at something other than the version it names.
+    #[test]
+    fn a_built_image_is_renamed_to_its_version() {
+        let args = tag_image(&building_tag(&app()), &app(), "sha256-aaa");
+
+        assert_eq!(args[0], "tag");
+        assert_eq!(args[1], building_tag(&app()));
+        assert_eq!(args[2], image_tag(&app(), "sha256-aaa"));
+        assert_ne!(
+            args[1], args[2],
+            "the provisional name is not the final one"
         );
     }
 

@@ -105,9 +105,12 @@ $ ephemeral create "compare these two CSV files and show me what's different"
 $ ephemeral generate <app>          # plan, write, build, test — bounded and cancellable
                                     # --provider mock (no credential) or anthropic
 $ ephemeral review <app>            # decide what it may do, one question at a time
-$ ephemeral run <app>
+$ ephemeral run <app> -- /data/left.csv /data/right.csv
 $ ephemeral publish <app> ./my-app  # an ordinary directory; git init and push
 ```
+
+No Docker daemon? `EPHEMERAL_CONTAINER_COMMAND=podman` runs the whole thing
+without one.
 
 **What you cannot do yet.**
 

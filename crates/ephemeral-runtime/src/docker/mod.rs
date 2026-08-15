@@ -22,4 +22,4 @@ pub mod command;
 mod runtime;
 
 #[cfg(feature = "daemon")]
-pub use runtime::DockerRuntime;
+pub use runtime::{COMMAND_VARIABLE, DockerRuntime};

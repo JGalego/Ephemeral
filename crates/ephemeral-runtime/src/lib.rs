@@ -399,6 +399,13 @@ pub trait Runtime {
     /// a malfunction.
     fn run_once(&self, spec: &ContainerSpec) -> Result<Completed, RuntimeError>;
 
+    /// Gives a built image its final name, once the version is known.
+    ///
+    /// # Errors
+    ///
+    /// [`RuntimeError::CommandFailed`] if the runtime refuses.
+    fn name_image(&self, built: &str, app: &AppId, version: &str) -> Result<String, RuntimeError>;
+
     /// Starts an application under the confinement described by `spec`.
     ///
     /// `secrets` supplies the values for [`ContainerSpec::environment_names`].

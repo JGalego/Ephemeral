@@ -21,6 +21,14 @@ use super::command::{self, NetworkMode};
 /// The name Ephemeral uses for this runtime.
 const RUNTIME_NAME: &str = "Docker";
 
+/// Names a different, compatible command to drive.
+///
+/// Exists because Podman is a drop-in replacement that needs no daemon, which
+/// makes it the only way to run a container on a machine where a background
+/// service cannot be started — a locked-down laptop, a CI runner, a container
+/// itself. Ephemeral asks nothing of it that Podman does not implement.
+pub const COMMAND_VARIABLE: &str = "EPHEMERAL_CONTAINER_COMMAND";
+
 /// Runs generated applications in Docker containers.
 ///
 /// Holds no state and no connection: each operation is one invocation of the
@@ -41,10 +49,21 @@ impl Default for DockerRuntime {
 
 impl DockerRuntime {
     /// A runtime driving the `docker` command from `PATH`.
+    ///
+    /// Or whatever [`COMMAND_VARIABLE`] names, so that `podman` can be used
+    /// without any other change. A blank value is treated as unset rather than
+    /// as a command called "", which is the difference between a helpful
+    /// default and a confusing failure.
     #[must_use]
     pub fn new() -> Self {
+        let program = std::env::var(COMMAND_VARIABLE)
+            .ok()
+            .map(|name| name.trim().to_owned())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| "docker".to_owned());
+
         Self {
-            program: "docker".to_owned(),
+            program,
             user: host_identity(),
         }
     }
@@ -105,6 +124,12 @@ impl DockerRuntime {
             .chain(args.iter().map(String::as_str))
             .collect::<Vec<_>>()
             .join(" ")
+    }
+
+    /// Which command this runtime drives.
+    #[must_use]
+    pub fn program(&self) -> &str {
+        &self.program
     }
 
     /// The identity containers should run as, if a better one than `nobody` is
@@ -252,6 +277,12 @@ impl Runtime for DockerRuntime {
             exit_code: output.status.code().unwrap_or(-1),
             output: printed,
         })
+    }
+
+    fn name_image(&self, built: &str, app: &AppId, version: &str) -> Result<String, RuntimeError> {
+        self.run_checked(&command::tag_image(built, app, version), &[])?;
+
+        Ok(command::image_tag(app, version))
     }
 
     fn start(

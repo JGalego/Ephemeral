@@ -81,25 +81,29 @@ audit log.
 That is what makes the audit record worth reading: Ephemeral can write the
 command it ran verbatim, and you can paste it into a terminal yourself.
 
-## The one claim you should check yourself
+## Verified against a real runtime
 
-Every other claim on this page is a unit test. This one is not: whether Docker
-will publish a port on an `--internal` network cannot be established without a
-daemon, and there is none in CI. If it turns out not to work, an application
-that listens **refuses to start** rather than quietly receiving ordinary
-networking — the failure mode is safe — but the feature would be broken and
-worth knowing about.
+Everything above has been checked against a running container, not only against
+the arguments Ephemeral produces. Asking Podman what it actually applied:
 
-Ten seconds on a machine with Docker settles it:
-
-```console
-$ docker network create --internal ephemeral-isolated
-$ docker run --rm --network ephemeral-isolated -p 127.0.0.1:8080:80 \
-    alpine sh -c 'echo it published'
+```text
+ReadonlyRootfs: true          NetworkMode:  none
+CapDrop:        every one     SecurityOpt:  no-new-privileges
+Memory:         536870912     MemorySwap:   536870912   (equal — no swap)
+PidsLimit:      64            RestartPolicy: no
+User:           65534:65534
 ```
 
-If that prints `it published`, the combination works. If Docker refuses it,
-Ephemeral says so in those terms rather than relaying the raw error.
+**No daemon required.** Podman is a drop-in replacement that runs containers
+without a background service, which matters on a machine where one cannot be
+started. Point Ephemeral at it with `EPHEMERAL_CONTAINER_COMMAND=podman`; nothing
+else changes, because Ephemeral asks for nothing Podman does not implement.
+
+The one thing still unverified is whether a port can be published on an
+`--internal` network — the reference application is a command-line tool and does
+not listen. If it turns out not to work, an application that listens **refuses
+to start** rather than quietly receiving ordinary networking, and Ephemeral says
+so in those terms.
 
 ## How this is tested
 
