@@ -5,7 +5,7 @@
 // It decides nothing — a client that evaluated a permission or computed a
 // transition would be a second, subtly different Ephemeral.
 
-import { applicationList, applicationDetail, problem } from './render.js';
+import { applicationList, applicationDetail, isConsent, problem } from './render.js';
 
 /** Calls a command, or explains why it could not. */
 async function ask(command, args = {}) {
@@ -52,7 +52,44 @@ async function open(id) {
   }
 }
 
+/** Records one decision, then reloads so the page shows what is now true. */
+async function decide(item, answer) {
+  const page = item.closest('.detail');
+  const permission = {
+    needs_explicit_confirmation: item.dataset.needsConfirmation === 'true',
+  };
+
+  // Consent is judged by the same rule the terminal uses, and judged *here*
+  // rather than by trusting which control was clicked. A window that inferred
+  // consent from a button would grant on a stray click into a text field.
+  if (answer !== 'deny' && !isConsent(permission, answer)) {
+    reportProblem('Type `allow` to permit this. Nothing has been decided.');
+    return;
+  }
+
+  try {
+    await ask('decide', {
+      id: page.dataset.id,
+      capability: item.dataset.capability,
+      target: null,
+      allow: answer !== 'deny',
+    });
+    await open(page.dataset.id);
+    await refresh();
+  } catch (error) {
+    reportProblem(String(error.message ?? error));
+  }
+}
+
 document.addEventListener('click', (event) => {
+  const button = event.target.closest('button[data-decision]');
+  if (button) {
+    const item = button.closest('li.permission');
+    const typed = item.querySelector('input.confirm')?.value ?? 'allow';
+    decide(item, button.dataset.decision === 'deny' ? 'deny' : typed);
+    return;
+  }
+
   const item = event.target.closest('li.application');
   if (item) open(item.dataset.id);
 });
