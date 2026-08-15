@@ -14,12 +14,12 @@ and names them differently.
 |---|---|---|---|
 | **Share an intent** | A sentence | Their own app, generated fresh | Lowest — nothing of yours travels |
 | **Share an app** | A recipe | The same app, rebuilt on their machine, their data | Low — their Ephemeral confines it |
-| **Share an instance** | An invite | Access to *your* running app and its state | Highest — a host sees everything |
+| **Share a session** | An invite | Their own copy of the app, plus shared state | Highest — other people see what you put in it |
 
 The first two are covered by
 [ADR-0012](architecture/decisions/0012-sharing-distributes-recipes.md). The
 third is a genuinely different problem and has its own decision record,
-[ADR-0013](architecture/decisions/0013-shared-instances-have-a-host.md).
+[ADR-0013](architecture/decisions/0013-how-several-people-share-an-application.md).
 
 ## Sharing an app
 
@@ -123,7 +123,7 @@ carry a wider permission set than the version the user approved. Ephemeral has a
 permission model good enough to get it right, and would be throwing that away by
 treating a version as an incrementing integer.
 
-## Sharing an instance
+## Sharing a session
 
 This is the group-chat case — one application, one body of state, several
 people. It is the demo everybody wants, and it is where the current design runs
@@ -136,26 +136,27 @@ joining by invite is not the person who granted the app's permissions, and the
 model has no way to say so.
 
 **The application handles other people's data.** Everything in the permission
-model protects *the user* from *the application*. A shared instance also has to
-protect participants from each other, and all of them from whoever runs it.
+model protects *the user* from *the application*. A shared session also has to
+protect participants from each other, and all of them from whoever holds the
+shared state.
 
-**It has to be somewhere.** A local-first application that several people use at
-once is a contradiction unless something is reachable by all of them — and ports
-bind to loopback by design.
+**The state has to be somewhere.** Several people cannot share something unless
+it is reachable by all of them — and ports bind to loopback by design.
 
 ### The honest framing
 
-A shared instance is a **service with a host**, and whoever hosts it can read
-everything in it. That is what hosting means. Ephemeral's job is to say so
-plainly, in the invite, before anyone accepts:
+Whoever holds the shared state can read it. Ephemeral's job is to say so
+plainly, in the invite, before anyone accepts — naming exactly who that is,
+because "stored on Ana's computer, where Ana can read them" is a different
+sentence from "shared directly between participants":
 
-> **Ana is inviting you to Group Chat, running on Ana's computer.**
+> **Ana is inviting you to Group Chat.**
 >
 > You will be able to: read and send messages in this room.
-> You will not be able to: change the app, see other rooms, or read anything
-> else on Ana's computer.
+> You will not be able to: change the app, or see other rooms.
 >
-> Messages you send are stored on Ana's computer. Ana can read them.
+> The app runs on your device, under permissions you grant. Messages are shared
+> with everyone in the room.
 >
 > This invite expires in 7 days and Ana can revoke it at any time.
 
@@ -169,24 +170,39 @@ Keeping these apart is the design. Collapsing any two is how it goes wrong.
 
 | Plane | Governs | Decided by |
 |-------|---------|------------|
-| Host's app permissions | What the app may touch on the **host's** device | The host |
-| Guest's app permissions | What the app may touch on the **guest's** device | The guest, on their own machine |
-| Participation capability | What a guest may do **inside** the app | The host, via the invite |
+| Each participant's app permissions | What their copy may touch on **their own** device | That participant |
+| Session membership | Who is in the room at all | Whoever holds the session, via invites |
+| Participation capability | What a member may do **inside** the app | The inviter, via the invite |
 
 The third is new, and Ephemeral should supply it rather than leaving generated
 code to invent authorisation badly. A generated application must not be the
 thing deciding who is allowed to use it.
 
-### The open question
+### The app and the session are different things
 
-**Where does a shared instance run?** On the host's own device, on an Ephemeral
-control plane, or peer-to-peer. It decides the privacy properties, the running
-cost, and how much infrastructure the project takes on, so it is a product
-decision rather than a technical one. The options and the recommendation are in
-[ADR-0013](architecture/decisions/0013-shared-instances-have-a-host.md).
+The instinct is to ask "where does the shared app run?" — and that question
+conflates two separable things.
 
-Until that is answered, this part is a description of a problem rather than a
-plan.
+The **application** does not need a shared home. It is already distributable as
+a recipe, and a recipe the recipient rebuilt is *theirs*: it runs on their
+device under permissions they granted, and it survives the author deleting
+theirs entirely.
+
+What genuinely needs a shared home is the **session** — the conversation. That
+is a much smaller problem: a relay moves data, not code, so it can be end-to-end
+encrypted, self-hosted, and does not involve running untrusted generated code on
+somebody else's behalf.
+
+Separating them is what makes shared applications work on every platform (each
+participant's copy runs wherever their apps already run) and survive anyone
+leaving (everyone owns the app; the state is replicated). The comparison and the
+reasoning are in
+[ADR-0013](architecture/decisions/0013-how-several-people-share-an-application.md), which
+remains **proposed** pending a decision.
+
+The cost is a real constraint: generated applications would have to be written
+against a shared-state primitive Ephemeral supplies, rather than arbitrary
+networking.
 
 ## What has to exist first
 

@@ -100,11 +100,11 @@ Giving an application to somebody else, publishing it, and — separately — le
 several people use one running instance. Designed in [sharing.md](sharing.md);
 decided in [ADR-0011](architecture/decisions/0011-immutable-content-addressed-versions.md),
 [ADR-0012](architecture/decisions/0012-sharing-distributes-recipes.md) and
-[ADR-0013](architecture/decisions/0013-shared-instances-have-a-host.md).
+[ADR-0013](architecture/decisions/0013-how-several-people-share-an-application.md).
 
 Sits on top of nearly everything else: it needs a runtime to build a received
 recipe, generation to produce versions, sandboxing to make accepting a
-stranger's application reasonable, and the threat model — shared instances are
+stranger's application reasonable, and the threat model — shared sessions are
 the largest expansion of it so far.
 
 One part is **not** deferrable to Phase 7: immutable, content-addressed versions
@@ -115,8 +115,8 @@ identity cannot be retrofitted onto history that was never recorded.
 somebody else, and run under permissions *they* granted — with an update that
 wants more than the version they approved refused until they decide.
 
-**Blocked on a product decision:** where a shared instance runs. See
-[ADR-0013](architecture/decisions/0013-shared-instances-have-a-host.md#open-question).
+**Blocked on a product decision:** where shared session state lives. See
+[ADR-0013](architecture/decisions/0013-how-several-people-share-an-application.md#open-question).
 
 ## Things deliberately not being built yet
 
