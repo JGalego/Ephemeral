@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # Called by the release workflow, so that nothing is ever published unless
+  # every check here is true of the exact commit being released. Without this
+  # the release fails at its first job, which is how it sat until somebody ran
+  # it: a reusable workflow that never declared itself reusable.
+  workflow_call:
 
 # A superseded run tells you nothing useful, so cancel it — except on main,
 # where every commit's result is part of the record.

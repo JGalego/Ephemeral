@@ -1,16 +1,102 @@
 # Installing Ephemeral
 
-> **Nothing is published yet.** Ephemeral is in Phase 0 — the foundation. There
-> are no installers, no packages and no releases, because there is not yet an
-> application worth installing. This page describes what installation *will* be,
-> and how to run what exists today.
->
-> Track progress in [roadmap.md](roadmap.md). Packaged installers are a Phase 6
-> deliverable.
+> **These builds are not signed.** Every installer below is unsigned and
+> un-notarised, so macOS and Windows will warn you that they cannot tell who
+> built it. They are right, and each section says exactly what you will see and
+> what to do about it. Do not click past those warnings out of habit.
 
-## Running it today
+Installers are built by [the release pipeline](../.github/workflows/release.yml)
+for every tag, on Linux, macOS and Windows, and attached to
+[the release](https://github.com/JGalego/Ephemeral/releases) with checksums.
 
-From source. You need [Rust](https://rustup.rs) and nothing else.
+## The desktop window
+
+### Linux
+
+Three formats, because Linux is not one thing:
+
+```bash
+sudo apt install ./Ephemeral_<version>_amd64.deb      # Debian, Ubuntu, Mint
+sudo dnf install ./Ephemeral-<version>-1.x86_64.rpm   # Fedora, RHEL, openSUSE
+
+chmod +x Ephemeral_<version>_amd64.AppImage           # anything else
+./Ephemeral_<version>_amd64.AppImage
+```
+
+The `.deb` and `.rpm` pull in the WebKit runtime they need. The AppImage does
+not install anything: it is a single file you can run and delete.
+
+Linux does not check signatures on any of these, so there is no warning to
+click past — which is a statement about Linux, not about this build.
+
+### macOS
+
+Open the `.dmg` and drag Ephemeral to Applications. Then, the first time:
+
+macOS will refuse to open it, saying either that the developer cannot be
+verified or — misleadingly — that the app is "damaged". It is not damaged. It
+is unsigned, and an unsigned application that arrived from the internet is
+quarantined.
+
+**Right-click the app and choose Open**, which offers a way through that
+double-clicking does not. If macOS still refuses:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Ephemeral.app
+```
+
+That command removes the quarantine flag. Run it on this application because
+you decided to trust this download, not because a page told you to — it is
+exactly the command somebody would like you to run on their malware.
+
+One `.dmg` covers both Apple silicon and Intel.
+
+### Windows
+
+Two installers, and which you want depends on who is installing:
+
+- **`Ephemeral_<version>_x64-setup.exe`** — double-click. This is the one you
+  want.
+- **`Ephemeral_<version>_x64_en-US.msi`** — for deploying across a fleet with
+  Group Policy or Intune.
+
+SmartScreen will say "Windows protected your PC" and hide the Run button behind
+**More info** → **Run anyway**. That warning means Windows has never seen this
+publisher's signature, which is true: there is not one.
+
+## The command line
+
+Download the archive for your platform, unpack it, and put `ephemeral`
+somewhere on your `PATH`:
+
+```bash
+tar -xzf ephemeral-<version>-x86_64-unknown-linux-gnu.tar.gz
+sudo install -m755 ephemeral-<version>-*/ephemeral /usr/local/bin/ephemeral
+
+ephemeral doctor
+```
+
+On Windows, unzip it and add the folder to `PATH`, or drop `ephemeral.exe`
+somewhere already on it.
+
+Builds are published for x86-64 and ARM on all three platforms.
+
+### Verifying what you downloaded
+
+```bash
+sha256sum -c SHA256SUMS.txt --ignore-missing
+```
+
+`shasum -a 256 -c` on macOS; `Get-FileHash <file> -Algorithm SHA256` on
+Windows.
+
+A checksum tells you the file arrived intact. It does not tell you who made it.
+Those are different claims, and until these builds are signed, only the first
+one is available.
+
+## Building from source
+
+Supported, not a fallback. You need [Rust](https://rustup.rs) and nothing else.
 
 ```bash
 git clone https://github.com/JGalego/Ephemeral.git
@@ -28,15 +114,14 @@ cargo install --path crates/ephemeral-cli --locked
 ephemeral doctor
 ```
 
-That gives you the Phase 0 command line: creating application records,
-inspecting them, moving them through their lifecycle, granting and revoking
-permissions, reading the audit trail, and diagnosing your environment. Anything
-needing a runtime or a model provider will tell you which phase it arrives in
-rather than failing obscurely.
+To build the desktop window from source as well, see
+[development.md](development.md) — it is its own workspace, and on Linux it
+needs `libwebkit2gtk-4.1-dev librsvg2-dev patchelf`.
 
 ## What Ephemeral needs
 
-**Rust**, to build from source. Once there are releases, you will not need it.
+**Rust**, only if you are building from source. The installers above carry
+everything they need.
 
 **Docker is optional.** It is the desktop default for running generated
 applications, but Ephemeral is designed to work without it and never treats its
@@ -101,22 +186,25 @@ If you want to destroy applications properly first — including anything a
 runtime might still hold — use `ephemeral purge <app> --yes` on each, which is
 explicit, irreversible and audited.
 
-## What installation will look like
+## What is shipped, and what is not
 
-Phase 6, once there is a desktop application worth shipping:
+| | Today | Still to come |
+|---|---|---|
+| Linux | `.deb`, `.rpm`, AppImage | Flatpak |
+| macOS | Universal `.dmg` | Signing, notarisation, Homebrew |
+| Windows | NSIS `.exe`, `.msi` | Authenticode signing, winget |
+| CLI | Archives for x86-64 and ARM | Homebrew, winget |
+| iOS / Android | — | App Store and Play Store, subject to each store's rules |
 
-| Platform | Planned |
-|----------|---------|
-| macOS | Signed and notarised `.dmg`, and Homebrew |
-| Windows | Signed installer, and winget |
-| Linux | `.deb`, `.rpm`, AppImage, and a Flatpak |
-| iOS / Android | App Store and Play Store, subject to each store's rules |
+**Signing is the significant gap.** It needs an Apple Developer account and a
+Windows code-signing certificate, both of which are paid identities belonging to
+a person or an organisation rather than to a repository. Until then, the
+warnings described above are correct and should be read rather than dismissed.
 
-Releases will carry checksums and, where the platform allows it, signatures. No
-signing certificate or credential will ever be committed to this repository —
-see [SECURITY.md](../SECURITY.md).
-
-Building from source will stay a supported path, not a fallback.
+No signing certificate or credential will ever be committed to this repository —
+see [SECURITY.md](../SECURITY.md). When signing does arrive, the keys will live
+in repository secrets and the release workflow will use them without ever
+printing them.
 
 ## Trouble
 
