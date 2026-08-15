@@ -116,6 +116,8 @@ jobs:
       - run: cargo test -p ephemeral-agent
       - name: The whole journey, sentence to running application
         run: cargo test -p ephemeral-agent --test journey -- --nocapture
+      - name: The reference application actually runs
+        run: cargo test -p ephemeral-agent --test reference_app -- --nocapture
       - name: No network client in the agent crate
         run: |
           if grep -rniE 'reqwest|hyper|ureq|api\.anthropic|api\.openai' \
