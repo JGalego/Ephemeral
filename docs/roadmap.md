@@ -13,7 +13,7 @@ honest record of where that line currently sits.
 | | |
 |---|---|
 | Repository, licence, contribution guide, security policy | ✅ |
-| [ARCHITECTURE.md](../ARCHITECTURE.md) and sixteen [ADRs](architecture/decisions/) | ✅ |
+| [ARCHITECTURE.md](../ARCHITECTURE.md) and seventeen [ADRs](architecture/decisions/) | ✅ |
 | CI: format, lint, docs, tests on Linux/macOS/Windows, supply chain | ✅ |
 | One-command development bootstrap | ✅ |
 | `ephemeral-core`: identity, actors, errors | ✅ |
@@ -84,8 +84,8 @@ Done so far:
 | `ephemeral generate` — an application reaching `Ready` without anybody writing code | ✅ |
 | `ephemeral review` — the permission prompt, finally reachable | ✅ |
 | Regenerating, with a widening update's grants withdrawn rather than inherited | ✅ |
-
 | A real provider (`--provider anthropic`), behind the same trait | ✅ |
+| Prompts and reply parsing shared by every provider, so two cannot drift apart | ✅ |
 
 Still to do:
 
@@ -94,7 +94,8 @@ Still to do:
 | A local provider, which is the only real answer to "the intent leaves the machine" | |
 | Each version's source kept, so a recorded version can actually be restored | ✅ |
 | Returning an application to a version it used to be, in the domain model | ✅ |
-| `ephemeral rollback`, and the same from the window | |
+| `ephemeral rollback`, with the grants a widening rollback would inherit withdrawn | ✅ |
+| Rolling back from the window | |
 
 **Done when:** the CSV comparator can be built from a natural-language request
 end to end, with CI exercising the whole journey against the mock provider and
@@ -105,14 +106,14 @@ version immutable and content-addressed, and the manifest recorded the digest �
 but nothing kept the bytes, and one `source/` directory per application was
 overwritten by every generation. The history could say what an application had
 been and could not put it back. Versions now have their own store, and the
-domain model can return to one; what is left is the command that offers it.
+domain model can return to one, and `ephemeral rollback` offers it.
 
-Two things that command must carry through, both already decided and tested in
-the core: the built image is cleared on rollback, because running the newer
-image under the older version's name would have the application report one
-identity and execute another; and a rollback that *widens* — returning to a
-version the newer one had stopped needing a capability for — is a permission
-decision to put to a person, not a detail of an undo.
+Two things it carries through, both tested by breaking them first: the built
+image is cleared, because running the newer image under the older version's
+name would have the application report one identity and execute another; and a
+rollback that *widens* — returning to a version the newer one had stopped
+needing a capability for — withdraws the grants it would otherwise inherit,
+because an approval given for different code is not an approval for this one.
 
 ### Phase 3 — Permissions
 

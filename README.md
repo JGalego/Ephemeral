@@ -87,7 +87,7 @@ next one starts. See [the roadmap](docs/roadmap.md) for detail, and
 |-------|-------|--------|
 | 0 | Repo, docs, architecture, CI, app model, state machine | ✅ done |
 | 1 | Docker runtime, sandbox, run/stop/watch, logs, cleanup | ✅ done |
-| 2 | Provider abstraction, generation agent, build/test/repair loop | 🚧 in progress |
+| 2 | Provider abstraction, generation agent, build/test/repair loop | 🚧 generate, repair and roll back all work; one hosted provider, no local one yet |
 | 3 | Meta-permissions, app permissions, permission UI, audit, sandboxing | 🚧 enforcement done, UI is the CLI |
 | 4 | Desktop application and dashboard | 🚧 ask, list, inspect and decide; generating and running are still terminal-only |
 | 5 | Windows, macOS, Linux, then mobile | 🚧 desktop three ship installers; mobile ships the engine, not yet an app |
@@ -106,6 +106,7 @@ $ ephemeral generate <app>          # plan, write, build, test — bounded and c
                                     # --provider mock (no credential) or anthropic
 $ ephemeral review <app>            # decide what it may do, one question at a time
 $ ephemeral run <app> -- /data/left.csv /data/right.csv
+$ ephemeral rollback <app> <digest> # back to a version that worked
 $ ephemeral publish <app> ./my-app  # an ordinary directory; git init and push
 ```
 
