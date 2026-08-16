@@ -133,6 +133,14 @@ jobs:
           fi
           echo "No network client in the agent crate."
       - run: cargo test -p ephemeral-provider-anthropic
+      # Generating is an HTTPS request; iOS cannot spawn a process. A provider
+      # whose only transport is `curl` silently decides that Ephemeral cannot
+      # generate on a phone, so the crate must build with no subprocess at all
+      # (ADR-0007). This is the check that keeps mobile generation possible.
+      - name: Generation is portable off the desktop
+        run: |
+          cargo build -p ephemeral-provider-anthropic --no-default-features
+          cargo test -p ephemeral-provider-anthropic --no-default-features
       - name: A real provider reaches the network only through curl
         run: |
           if grep -rniE 'reqwest|hyper|ureq|tokio' \

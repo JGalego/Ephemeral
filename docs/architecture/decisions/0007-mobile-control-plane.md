@@ -36,7 +36,11 @@ Mobile Ephemeral ──▶ Ephemeral Control Plane ──▶ Sandboxed Runtime �
 
 - The mobile app runs the **same Rust core** — manifests, state machine,
   permissions, audit — compiled for iOS and Android. What it does *not* run is
-  generation and execution.
+  **execution**.
+- **Creating and generating happen on the device.** Describing an application,
+  planning it, and asking a model to write it are an HTTPS request and some
+  parsing; a phone can do all of it. What iOS forbids is running newly written
+  code, which is a different thing.
 - Remote execution is a `RemoteRuntime` behind the **same `Runtime` trait**
   desktop uses (ADR-0005). The core is unaware of the difference; the runtime
   seam absorbs it.
@@ -51,6 +55,32 @@ Mobile Ephemeral ──▶ Ephemeral Control Plane ──▶ Sandboxed Runtime �
   that can genuinely run on-device — a static web app served into the device's
   webview is the obvious first case — become another `Runtime` implementation,
   with no protocol or core changes.
+
+## Amendment (2026-08-16): the seam is execution, not generation
+
+The first version of this decision said mobile does not run "generation and
+execution", as though they were one thing. They are not, and lumping them
+together was wrong in a way that quietly cost the product a feature: it implied
+a phone could not create an application at all without a server, when in fact
+only *running* one needs one.
+
+The mistake had teeth. [ADR-0016](0016-real-providers-live-in-their-own-crates.md)
+made the provider reach the network by spawning `curl`, which is fine on a
+desktop and impossible on iOS — a process there cannot spawn another process.
+So the transport, not the platform, was what actually prevented generating on a
+phone, and nothing said so.
+
+The transport is therefore a trait. `curl` is one implementation behind a
+default feature; the crate compiles and is tested with no subprocess at all,
+and CI builds it that way so that portability is checked rather than claimed.
+A mobile build supplies its own HTTPS transport and its own credential — the
+`ANTHROPIC_API_KEY` environment variable is a desktop convention, not part of
+the design.
+
+What is still remote on mobile is **build, run, and repair**: those need a
+sandbox the phone does not have. An application created and generated on a
+device is a real, versioned application whose code has not yet been built —
+which is a state the lifecycle machine already models.
 
 ## Alternatives considered
 

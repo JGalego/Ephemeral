@@ -2,7 +2,7 @@
 //!
 //! Deliberately small, and deliberately boring. Everything that decides
 //! anything is in [`crate::wire`], which is pure and tested; what is left here
-//! hands a string to `curl` and reads what comes back ([ADR-0016]).
+//! carries a string to the API and reads what comes back ([ADR-0016]).
 //!
 //! **No secret ever appears in an argument vector.** The credential travels in
 //! a `--config` document on stdin, alongside the request body, so the command
@@ -10,14 +10,55 @@
 //! asks what was sent. This is the same property the container arguments have,
 //! for the same reason.
 //!
+//! ## Why this is a trait
+//!
+//! Spawning `curl` was the whole transport, and that quietly decided where
+//! Ephemeral could generate. iOS does not allow a process to spawn another
+//! process — there is no `fork`, no `exec`, and no `curl` binary to reach — so
+//! a provider that can only talk to the network through a subprocess cannot
+//! generate on a phone at all.
+//!
+//! That was never an intended constraint. Generating is an HTTPS request:
+//! what iOS forbids is *executing* newly written code, which is a different
+//! thing and belongs behind the runtime seam ([ADR-0007]), not this one. The
+//! transport is therefore a trait, curl is one implementation of it, and the
+//! crate compiles with no process spawning at all so that portability is
+//! checked rather than asserted.
+//!
+//! [ADR-0007]: https://github.com/JGalego/Ephemeral/blob/main/docs/architecture/decisions/0007-mobile-control-plane.md
 //! [ADR-0016]: https://github.com/JGalego/Ephemeral/blob/main/docs/architecture/decisions/0016-real-providers-live-in-their-own-crates.md
 
+#[cfg(feature = "curl")]
 use std::io::Write as _;
+#[cfg(feature = "curl")]
 use std::process::{Command, Stdio};
 
 use ephemeral_agent::AgentError;
 use serde_json::Value;
 
+/// Somewhere a request can be sent.
+///
+/// The whole seam is one method, because the transport decides nothing: it
+/// carries bytes that [`crate::wire`] built and returns bytes that
+/// [`crate::wire`] parses. Everything that could be wrong is on either side of
+/// it.
+///
+/// An implementation must hold two properties that no test above it can check:
+/// the credential must not reach an argument vector, a log, or an error
+/// message; and every request must be bounded in time, or the wall-clock
+/// ceiling on the loop above is defeated by a request that never returns.
+pub trait Transport: Send + Sync {
+    /// Sends one request and returns the parsed reply.
+    ///
+    /// # Errors
+    ///
+    /// [`AgentError::Unavailable`] when the transport itself cannot run,
+    /// [`AgentError::Failed`] when the request fails, and
+    /// [`AgentError::Unreadable`] when the reply is not JSON.
+    fn send(&self, endpoint: &str, api_key: &str, request: &Value) -> Result<Value, AgentError>;
+}
+
+#[cfg(feature = "curl")]
 /// How long one request may take before it is abandoned.
 ///
 /// Generation is bounded on wall clock by the loop above this, but a request
@@ -31,10 +72,26 @@ use serde_json::Value;
 /// look at the other.
 const TIMEOUT_SECONDS: u32 = 900;
 
+/// The transport that spawns `curl`.
+///
+/// The desktop default. Unavailable on any platform that forbids spawning a
+/// process, which is why it is a feature rather than the only option.
+#[cfg(feature = "curl")]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Curl;
+
+#[cfg(feature = "curl")]
+impl Transport for Curl {
+    fn send(&self, endpoint: &str, api_key: &str, request: &Value) -> Result<Value, AgentError> {
+        send(endpoint, api_key, request)
+    }
+}
+
 /// The arguments handed to `curl`.
 ///
 /// A pure function, so what is asked of the network is a test rather than a
 /// claim — and so that a reader can see there is nothing sensitive in it.
+#[cfg(feature = "curl")]
 #[must_use]
 pub fn arguments(endpoint: &str) -> Vec<String> {
     vec![
@@ -54,6 +111,7 @@ pub fn arguments(endpoint: &str) -> Vec<String> {
     ]
 }
 
+#[cfg(feature = "curl")]
 /// The `curl` configuration carrying the credential and the body.
 ///
 /// Kept separate from [`arguments`] and never logged. The API key is in here
@@ -72,6 +130,7 @@ fn configuration(api_key: &str, body: &str) -> String {
     )
 }
 
+#[cfg(feature = "curl")]
 /// Quotes a value for a `curl` configuration file.
 ///
 /// `curl` reads a double-quoted value with backslash escapes. A request body is
@@ -96,6 +155,7 @@ fn quote(value: &str) -> String {
     quoted
 }
 
+#[cfg(feature = "curl")]
 /// Sends one request and returns the parsed response.
 ///
 /// # Errors
@@ -148,6 +208,7 @@ pub fn send(endpoint: &str, api_key: &str, request: &Value) -> Result<Value, Age
     })
 }
 
+#[cfg(feature = "curl")]
 /// What to tell somebody about a failed request.
 ///
 /// Prefers the API's own message, which is almost always more useful than a
@@ -170,6 +231,7 @@ fn describe_failure(body: &str, stderr: &str) -> String {
     }
 }
 
+#[cfg(feature = "curl")]
 /// A transport failure.
 fn failed(reason: &str) -> AgentError {
     AgentError::Failed {
@@ -178,7 +240,7 @@ fn failed(reason: &str) -> AgentError {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "curl"))]
 mod tests {
     use super::*;
     use serde_json::json;
