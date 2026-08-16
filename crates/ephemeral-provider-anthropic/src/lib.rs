@@ -34,6 +34,7 @@
 pub mod transport;
 pub mod wire;
 
+use ephemeral_agent::dialogue;
 use ephemeral_agent::{
     AgentError, AgentProvider, Attempt,
     plan::{GeneratedApp, Plan, RepairAttempt, SourceFile},
@@ -140,7 +141,7 @@ impl AnthropicProvider {
         let usage = wire::usage_from(&response);
         let text = wire::text_from(&response)?;
 
-        Ok((wire::json_from(&text)?, usage))
+        Ok((dialogue::json_from(NAME, &text)?, usage))
     }
 }
 
@@ -159,13 +160,13 @@ impl AgentProvider for AnthropicProvider {
     fn plan(&self, intent: &str) -> Result<Attempt<Plan>, AgentError> {
         let (value, usage) = self.ask(&wire::plan_request(&self.model, intent))?;
 
-        Ok(Attempt::new(wire::plan_from(&value)?, usage))
+        Ok(Attempt::new(dialogue::plan_from(NAME, &value)?, usage))
     }
 
     fn generate(&self, plan: &Plan) -> Result<Attempt<GeneratedApp>, AgentError> {
         let (value, usage) = self.ask(&wire::generate_request(&self.model, plan))?;
 
-        Ok(Attempt::new(wire::app_from(&value, plan)?, usage))
+        Ok(Attempt::new(dialogue::app_from(NAME, &value, plan)?, usage))
     }
 
     fn repair(
@@ -176,7 +177,7 @@ impl AgentProvider for AnthropicProvider {
     ) -> Result<Attempt<RepairAttempt>, AgentError> {
         let (value, usage) = self.ask(&wire::repair_request(&self.model, files, failure))?;
 
-        Ok(Attempt::new(wire::repair_from(&value)?, usage))
+        Ok(Attempt::new(dialogue::repair_from(NAME, &value)?, usage))
     }
 }
 

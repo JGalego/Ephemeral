@@ -32,6 +32,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 pub mod build;
+pub mod dialogue;
 pub mod mock;
 pub mod plan;
 pub mod provider;
