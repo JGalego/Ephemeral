@@ -52,6 +52,13 @@ step "Generation is portable (provider without a subprocess transport)"
 cargo build -p ephemeral-provider-anthropic --no-default-features
 cargo test -p ephemeral-provider-anthropic --no-default-features
 
+# Swift and Kotlin both reach Ephemeral through C, so the C ABI is the boundary
+# a phone actually uses. Compiling a host against the real header and the real
+# static library is the only check that catches a declaration which has drifted
+# from its export — the Rust tests link an rlib and can only string-match.
+step "The C ABI a phone links against"
+crates/ephemeral-ffi/tests/c-abi.sh
+
 step "Providers reach the network only through curl"
 if grep -rniE 'reqwest|hyper|ureq|tokio' crates/ephemeral-provider-anthropic/Cargo.toml; then
   echo "An HTTP stack appeared in a provider crate (ADR-0016)."

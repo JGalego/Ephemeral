@@ -141,6 +141,11 @@ jobs:
         run: |
           cargo build -p ephemeral-provider-anthropic --no-default-features
           cargo test -p ephemeral-provider-anthropic --no-default-features
+      # Swift and Kotlin both reach Ephemeral through C. Compiling a host
+      # against the real header and static library is the only check that
+      # catches a declaration drifting from its export.
+      - name: The C ABI a phone links against
+        run: crates/ephemeral-ffi/tests/c-abi.sh
       - name: A real provider reaches the network only through curl
         run: |
           if grep -rniE 'reqwest|hyper|ureq|tokio' \
