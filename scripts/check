@@ -59,6 +59,12 @@ cargo test -p ephemeral-provider-anthropic --no-default-features
 step "The C ABI a phone links against"
 crates/ephemeral-ffi/tests/c-abi.sh
 
+# ...and that the same library builds for the architectures phones actually
+# are. A static library is assembled rather than linked, so this needs neither
+# Xcode nor the Android NDK. First run downloads a standard library per target.
+step "Ephemeral builds for the device"
+crates/ephemeral-ffi/tests/device-targets.sh
+
 step "Providers reach the network only through curl"
 if grep -rniE 'reqwest|hyper|ureq|tokio' crates/ephemeral-provider-anthropic/Cargo.toml; then
   echo "An HTTP stack appeared in a provider crate (ADR-0016)."

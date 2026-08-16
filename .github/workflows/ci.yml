@@ -146,6 +146,15 @@ jobs:
       # catches a declaration drifting from its export.
       - name: The C ABI a phone links against
         run: crates/ephemeral-ffi/tests/c-abi.sh
+      # Compiling for x86-64 proves the contract; it does not prove the crate
+      # survives the trip to a device. A static library is assembled rather
+      # than linked, so iOS and Android archives build here without Xcode or
+      # the NDK, and their symbol tables are checked against the header.
+      - name: Ephemeral builds for the device
+        run: crates/ephemeral-ffi/tests/device-targets.sh
+        env:
+          # A check that quietly stops checking is worse than no check.
+          EPHEMERAL_REQUIRE_SYMBOLS: 1
       - name: A real provider reaches the network only through curl
         run: |
           if grep -rniE 'reqwest|hyper|ureq|tokio' \
