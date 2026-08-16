@@ -118,10 +118,18 @@ and the terminal show the same views worded identically.
 | The window, its commands, and a frontend with no build step | ✅ |
 | Rendering tested in headless Chromium, including that untrusted names cannot become markup | ✅ |
 | Deciding permissions from the window, under the same rules as the terminal | ✅ |
+| Asking for an application from the window, without opening a terminal | ✅ |
 | Running and generating from the window | |
 
 **Done when:** somebody can do everything the CLI does without opening a
 terminal.
+
+The window could show applications and answer their questions long before it
+could start one, which meant the first thing anybody did with a graphical
+application was open a terminal. It has a composer now. What is still missing
+is generating and running from it: generating takes minutes and needs progress
+the window has nowhere to put yet, and running needs the Docker daemon — both
+are real work rather than a wiring job.
 
 ### Phase 5 — Cross-platform
 
