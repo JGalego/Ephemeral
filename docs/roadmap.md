@@ -132,7 +132,10 @@ terminal.
 | Desktop installers: `.deb`, `.rpm`, AppImage, a universal `.dmg`, NSIS and MSI | ✅ |
 | Checksums over the published artifacts, and draft releases | ✅ |
 | Signing and notarisation, which need credentials this repository must never hold | |
-| Mobile, which needs the control plane in [ADR-0007](architecture/decisions/0007-mobile-control-plane.md) | |
+| A C ABI for mobile, with the host supplying its own HTTPS transport ([ADR-0017](architecture/decisions/0017-mobile-generates-through-a-host-transport.md)) | ✅ |
+| iOS and Android libraries built and published, and checked against the header on every commit | ✅ |
+| The Swift and Kotlin shells, and builds on a device | |
+| Building and running on mobile, which needs the control plane in [ADR-0007](architecture/decisions/0007-mobile-control-plane.md) | |
 
 **Done when:** somebody can download and run Ephemeral on their own machine
 without building it.
@@ -143,6 +146,20 @@ called CI as a reusable workflow that had never declared itself reusable, built
 binaries where it claimed to build installers, and depended on two icon formats
 that did not exist. Running it is what made any of that visible — the same
 lesson as filming the window, in a different medium.
+
+**Mobile was blocked by a transport, not by phones.** This row read "mobile,
+which needs the control plane" for as long as it existed, on the strength of
+ADR-0007 having said generation and execution were one thing. They are not.
+What actually stopped a phone generating was ADR-0016's `curl` subprocess —
+iOS does not let an application spawn a process — and nothing in the repository
+said so, because nothing had tried. Making transport a trait unblocked it in an
+afternoon; the seam then paid for itself immediately, since the provider's
+request building and error mapping had been untestable by construction and are
+now driven by fake transports in CI.
+
+What is left for mobile is a user interface, not a contract: the C ABI is
+compiled against from C on every commit, and the libraries are built for five
+device architectures and checked against the header.
 
 **Signing is the remaining gap, and it is not a small one.** Until these builds
 are signed, macOS refuses to open the application and Windows warns before
