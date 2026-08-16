@@ -72,6 +72,12 @@ Types: `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `build`, `ci`,
 
 Please do not write `implement ephemeral`.
 
+### Authorship
+
+Commits are authored by the person making them. Do not add `Co-Authored-By:`
+trailers naming a tool or an assistant, and do not let one set itself as the
+author — see [CLAUDE.md](CLAUDE.md).
+
 ### Architecture Decision Records
 
 If your change makes a decision that a future contributor would otherwise have
