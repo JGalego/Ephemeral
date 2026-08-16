@@ -77,6 +77,12 @@ A mobile build supplies its own HTTPS transport and its own credential — the
 `ANTHROPIC_API_KEY` environment variable is a desktop convention, not part of
 the design.
 
+What that amendment sketched is now decided in full, including the boundary a
+phone actually calls through, in
+[ADR-0017](0017-mobile-generates-through-a-host-transport.md). This record still
+stands for what it was always about: **execution**. A phone generates for
+itself; a control plane is what builds and runs the result.
+
 What is still remote on mobile is **build, run, and repair**: those need a
 sandbox the phone does not have. An application created and generated on a
 device is a real, versioned application whose code has not yet been built —

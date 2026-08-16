@@ -24,6 +24,10 @@ supersedes the old one; the old one stays, marked superseded and linked forward.
 | [0011](0011-immutable-content-addressed-versions.md) | Application versions are immutable and content-addressed | accepted | 7 |
 | [0012](0012-sharing-distributes-recipes.md) | Sharing distributes recipes, never grants | accepted | 7 |
 | [0013](0013-how-several-people-share-an-application.md) | How several people share one application | **proposed** | 7 |
+| [0014](0014-drive-docker-through-its-cli.md) | Drive Docker through its CLI, not its HTTP API | accepted | 1 |
+| [0015](0015-defer-the-native-runtime.md) | Defer the native runtime rather than ship a weak one | accepted | 1 |
+| [0016](0016-real-providers-live-in-their-own-crates.md) | Real providers live in their own crates, and reach the network through `curl` | accepted | 2 |
+| [0017](0017-mobile-generates-through-a-host-transport.md) | A phone generates for itself, through a C ABI and the host's own HTTPS | accepted | 5 |
 
 ## When you need an ADR
 
