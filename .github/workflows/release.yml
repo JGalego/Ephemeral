@@ -307,9 +307,172 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+  # Mobile ships a library, not an installer. There is no Ephemeral app on
+  # either store yet, and shipping the engine an app embeds is the honest thing
+  # to publish in the meantime: it is the part that exists, it is the part that
+  # is tested, and it means the platform shell is the only thing left to write.
+  #
+  # What is in here generates. It does not build or run an application — that
+  # needs a sandbox no phone has (ADR-0017).
+  mobile-apple:
+    name: Mobile (Apple)
+    needs: verify
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: mobile-apple
+
+      # A static library rather than a dynamic one: an app embeds this, and a
+      # `cdylib` on iOS means a framework to sign, embed and load for no gain.
+      # `--crate-type` overrides what the manifest asks for, so the cdylib the
+      # desktop wants is not built here and no platform linker is needed.
+      - name: Build
+        run: |
+          set -euo pipefail
+          for target in aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios; do
+            cargo rustc --release --locked -p ephemeral-ffi \
+              --target "$target" --crate-type staticlib
+          done
+
+      # One simulator slice for both Mac architectures. An XCFramework may hold
+      # only one library per platform-and-architecture-set, so the two simulator
+      # builds have to be fused before it will accept them.
+      - name: Fuse the simulator slices
+        run: |
+          set -euo pipefail
+          mkdir -p build/simulator
+          lipo -create \
+            target/aarch64-apple-ios-sim/release/libephemeral_ffi.a \
+            target/x86_64-apple-ios/release/libephemeral_ffi.a \
+            -output build/simulator/libephemeral_ffi.a
+          lipo -info build/simulator/libephemeral_ffi.a
+
+      # An XCFramework is what somebody drags into Xcode. A bare `.a` makes them
+      # pick the right architecture by hand and get it wrong once.
+      - name: Package
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          [ "${GITHUB_REF_TYPE:-}" = "tag" ] || version="$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)"
+
+          xcodebuild -create-xcframework \
+            -library target/aarch64-apple-ios/release/libephemeral_ffi.a \
+            -headers crates/ephemeral-ffi/include \
+            -library build/simulator/libephemeral_ffi.a \
+            -headers crates/ephemeral-ffi/include \
+            -output build/Ephemeral.xcframework
+
+          cp LICENSE build/Ephemeral.xcframework/
+          mkdir -p dist
+          (cd build && zip -qry "../dist/Ephemeral-${version}-ios.xcframework.zip" \
+             Ephemeral.xcframework)
+          ls -la dist
+
+      # An XCFramework whose Info.plist does not list both slices is one Xcode
+      # accepts and then fails to link against, on whichever machine happens to
+      # need the missing one.
+      - name: It contains both slices
+        run: |
+          set -euo pipefail
+          plist=build/Ephemeral.xcframework/Info.plist
+          for expected in ios-arm64 ios-arm64_x86_64-simulator; do
+            if ! /usr/libexec/PlistBuddy -c 'Print' "$plist" | grep -q "$expected"; then
+              echo "::error::The XCFramework has no $expected slice."
+              /usr/libexec/PlistBuddy -c 'Print' "$plist"
+              exit 1
+            fi
+            echo "  $expected"
+          done
+          test -f build/Ephemeral.xcframework/ios-arm64/Headers/ephemeral.h
+          test -f build/Ephemeral.xcframework/ios-arm64/Headers/module.modulemap
+          echo "Both slices, with the header and the module map Swift imports."
+
+      - name: Checksums
+        run: |
+          cd dist && shasum -a 256 * > SHA256SUMS-mobile-apple.txt
+          cat SHA256SUMS-mobile-apple.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mobile-apple
+          path: dist/
+          if-no-files-found: error
+
+  mobile-android:
+    name: Mobile (Android)
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add aarch64-linux-android armv7-linux-androideabi \
+            x86_64-linux-android i686-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: mobile-android
+
+      # No NDK here on purpose. A static library is assembled rather than
+      # linked, so the Android toolchain is only needed by whoever links it into
+      # an app — which is the same person who already has it.
+      - name: Build
+        run: |
+          set -euo pipefail
+          for target in aarch64-linux-android armv7-linux-androideabi \
+                        x86_64-linux-android i686-linux-android; do
+            cargo rustc --release --locked -p ephemeral-ffi \
+              --target "$target" --crate-type staticlib
+          done
+
+      # Laid out by ABI name, which is what Android's own build system expects,
+      # so this unpacks into a project rather than being rearranged first.
+      - name: Package
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          [ "${GITHUB_REF_TYPE:-}" = "tag" ] || version="$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)"
+          stem="ephemeral-${version}-android"
+
+          mkdir -p "staging/$stem/include" dist
+          cp crates/ephemeral-ffi/include/ephemeral.h "staging/$stem/include/"
+          cp LICENSE README.md "staging/$stem/"
+
+          set -- aarch64-linux-android:arm64-v8a \
+                 armv7-linux-androideabi:armeabi-v7a \
+                 x86_64-linux-android:x86_64 \
+                 i686-linux-android:x86
+          for pair in "$@"; do
+            target="${pair%%:*}"; abi="${pair##*:}"
+            mkdir -p "staging/$stem/jniLibs/$abi"
+            cp "target/$target/release/libephemeral_ffi.a" \
+               "staging/$stem/jniLibs/$abi/"
+            echo "  $abi"
+          done
+
+          tar -czf "dist/$stem.tar.gz" -C staging "$stem"
+          ls -la dist
+
+      - name: Checksums
+        run: |
+          cd dist && sha256sum * > SHA256SUMS-mobile-android.txt
+          cat SHA256SUMS-mobile-android.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mobile-android
+          path: dist/
+          if-no-files-found: error
+
   publish:
     name: Publish
-    needs: [cli, desktop]
+    needs: [cli, desktop, mobile-apple, mobile-android]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     steps:
