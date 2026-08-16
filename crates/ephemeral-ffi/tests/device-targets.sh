@@ -46,12 +46,31 @@ fi
 # failure.
 REQUIRE_SYMBOLS="${EPHEMERAL_REQUIRE_SYMBOLS:-0}"
 NM=""
-for candidate in llvm-nm llvm-nm-19 llvm-nm-18 nm; do
+for candidate in llvm-nm llvm-nm-20 llvm-nm-19 llvm-nm-18; do
   if command -v "$candidate" >/dev/null 2>&1; then
     NM="$candidate"
     break
   fi
 done
+
+# Failing that, ask the toolchain for one. `llvm-tools` is the same LLVM that
+# compiled the archive, so it reads every format rustc can emit — which makes
+# this work anywhere cargo does, rather than anywhere somebody remembered to
+# install a distribution's LLVM package.
+if [ -z "$NM" ] && rustup component add llvm-tools >/dev/null 2>&1; then
+  host="$(rustc -vV | sed -n 's/^host: //p')"
+  bundled="$(rustc --print sysroot)/lib/rustlib/$host/bin/llvm-nm"
+  if [ -x "$bundled" ]; then
+    NM="$bundled"
+  fi
+fi
+
+# GNU nm as a last resort. It reads ELF but not Mach-O, so under it the Android
+# archive is inspected and the Apple ones are only built — which the run says
+# out loud rather than passing quietly.
+if [ -z "$NM" ] && command -v nm >/dev/null 2>&1; then
+  NM="nm"
+fi
 
 # Every function the header promises. Read out of the header itself, so adding
 # an export without declaring it — or declaring one without exporting it — is
