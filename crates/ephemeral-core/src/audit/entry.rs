@@ -81,6 +81,21 @@ pub enum AuditEvent {
         purpose: String,
     },
 
+    /// An application was returned to a version it used to be.
+    ///
+    /// Recorded because rolling back changes what code will run under a name
+    /// somebody already approved, which is exactly the kind of thing the log
+    /// exists to make undeniable.
+    AppRolledBack {
+        /// Which application.
+        app: AppId,
+        /// The version it is now, by digest.
+        to: String,
+        /// How many grants were withdrawn because the older version asked for
+        /// something the newer one had stopped needing.
+        grants_revoked: usize,
+    },
+
     /// An application was deleted: its runtime resources destroyed and its
     /// permissions revoked.
     AppDeleted {
@@ -188,6 +203,7 @@ impl AuditEvent {
             Self::PermissionRevoked { .. } => "permission_revoked",
             Self::LifecycleTransition { .. } => "lifecycle_transition",
             Self::AppCreated { .. } => "app_created",
+            Self::AppRolledBack { .. } => "app_rolled_back",
             Self::AppDeleted { .. } => "app_deleted",
             Self::AppPurged { .. } => "app_purged",
             Self::AppPublished { .. } => "app_published",
@@ -207,6 +223,7 @@ impl AuditEvent {
         match self {
             Self::LifecycleTransition { app, .. }
             | Self::AppCreated { app, .. }
+            | Self::AppRolledBack { app, .. }
             | Self::AppDeleted { app, .. }
             | Self::AppPurged { app }
             | Self::SandboxCreated { app, .. }
@@ -253,6 +270,21 @@ impl AuditEvent {
             ),
             Self::LifecycleTransition { app, from, to, .. } => {
                 format!("{app} moved from {from} to {to}")
+            }
+            Self::AppRolledBack {
+                app,
+                to,
+                grants_revoked,
+            } => {
+                let short = to.get(..12).unwrap_or(to);
+                if *grants_revoked == 0 {
+                    format!("{app} was returned to version {short}")
+                } else {
+                    format!(
+                        "{app} was returned to version {short}; {grants_revoked} grant(s) \
+                         withdrawn because it asks for more than the version it replaced"
+                    )
+                }
             }
             Self::AppCreated { app, purpose } => {
                 if purpose.is_empty() {
@@ -333,7 +365,10 @@ impl AuditEvent {
             Self::AppInstalled { origin, .. } => redactor.redact_in_place(origin),
             // The remaining variants carry only identifiers, names, enums and
             // counts. There is nowhere in them for a secret to hide.
-            Self::PermissionDecided { .. }
+            // Nothing below carries free text a caller could have put a secret
+            // into: ids, digests, counts and enumerations only.
+            Self::AppRolledBack { .. }
+            | Self::PermissionDecided { .. }
             | Self::PermissionRevoked { .. }
             | Self::AppDeleted { .. }
             | Self::AppPurged { .. }

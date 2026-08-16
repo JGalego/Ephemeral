@@ -176,6 +176,28 @@ enum Command {
         provider: String,
     },
 
+    /// Return an application to a version it used to be.
+    #[command(
+        long_about = "Puts an earlier version's source back and records the change.\n\n\
+                      The built image is cleared, because a version is its source: \
+                      running the newer build under this version's name would report \
+                      one thing and run another. Generate again to rebuild.\n\n\
+                      If the older version asks for a capability the newer one had \
+                      stopped needing, the grants for it are withdrawn — an approval \
+                      given for different code is not an approval for this one."
+    )]
+    Rollback {
+        /// Which application.
+        app: String,
+        /// Which version, by digest or an unambiguous prefix of one.
+        ///
+        /// Named `digest` rather than `version` because clap generates a
+        /// `--version` flag and the two collide — which is a panic on startup,
+        /// not a compile error, and so was invisible until the binary was
+        /// actually run.
+        digest: String,
+    },
+
     /// Decide what an application may do, one question at a time.
     Review {
         /// Which application.
@@ -357,6 +379,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::Logs { app, lines } => commands::logs(&home, &app, lines),
         Command::Audit { app, limit } => commands::audit(&home, app.as_deref(), limit),
         Command::Generate { app, provider } => generate::run(&home, &app, &provider),
+        Command::Rollback { app, digest } => commands::rollback(&home, &app, &digest),
         Command::Review { app } => review::run(&home, &app),
         Command::Publish { app, into } => share::publish(&home, &app, &into),
         Command::Install { from, accept } => share::install(&home, &from, accept),

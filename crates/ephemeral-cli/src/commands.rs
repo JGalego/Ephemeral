@@ -201,6 +201,37 @@ pub(crate) fn inspect(home: &Path, reference: &str) -> Result<()> {
     println!();
     print_permissions(&workspace, &Principal::app(manifest.id.clone()));
 
+    // Versions are named by digest, so a person who wants to roll back has to
+    // be able to see one. Listing them here is what makes `ephemeral rollback`
+    // usable without reading the manifest by hand.
+    if !manifest.versions.is_empty() {
+        println!();
+        println!("{}", output::dim("Versions"));
+        for recorded in manifest.versions.iter().rev() {
+            let current = if manifest
+                .current_version()
+                .is_some_and(|it| it.sequence == recorded.sequence)
+            {
+                "  (current)"
+            } else {
+                ""
+            };
+            let kept = if workspace.apps().has_version(&manifest.id, &recorded.digest) {
+                ""
+            } else {
+                "  source not kept"
+            };
+            println!(
+                "  {:<3} {:<14} {}{}{}",
+                recorded.sequence,
+                recorded.digest.short(),
+                output::dim(&recorded.reason),
+                current,
+                output::dim(kept),
+            );
+        }
+    }
+
     println!();
     println!(
         "{}",
@@ -743,6 +774,130 @@ pub(crate) fn highest_granted_risk(workspace: &Workspace) -> Option<RiskLevel> {
         .filter(|grant| grant.decision.is_allowed() && !grant.is_revoked())
         .map(|grant| grant.permission.risk())
         .max()
+}
+
+/// Returns an application to a version it used to be.
+///
+/// Three things have to happen together or not at all: the source on disk goes
+/// back, the manifest records the change, and any capability the older version
+/// asks for that the newer one had stopped needing has its grant withdrawn.
+/// Doing the first without the third would silently hand an application a
+/// permission on the strength of an approval given for different code.
+pub(crate) fn rollback(home: &Path, reference: &str, version: &str) -> Result<()> {
+    let mut workspace = open(home)?;
+    let mut manifest = find(&workspace, reference)?;
+
+    // Matched by prefix against what this application actually recorded, never
+    // built from the string. A digest that is not in the history is not a
+    // version of this application, whatever else it might be a digest of.
+    let matches: Vec<_> = manifest
+        .versions
+        .iter()
+        .filter(|recorded| recorded.digest.matches(version))
+        .map(|recorded| (recorded.digest.clone(), recorded.sequence))
+        .collect();
+
+    let (digest, sequence) = match matches.as_slice() {
+        [] => bail!(
+            "{} has no version matching {version:?}. Run `ephemeral inspect {}` to see them.",
+            manifest.id,
+            manifest.id
+        ),
+        [one] => one.clone(),
+        many => bail!(
+            "{version:?} matches {} versions of {}. Give more of the digest.",
+            many.len(),
+            manifest.id
+        ),
+    };
+
+    // Asked before anything moves. A version whose source was never kept — one
+    // recorded before snapshots existed, or swept away by retention — can be
+    // described and not restored, and saying so beats a half-done rollback.
+    if !workspace.apps().has_version(&manifest.id, &digest) {
+        bail!(
+            "version {} of {} is recorded but its source is not on this machine, \
+             so there is nothing to go back to.",
+            digest.short(),
+            manifest.id
+        );
+    }
+
+    if manifest.lifecycle.state().is_runnable() {
+        bail!(
+            "{} is {}. Stop it first — rolling back changes the code it would run.",
+            manifest.id,
+            manifest.lifecycle.state().headline().to_lowercase()
+        );
+    }
+
+    // The manifest first: it refuses a version that is already current, and
+    // there is no point moving files for a rollback that will be rejected.
+    let delta = manifest
+        .revert_to(&digest)
+        .with_context(|| format!("cannot roll {} back", manifest.id))?;
+
+    workspace
+        .apps()
+        .restore_version(&manifest.id, &digest)
+        .with_context(|| format!("could not restore the source of {}", manifest.id))?;
+
+    // The question ADR-0011 exists to answer, reached from the other direction:
+    // rolling *back* widens when the version being left behind had dropped a
+    // capability, and the older version must not inherit an approval given
+    // while it was not being asked for.
+    let withdrawn = if delta.widens() {
+        crate::generate::withdraw_widened(&mut workspace, &manifest.id, &delta)
+    } else {
+        0
+    };
+
+    workspace.audit_mut().append(
+        Actor::User,
+        AuditEvent::AppRolledBack {
+            app: manifest.id.clone(),
+            to: digest.as_str().to_owned(),
+            grants_revoked: withdrawn,
+        },
+    );
+
+    workspace.apps_mut().save(&manifest)?;
+    workspace.save()?;
+
+    println!(
+        "{} {} to version {} ({})",
+        output::good("Rolled back"),
+        output::bold(manifest.id.as_str()),
+        sequence,
+        digest.short()
+    );
+
+    if withdrawn > 0 {
+        println!();
+        println!(
+            "{} {}",
+            output::warn("Careful:"),
+            format_args!(
+                "this version asks for {} thing(s) the one it replaced had stopped \
+                 needing, so {withdrawn} grant(s) were withdrawn. Run `ephemeral \
+                 inspect {}` and grant again only what you still want.",
+                delta.added.len(),
+                manifest.id
+            )
+        );
+    }
+
+    println!();
+    println!(
+        "{}",
+        output::dim(
+            "The built image was cleared: a version is its source, and running the \
+             newer build under this version's name would report one thing and run \
+             another. Generate again to rebuild."
+        )
+    );
+
+    Ok(())
 }
 
 #[cfg(test)]

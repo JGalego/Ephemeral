@@ -386,7 +386,7 @@ fn finish(
 /// Returns how many were withdrawn. Only the ones the *new* request touches:
 /// an update that adds network access does not cost the user the file access
 /// they already agreed to.
-fn withdraw_widened(
+pub(crate) fn withdraw_widened(
     workspace: &mut Workspace,
     app: &ephemeral_core::AppId,
     delta: &ephemeral_core::PermissionDelta,
