@@ -257,6 +257,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ephemeral-ffi"
+version = "0.1.0"
+dependencies = [
+ "ephemeral-agent",
+ "ephemeral-api",
+ "ephemeral-core",
+ "ephemeral-provider-anthropic",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "ephemeral-provider-anthropic"
 version = "0.1.0"
 dependencies = [
