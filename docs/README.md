@@ -19,6 +19,7 @@
 | [sandbox.md](sandbox.md) | What confines a running application, and what it will not do |
 | [security/threat-model.md](security/threat-model.md) | What Ephemeral defends against, and — more usefully — what it does not |
 | [sharing.md](sharing.md) | Design: giving an app to somebody else, publishing it, and shared instances |
+| [mobile.md](mobile.md) | Embedding the engine on iOS and Android: what it does on a device, and what it deliberately will not |
 
 ## Working on it
 

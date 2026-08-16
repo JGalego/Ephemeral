@@ -202,8 +202,9 @@ Swift and Kotlin shells as the only thing still to write. On a device that
 library **generates** — a sentence becomes an application whose source is
 written to the phone, through the app's own HTTPS client and a credential from
 Keychain or Keystore. It does not build or run what it generates: that needs a
-sandbox no phone has. See
-[ADR-0017](architecture/decisions/0017-mobile-generates-through-a-host-transport.md).
+sandbox no phone has. [mobile.md](mobile.md) is the guide for embedding it;
+[ADR-0017](architecture/decisions/0017-mobile-generates-through-a-host-transport.md)
+is why it works this way.
 
 **Signing is the significant gap.** It needs an Apple Developer account and a
 Windows code-signing certificate, both of which are paid identities belonging to

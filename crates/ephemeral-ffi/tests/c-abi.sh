@@ -57,3 +57,21 @@ if command -v clang >/dev/null 2>&1; then
 else
   echo "(skipping the module map check: no clang)"
 fi
+
+# The mobile guide is the first thing somebody embedding this reads, and its
+# Swift is the code they will paste. Sample code that calls a function which no
+# longer exists is worse than no sample: it is confidently wrong. Every call and
+# every constant it uses has to be in the header.
+GUIDE="$ROOT/docs/mobile.md"
+if [ -f "$GUIDE" ]; then
+  unknown=""
+  for name in $(grep -oE '\bephemeral_[a-z_]+\(|\bEPHEMERAL_[A-Z_]+\b' "$GUIDE" \
+                  | tr -d '(' | sort -u); do
+    grep -q "\b$name\b" "$CRATE/include/ephemeral.h" || unknown="$unknown $name"
+  done
+  if [ -n "$unknown" ]; then
+    echo "docs/mobile.md uses names the header does not have:$unknown" >&2
+    exit 1
+  fi
+  echo "Everything the mobile guide calls is in the header."
+fi
