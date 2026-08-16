@@ -1,0 +1,9 @@
+// Lets Swift write `import Ephemeral` rather than a bridging header.
+//
+// This travels inside the XCFramework alongside `ephemeral.h`, which is where
+// Xcode looks for it. Android does not need one: Kotlin reaches C through JNI
+// or Panama, neither of which reads a module map.
+module Ephemeral {
+    header "ephemeral.h"
+    export *
+}

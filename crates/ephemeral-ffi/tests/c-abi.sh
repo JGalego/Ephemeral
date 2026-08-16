@@ -42,3 +42,18 @@ trap 'rm -rf "$WORK"' EXIT
   -lpthread -ldl -lm
 
 "$WORK/host" "$WORK/home"
+
+# Swift reads `module.modulemap` to turn the header into something it can
+# `import`, and a broken one fails inside Xcode on somebody else's machine
+# rather than here. Clang can build the module on any platform, so it is
+# checked wherever clang exists rather than only where Swift does.
+if command -v clang >/dev/null 2>&1; then
+  printf '#include "ephemeral.h"\nint main(void){ ephemeral_close(0); return 0; }\n' \
+    > "$WORK/module.c"
+  clang -fmodules -fimplicit-module-maps \
+    -fmodules-cache-path="$WORK/modules" -fsyntax-only \
+    -I "$CRATE/include" "$WORK/module.c"
+  echo "The module map Swift imports builds."
+else
+  echo "(skipping the module map check: no clang)"
+fi
