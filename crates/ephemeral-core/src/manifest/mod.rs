@@ -518,6 +518,77 @@ impl AppManifest {
         self.versions.last()
     }
 
+    /// Returns the application to a version it used to be.
+    ///
+    /// The history is append-only, so this does not truncate it: returning to
+    /// an earlier version appends a new entry carrying that version's digest
+    /// and its requests. Two entries with one digest is not a contradiction —
+    /// the digest is the content, and the content really was current twice.
+    ///
+    /// Returns what the older version asks for that the current one does not.
+    /// That is usually empty, and when it is not it is a permission decision
+    /// exactly as an update is: rolling *back* can widen, if the version being
+    /// left behind had dropped a capability, and it must be put to a person
+    /// rather than applied ([ADR-0011]).
+    ///
+    /// **The built image is cleared.** A version is its source, and the image
+    /// built from the newer source is still named in the manifest at this
+    /// point. Leaving it would mean running the newer code under the older
+    /// version's name — the application would report one identity and execute
+    /// another, which is worse than not being able to roll back at all. The
+    /// caller must build again before running.
+    ///
+    /// # Errors
+    ///
+    /// If no recorded version has that digest, or if it is already current.
+    ///
+    /// [ADR-0011]: https://github.com/JGalego/Ephemeral/blob/main/docs/architecture/decisions/0011-immutable-content-addressed-versions.md
+    pub fn revert_to(
+        &mut self,
+        digest: &crate::VersionDigest,
+    ) -> Result<crate::PermissionDelta, ManifestError> {
+        if self
+            .current_version()
+            .is_some_and(|it| it.digest == *digest)
+        {
+            return Err(ManifestError::invalid(
+                "version",
+                "that version is already the current one",
+            ));
+        }
+
+        let target = self
+            .versions
+            .iter()
+            .find(|version| version.digest == *digest)
+            .ok_or_else(|| ManifestError::invalid("version", "no such version was ever recorded"))?
+            .clone();
+
+        let sequence = u32::try_from(self.versions.len().saturating_add(1)).unwrap_or(u32::MAX);
+        let next = crate::Version {
+            digest: target.digest.clone(),
+            sequence,
+            created_at: crate::now(),
+            reason: format!("returned to version {}", target.sequence),
+            requests: target.requests.clone(),
+        };
+
+        let delta = self
+            .current_version()
+            .map(|current| current.widening_to(&next))
+            .unwrap_or_default();
+
+        if let Some(spec) = self.runtime.as_mut() {
+            spec.image = None;
+        }
+
+        self.version = next.sequence;
+        self.versions.push(next);
+        self.touch();
+
+        Ok(delta)
+    }
+
     /// Records a new version, produced from `recipe`.
     ///
     /// Returns what this update would newly ask for, compared with the version
@@ -609,6 +680,124 @@ mod tests {
         assert_eq!(manifest.versions.len(), 2, "the old version survives");
         assert_ne!(manifest.versions[0].digest, manifest.versions[1].digest);
         assert_eq!(manifest.version, 2);
+    }
+
+    fn recipe(contents: &str) -> crate::Recipe {
+        let mut recipe = crate::Recipe {
+            runtime: "docker".to_owned(),
+            image: Some("python:3.12-slim".to_owned()),
+            entrypoint: vec!["python".to_owned(), "main.py".to_owned()],
+            source: vec![("main.py".to_owned(), contents.to_owned())],
+            requests: Vec::new(),
+            limits: "cpu=500".to_owned(),
+        };
+        recipe.normalise();
+        recipe
+    }
+
+    fn generated_twice() -> AppManifest {
+        let mut manifest =
+            AppManifest::requested(AppId::parse("csv-comparator").unwrap(), "CSV comparator");
+        manifest.record_version(&recipe("aaa"), "generated");
+        manifest.record_version(&recipe("bbb"), "repaired");
+        manifest
+    }
+
+    /// Rolling back appends rather than truncating: the history is what
+    /// happened, and an application really was each of those things in turn.
+    #[test]
+    fn returning_to_an_earlier_version_appends_it_rather_than_erasing_the_newer_one() {
+        let mut manifest = generated_twice();
+        let first = manifest.versions[0].digest.clone();
+
+        manifest.revert_to(&first).expect("the first version");
+
+        assert_eq!(manifest.versions.len(), 3, "the newer version must survive");
+        assert_eq!(manifest.current_version().unwrap().digest, first);
+        assert_eq!(manifest.version, 3);
+        assert_eq!(
+            manifest.versions[1].digest,
+            crate::VersionDigest::of(&recipe("bbb")),
+            "the version rolled away from is still in the history"
+        );
+        assert_eq!(
+            manifest.versions[2].digest, first,
+            "the appended entry carries the digest of the version returned to"
+        );
+    }
+
+    /// A version is its source. The image built from the *newer* source is
+    /// still named in the manifest at the moment of rollback, and leaving it
+    /// there would run the newer code under the older version's name — the
+    /// application would report one identity and execute another, which is
+    /// worse than not being able to roll back at all.
+    #[test]
+    fn rolling_back_clears_the_image_built_from_the_newer_source() {
+        let mut manifest = generated_twice();
+        manifest.runtime = Some(RuntimeSpec {
+            image: Some("ephemeral/csv-comparator:newer".to_owned()),
+            ..RuntimeSpec::docker_job("python:3.12-slim", vec!["python".to_owned()])
+        });
+
+        let first = manifest.versions[0].digest.clone();
+        manifest.revert_to(&first).expect("the first version");
+
+        assert_eq!(
+            manifest.runtime.as_ref().unwrap().image,
+            None,
+            "the newer build survived a rollback and would have been run"
+        );
+    }
+
+    /// Rolling back can widen. If the version being left behind had dropped a
+    /// capability, returning to the older one asks for it again — and that is
+    /// a question for a person, exactly as an update is.
+    #[test]
+    fn returning_to_a_version_that_wanted_more_is_reported_as_widening() {
+        let mut manifest =
+            AppManifest::requested(AppId::parse("csv-comparator").unwrap(), "CSV comparator");
+
+        let mut hungry = recipe("aaa");
+        hungry.requests = vec![crate::permission::AppPermission::read(
+            crate::permission::PathScope::parse("~/Downloads/**").unwrap(),
+        )];
+        hungry.normalise();
+        manifest.record_version(&hungry, "generated");
+
+        let mut modest = recipe("bbb");
+        modest.normalise();
+        manifest.record_version(&modest, "repaired, and it stopped needing the disk");
+
+        let back = manifest.versions[0].digest.clone();
+        let delta = manifest.revert_to(&back).expect("the first version");
+
+        assert!(
+            delta.widens(),
+            "returning to a version that reads the disk must be a permission decision"
+        );
+        assert_eq!(delta.added.len(), 1);
+    }
+
+    /// Rolling back to where you already are is a mistake worth naming rather
+    /// than a no-op that quietly appends a duplicate.
+    #[test]
+    fn returning_to_the_current_version_is_refused() {
+        let mut manifest = generated_twice();
+        let current = manifest.current_version().unwrap().digest.clone();
+
+        assert!(manifest.revert_to(&current).is_err());
+        assert_eq!(manifest.versions.len(), 2, "nothing may have been appended");
+    }
+
+    /// A digest that was never recorded is not a version of this application,
+    /// whatever it is a digest of.
+    #[test]
+    fn returning_to_a_version_that_never_existed_is_refused() {
+        let mut manifest = generated_twice();
+        let stranger = crate::VersionDigest::of(&recipe("never generated"));
+
+        assert!(manifest.revert_to(&stranger).is_err());
+        assert_eq!(manifest.versions.len(), 2);
     }
 
     /// The same application produced twice is the same version. Recording it
