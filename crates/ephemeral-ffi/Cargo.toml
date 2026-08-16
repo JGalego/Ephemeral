@@ -1,0 +1,49 @@
+[package]
+name = "ephemeral-ffi"
+description = "Ephemeral's C ABI, so iOS and Android can drive the same core the desktop does."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+[lib]
+# `staticlib` for iOS (linked into the app binary), `cdylib` for Android (loaded
+# as a .so). `rlib` so the crate's own tests can link it like any other.
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+ephemeral-core.workspace = true
+ephemeral-agent.workspace = true
+ephemeral-api.workspace = true
+
+# Deliberately without default features: the `curl` transport spawns a process,
+# which iOS forbids outright. A mobile host supplies its own HTTPS transport
+# through the callback seam in this crate (ADR-0007).
+ephemeral-provider-anthropic = { path = "../ephemeral-provider-anthropic", version = "0.1.0", default-features = false }
+
+serde.workspace = true
+serde_json.workspace = true
+
+# Lints are NOT inherited from the workspace, and that is the point.
+#
+# The workspace forbids `unsafe_code`, which is right for every crate that has a
+# choice. A C ABI does not have a choice: reading a `*const c_char` the host
+# handed over is unsafe by construction. Rather than weaken the workspace rule
+# to `deny` so this crate could opt out — which would quietly lower the bar
+# everywhere — the unsafety is confined here, denied by default, and allowed
+# only on individual items that carry a `# Safety` section saying what the
+# caller must guarantee.
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints.rust]
+missing_docs = "warn"
+unsafe_code = "deny"
+unreachable_pub = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
