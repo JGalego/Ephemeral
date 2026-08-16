@@ -277,6 +277,22 @@ fn finish(
 ) -> Result<()> {
     let (recorded, delta) = apply_success(manifest, outcome, provider)?;
 
+    // Keep this version's source before anything overwrites it. A digest in the
+    // history that nothing can restore is half a promise: it says what the
+    // application was and cannot put it back. Failing to keep it is not worth
+    // failing a successful generation over, so it is reported and the run
+    // stands — but it is reported, rather than leaving somebody to discover it
+    // when a rollback has nothing to roll back to.
+    if let Some(version) = manifest.current_version()
+        && let Err(error) = workspace.apps().keep_version(&manifest.id, &version.digest)
+    {
+        eprintln!(
+            "{} this version's source was not kept, so you will not be able to \
+             return to it: {error}",
+            output::warn("warning")
+        );
+    }
+
     // The image Ephemeral built, not the base image it was built from. Running
     // the base image would run something that has never seen the generated
     // source — which is exactly what happened the first time this was run for

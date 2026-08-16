@@ -114,9 +114,144 @@ impl FileStore {
         fs::rename(&from, &to).map_err(|error| io_error("move", &from, &error))
     }
 
+    /// Keeps a copy of the current source as the content of one version.
+    ///
+    /// [ADR-0011] makes a version immutable and identified by the digest of its
+    /// content, and the manifest records that digest. Without this the record
+    /// was half a promise: the history could say what an application had been
+    /// and nothing could put it back, because `source/` is overwritten by the
+    /// next generation.
+    ///
+    /// Keeping a snapshot that already exists is not an error and does not
+    /// rewrite it. The digest *is* the content, so a second copy under the same
+    /// digest would be identical by definition, and re-writing it would be the
+    /// one way to make an immutable version change.
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError::NotFound`] if the application has no source to keep, or
+    /// [`StorageError::Io`] if it cannot be copied.
+    ///
+    /// [ADR-0011]: https://github.com/JGalego/Ephemeral/blob/main/docs/architecture/decisions/0011-immutable-content-addressed-versions.md
+    pub fn keep_version(
+        &self,
+        id: &AppId,
+        digest: &crate::VersionDigest,
+    ) -> Result<(), StorageError> {
+        let from = self.layout.app(id).source();
+        if !from.is_dir() {
+            return Err(StorageError::NotFound { id: id.clone() });
+        }
+
+        let to = self
+            .layout
+            .app(id)
+            .version_source(digest)
+            .ok_or_else(|| StorageError::NotFound { id: id.clone() })?;
+        if to.exists() {
+            return Ok(());
+        }
+
+        // Into a temporary directory alongside, then renamed into place, for
+        // the same reason manifest writes are atomic: a half-copied version
+        // that is present but incomplete is worse than one that is absent,
+        // because only the absent one is detectable.
+        let staging = to.with_extension("partial");
+        if staging.exists() {
+            fs::remove_dir_all(&staging).map_err(|error| io_error("remove", &staging, &error))?;
+        }
+        copy_tree(&from, &staging)?;
+
+        if let Some(parent) = to.parent() {
+            create_dir_all(parent)?;
+        }
+        fs::rename(&staging, &to).map_err(|error| io_error("move", &staging, &error))
+    }
+
+    /// Whether one version's content is on this machine.
+    ///
+    /// A version recorded before snapshots existed, or one whose files a
+    /// retention sweep removed, is a version that can be described and not
+    /// restored. Asking is how a caller offers only what it can deliver.
+    #[must_use]
+    pub fn has_version(&self, id: &AppId, digest: &crate::VersionDigest) -> bool {
+        self.layout
+            .app(id)
+            .version_source(digest)
+            .is_some_and(|path| path.is_dir())
+    }
+
+    /// Makes one version's content the current source.
+    ///
+    /// The snapshot is copied over `source/` rather than moved, so the version
+    /// store still holds it afterwards and the same version can be returned to
+    /// again.
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError::NotFound`] if that version's content is not on this
+    /// machine, or [`StorageError::Io`] if it cannot be copied.
+    pub fn restore_version(
+        &self,
+        id: &AppId,
+        digest: &crate::VersionDigest,
+    ) -> Result<(), StorageError> {
+        let from = self
+            .layout
+            .app(id)
+            .version_source(digest)
+            .filter(|path| path.is_dir())
+            .ok_or_else(|| StorageError::NotFound { id: id.clone() })?;
+
+        let to = self.layout.app(id).source();
+        let staging = to.with_extension("restoring");
+        if staging.exists() {
+            fs::remove_dir_all(&staging).map_err(|error| io_error("remove", &staging, &error))?;
+        }
+        copy_tree(&from, &staging)?;
+
+        // The old source goes only after the new one is fully staged, so an
+        // interruption leaves the application with source rather than none.
+        if to.exists() {
+            fs::remove_dir_all(&to).map_err(|error| io_error("remove", &to, &error))?;
+        }
+        fs::rename(&staging, &to).map_err(|error| io_error("move", &staging, &error))
+    }
+
     fn manifest_path(&self, id: &AppId) -> PathBuf {
         self.layout.app(id).manifest()
     }
+}
+
+/// Copies a directory tree, following no links.
+///
+/// A symbolic link inside generated source could point anywhere on the machine,
+/// and copying what it points at would pull that content into the application's
+/// own tree — where the sandbox will later mount it. Links are skipped rather
+/// than followed or recreated.
+fn copy_tree(from: &Path, to: &Path) -> Result<(), StorageError> {
+    create_dir_all(to)?;
+
+    let entries = fs::read_dir(from).map_err(|error| io_error("read", from, &error))?;
+    for entry in entries {
+        let entry = entry.map_err(|error| io_error("read", from, &error))?;
+        let kind = entry
+            .file_type()
+            .map_err(|error| io_error("read", &entry.path(), &error))?;
+        let target = to.join(entry.file_name());
+
+        if kind.is_symlink() {
+            continue;
+        }
+        if kind.is_dir() {
+            copy_tree(&entry.path(), &target)?;
+        } else if kind.is_file() {
+            fs::copy(entry.path(), &target)
+                .map_err(|error| io_error("copy", &entry.path(), &error))?;
+        }
+    }
+
+    Ok(())
 }
 
 impl AppStore for FileStore {
@@ -493,5 +628,159 @@ mod tests {
             app,
             "the previously stored manifest must be intact"
         );
+    }
+    // ---------------------------------------------------------- versions
+
+    /// Writes a source tree and returns the digest it will be kept under.
+    fn generated(store: &FileStore, app: &AppId, contents: &str) -> crate::VersionDigest {
+        let source = store.layout().app(app).source();
+        create_dir_all(&source).unwrap();
+        fs::write(source.join("main.py"), contents).unwrap();
+
+        let recipe = crate::Recipe {
+            runtime: "docker".to_owned(),
+            source: vec![("main.py".to_owned(), contents.to_owned())],
+            ..crate::Recipe::default()
+        };
+        crate::VersionDigest::of(&recipe)
+    }
+
+    /// The point of the whole thing: a version recorded is a version that can
+    /// be put back, not merely described.
+    #[test]
+    fn a_kept_version_can_be_restored_after_the_source_moves_on() {
+        let (_directory, store) = store();
+        let app = id("csv-comparator");
+        store.prepare(&app).unwrap();
+
+        let first = generated(&store, &app, "print('one')");
+        store.keep_version(&app, &first).unwrap();
+
+        let second = generated(&store, &app, "print('two')");
+        store.keep_version(&app, &second).unwrap();
+
+        let source = store.layout().app(&app).source().join("main.py");
+        assert_eq!(fs::read_to_string(&source).unwrap(), "print('two')");
+
+        store.restore_version(&app, &first).unwrap();
+        assert_eq!(fs::read_to_string(&source).unwrap(), "print('one')");
+
+        // And back again: restoring copies rather than moves, so a version is
+        // not consumed by being returned to.
+        store.restore_version(&app, &second).unwrap();
+        assert_eq!(fs::read_to_string(&source).unwrap(), "print('two')");
+    }
+
+    /// Restoring replaces the tree rather than merging into it. A file the
+    /// newer version added would otherwise survive a rollback and be built
+    /// into something claiming to be the older version.
+    #[test]
+    fn restoring_removes_files_the_older_version_never_had() {
+        let (_directory, store) = store();
+        let app = id("csv-comparator");
+        store.prepare(&app).unwrap();
+
+        let first = generated(&store, &app, "print('one')");
+        store.keep_version(&app, &first).unwrap();
+
+        let source = store.layout().app(&app).source();
+        fs::write(source.join("extra.py").as_path(), "print('added later')").unwrap();
+
+        store.restore_version(&app, &first).unwrap();
+
+        assert!(
+            !source.join("extra.py").exists(),
+            "a later file survived a rollback"
+        );
+        assert!(source.join("main.py").exists());
+    }
+
+    /// The digest is the content, so a second snapshot under the same digest is
+    /// identical by definition. Rewriting it is the one way an immutable
+    /// version could change, so keeping an existing one is a no-op.
+    #[test]
+    fn keeping_a_version_twice_does_not_rewrite_it() {
+        let (_directory, store) = store();
+        let app = id("csv-comparator");
+        store.prepare(&app).unwrap();
+
+        let digest = generated(&store, &app, "print('one')");
+        store.keep_version(&app, &digest).unwrap();
+
+        // Tamper with the current source, then keep the same digest again. If
+        // this overwrote, the stored version would now be something else.
+        fs::write(
+            store.layout().app(&app).source().join("main.py"),
+            "print('substituted')",
+        )
+        .unwrap();
+        store.keep_version(&app, &digest).unwrap();
+
+        let kept = store.layout().app(&app).version_source(&digest).unwrap();
+        assert_eq!(
+            fs::read_to_string(kept.join("main.py")).unwrap(),
+            "print('one')",
+            "an immutable version was overwritten"
+        );
+    }
+
+    /// A version from before snapshots existed, or one a retention sweep
+    /// removed, can be described and not restored. A caller has to be able to
+    /// find that out before offering it.
+    #[test]
+    fn a_version_with_no_kept_content_is_reported_as_such() {
+        let (_directory, store) = store();
+        let app = id("csv-comparator");
+        store.prepare(&app).unwrap();
+
+        let digest = generated(&store, &app, "print('one')");
+        assert!(!store.has_version(&app, &digest));
+        assert!(store.restore_version(&app, &digest).is_err());
+
+        store.keep_version(&app, &digest).unwrap();
+        assert!(store.has_version(&app, &digest));
+    }
+
+    /// A symbolic link in generated source could point anywhere on the machine.
+    /// Copying what it points at would pull that content into the application's
+    /// own tree, which the sandbox later mounts.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_in_generated_source_is_not_followed_into_the_version_store() {
+        let (directory, store) = store();
+        let app = id("csv-comparator");
+        store.prepare(&app).unwrap();
+
+        let secret = directory.path().join("secret.txt");
+        fs::write(&secret, "not the application's to copy").unwrap();
+
+        let digest = generated(&store, &app, "print('one')");
+        std::os::unix::fs::symlink(&secret, store.layout().app(&app).source().join("escape"))
+            .unwrap();
+
+        store.keep_version(&app, &digest).unwrap();
+
+        let kept = store.layout().app(&app).version_source(&digest).unwrap();
+        assert!(
+            !kept.join("escape").exists(),
+            "a link out of the application's tree was copied into the version store"
+        );
+        assert!(
+            kept.join("main.py").exists(),
+            "ordinary files must still be kept"
+        );
+    }
+
+    /// A digest is a hex string this crate produced, but the path it becomes is
+    /// still built through the check that refuses to leave the tree.
+    #[test]
+    fn a_version_path_cannot_leave_the_application() {
+        let (_directory, store) = store();
+        let app = id("csv-comparator");
+        let paths = store.layout().app(&app);
+
+        let honest = crate::VersionDigest::of(&crate::Recipe::default());
+        let path = paths.version_source(&honest).unwrap();
+        assert!(path.starts_with(paths.root()));
     }
 }

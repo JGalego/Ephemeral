@@ -135,6 +135,31 @@ impl AppPaths {
         self.root.join("source")
     }
 
+    /// Every version's source, kept by digest.
+    #[must_use]
+    pub fn versions(&self) -> PathBuf {
+        self.root.join("versions")
+    }
+
+    /// One version's source, by its digest.
+    ///
+    /// [ADR-0011] says a version is immutable and identified by the digest of
+    /// its content. Recording the digest without keeping the content makes that
+    /// half true: the history can say what an application *was* and cannot put
+    /// it back. This is where the bytes live so that it can.
+    ///
+    /// The digest is a hex string this crate produced, so it cannot contain a
+    /// separator or a parent reference and cannot escape the application's
+    /// tree — but it goes through [`AppPaths::resolve`] anyway, because a path
+    /// that is safe by argument rather than by check is one refactor away from
+    /// not being.
+    ///
+    /// [ADR-0011]: https://github.com/JGalego/Ephemeral/blob/main/docs/architecture/decisions/0011-immutable-content-addressed-versions.md
+    #[must_use]
+    pub fn version_source(&self, digest: &crate::VersionDigest) -> Option<PathBuf> {
+        self.resolve(&format!("versions/{}", digest.as_str()))
+    }
+
     /// Build output.
     #[must_use]
     pub fn build(&self) -> PathBuf {
@@ -171,6 +196,7 @@ impl AppPaths {
         vec![
             self.root.clone(),
             self.source(),
+            self.versions(),
             self.build(),
             self.runtime(),
             self.data(),
