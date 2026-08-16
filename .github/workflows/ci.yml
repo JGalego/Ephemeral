@@ -162,13 +162,20 @@ jobs:
             echo "An HTTP stack appeared in a provider crate (ADR-0016)."
             exit 1
           fi
-          # Everything outside transport.rs must be pure: no process spawning.
-          if grep -rn 'process::Command' crates/ephemeral-provider-anthropic/src \
+          # A provider has no business spawning anything: the transport lives
+          # in ephemeral-agent now, shared by every provider.
+          if grep -rn 'process::Command' crates/ephemeral-provider-*/src \
+               --include='*.rs'; then
+            echo "A provider spawns a process. Transport belongs in ephemeral-agent."
+            exit 1
+          fi
+          if grep -rln 'process::Command' crates/ephemeral-agent/src \
                --include='*.rs' | grep -v 'transport.rs'; then
-            echo "A provider spawns a process outside its transport module."
+            echo "Something outside the transport module spawns a process."
             echo "The untested surface is meant to stay in one small place."
             exit 1
           fi
+          cargo build -p ephemeral-agent --no-default-features
           echo "Provider transport is confined to curl, in one module."
 
   # The desktop window renders the permission prompt, and a UI that can only be

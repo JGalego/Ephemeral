@@ -45,12 +45,13 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use ephemeral_agent::AgentProvider;
+use ephemeral_agent::transport::{HttpRequest, Transport};
 use ephemeral_core::{
     Actor, AppId,
     lifecycle::TransitionRequest,
     storage::{AppStore as _, Workspace},
 };
-use ephemeral_provider_anthropic::{AnthropicProvider, transport::Transport};
+use ephemeral_provider_anthropic::AnthropicProvider;
 use serde_json::Value;
 
 /// Everything went as asked.
@@ -105,12 +106,21 @@ unsafe impl Send for HostTransport {}
 unsafe impl Sync for HostTransport {}
 
 impl Transport for HostTransport {
-    fn send(
-        &self,
-        endpoint: &str,
-        api_key: &str,
-        request: &Value,
-    ) -> Result<Value, ephemeral_agent::AgentError> {
+    fn send(&self, request: &HttpRequest<'_>) -> Result<Value, ephemeral_agent::AgentError> {
+        // The C callback takes a credential and lets the host add the rest of
+        // the headers, which `ephemeral.h` documents. That is still true while
+        // this builds an Anthropic provider and nothing else. Wiring a second
+        // provider in here means passing the whole header set across the
+        // boundary, which is a change to a published ABI and therefore a
+        // decision rather than a detail.
+        let endpoint = request.endpoint;
+        let api_key = request
+            .headers
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case("x-api-key"))
+            .map_or("", |(_, value)| value.as_str());
+        let request = request.body;
+
         let failure = |reason: String| ephemeral_agent::AgentError::Failed {
             provider: ephemeral_provider_anthropic::NAME.to_owned(),
             reason,
@@ -247,12 +257,7 @@ pub unsafe extern "C" fn ephemeral_set_credential(
 struct NoTransport;
 
 impl Transport for NoTransport {
-    fn send(
-        &self,
-        _endpoint: &str,
-        _api_key: &str,
-        _request: &Value,
-    ) -> Result<Value, ephemeral_agent::AgentError> {
+    fn send(&self, _request: &HttpRequest<'_>) -> Result<Value, ephemeral_agent::AgentError> {
         Err(ephemeral_agent::AgentError::Failed {
             provider: ephemeral_provider_anthropic::NAME.to_owned(),
             reason: "no transport".to_owned(),

@@ -16,7 +16,7 @@ authors.workspace = true
 # generate on a phone. Building without this feature is what proves the rest of
 # the crate is portable (ADR-0016).
 default = ["curl"]
-curl = []
+curl = ["ephemeral-agent/curl"]
 
 [dependencies]
 ephemeral-agent.workspace = true

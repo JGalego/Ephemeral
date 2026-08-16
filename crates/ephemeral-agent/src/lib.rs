@@ -36,6 +36,7 @@ pub mod dialogue;
 pub mod mock;
 pub mod plan;
 pub mod provider;
+pub mod transport;
 
 pub use build::{Builder, Cancellation, Elapsed, Outcome, RealClock, Round, Run, generate};
 pub use mock::MockProvider;

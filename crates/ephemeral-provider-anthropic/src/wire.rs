@@ -6,7 +6,7 @@
 //! making a live model call ([ADR-0008]).
 //!
 //! The division is deliberate: prompt construction and response parsing are
-//! where the bugs are, and [`crate::transport`] — which is the only part CI
+//! where the bugs are, and [`ephemeral_agent::transport`] — which is the only part CI
 //! cannot exercise — is about thirty lines that hand a string to `curl`.
 //!
 //! [ADR-0008]: https://github.com/JGalego/Ephemeral/blob/main/docs/architecture/decisions/0008-agent-provider-abstraction.md
@@ -41,7 +41,7 @@ pub const DEFAULT_MODEL: &str = "claude-sonnet-5";
 ///
 /// It is not free, though. The reply is not streamed, so a bigger ceiling means
 /// a longer wait before *anything* arrives — see
-/// [`crate::transport`]'s timeout, which has to be large enough for a reply
+/// [`ephemeral_agent::transport`]'s timeout, which has to be large enough for a reply
 /// this size. The two move together.
 pub(crate) const MAX_TOKENS: u32 = 32_000;
 
@@ -72,6 +72,20 @@ pub fn repair_request(model: &str, files: &[SourceFile], failure: &str) -> Value
         model,
         &ephemeral_agent::dialogue::repair_prompt(files, failure),
     )
+}
+
+/// The headers this API needs, credential included.
+///
+/// The provider owns these, not the transport: Anthropic wants `x-api-key` and
+/// its own API version, an OpenAI-compatible service wants `Authorization:
+/// Bearer`, and a transport that knew either secretly belonged to one provider.
+#[must_use]
+pub fn headers(api_key: &str) -> Vec<(String, String)> {
+    vec![
+        ("x-api-key".to_owned(), api_key.to_owned()),
+        ("anthropic-version".to_owned(), API_VERSION.to_owned()),
+        ("content-type".to_owned(), "application/json".to_owned()),
+    ]
 }
 
 /// The common envelope.

@@ -13,7 +13,7 @@
 //!
 //! Prompt construction, request bodies, response parsing, capability
 //! translation and error mapping are pure functions in [`wire`], and all of
-//! them are tested. [`transport`] hands a string to `curl` and is the only part
+//! them are tested. [`ephemeral_agent::transport`] hands a string to `curl` and is the only part
 //! CI cannot exercise, because doing so would need a credential.
 //!
 //! That split is the point: the untested surface is roughly thirty lines with
@@ -31,7 +31,6 @@
 
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
-pub mod transport;
 pub mod wire;
 
 use ephemeral_agent::dialogue;
@@ -51,7 +50,7 @@ pub struct AnthropicProvider {
     api_key: Option<String>,
     model: String,
     endpoint: String,
-    transport: Box<dyn transport::Transport>,
+    transport: Box<dyn ephemeral_agent::transport::Transport>,
 }
 
 #[cfg(feature = "curl")]
@@ -82,7 +81,9 @@ impl AnthropicProvider {
     #[cfg(feature = "curl")]
     #[must_use]
     pub fn new() -> Self {
-        Self::with_transport(Box::new(transport::Curl))
+        Self::with_transport(Box::new(ephemeral_agent::transport::Curl::for_provider(
+            NAME,
+        )))
     }
 
     /// The same, sending through a transport the caller supplies.
@@ -92,7 +93,7 @@ impl AnthropicProvider {
     /// a mobile application holds a secret either — both are desktop answers,
     /// and both are supplied from outside rather than assumed here.
     #[must_use]
-    pub fn with_transport(transport: Box<dyn transport::Transport>) -> Self {
+    pub fn with_transport(transport: Box<dyn ephemeral_agent::transport::Transport>) -> Self {
         Self {
             api_key: credential_from_environment(),
             model: wire::DEFAULT_MODEL.to_owned(),
@@ -137,7 +138,13 @@ impl AnthropicProvider {
         &self,
         request: &serde_json::Value,
     ) -> Result<(serde_json::Value, ephemeral_agent::Usage), AgentError> {
-        let response = self.transport.send(&self.endpoint, self.key()?, request)?;
+        let response = self
+            .transport
+            .send(&ephemeral_agent::transport::HttpRequest {
+                endpoint: &self.endpoint,
+                headers: wire::headers(self.key()?),
+                body: request,
+            })?;
         let usage = wire::usage_from(&response);
         let text = wire::text_from(&response)?;
 
@@ -193,12 +200,10 @@ mod tests {
     /// by making a real call.
     struct Scripted(serde_json::Value);
 
-    impl transport::Transport for Scripted {
+    impl ephemeral_agent::transport::Transport for Scripted {
         fn send(
             &self,
-            _endpoint: &str,
-            _api_key: &str,
-            _request: &serde_json::Value,
+            _request: &ephemeral_agent::transport::HttpRequest<'_>,
         ) -> Result<serde_json::Value, AgentError> {
             Ok(self.0.clone())
         }
@@ -207,12 +212,10 @@ mod tests {
     /// A transport that must never be reached.
     struct Forbidden;
 
-    impl transport::Transport for Forbidden {
+    impl ephemeral_agent::transport::Transport for Forbidden {
         fn send(
             &self,
-            _endpoint: &str,
-            _api_key: &str,
-            _request: &serde_json::Value,
+            _request: &ephemeral_agent::transport::HttpRequest<'_>,
         ) -> Result<serde_json::Value, AgentError> {
             panic!("the transport was used without a credential");
         }

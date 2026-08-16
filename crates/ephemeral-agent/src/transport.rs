@@ -1,7 +1,7 @@
 //! The one part of this crate CI cannot exercise.
 //!
 //! Deliberately small, and deliberately boring. Everything that decides
-//! anything is in [`crate::wire`], which is pure and tested; what is left here
+//! anything is in a provider, which is pure and tested; what is left here
 //! carries a string to the API and reads what comes back ([ADR-0016]).
 //!
 //! **No secret ever appears in an argument vector.** The credential travels in
@@ -33,14 +33,14 @@ use std::io::Write as _;
 #[cfg(feature = "curl")]
 use std::process::{Command, Stdio};
 
-use ephemeral_agent::AgentError;
+use crate::AgentError;
 use serde_json::Value;
 
 /// Somewhere a request can be sent.
 ///
 /// The whole seam is one method, because the transport decides nothing: it
-/// carries bytes that [`crate::wire`] built and returns bytes that
-/// [`crate::wire`] parses. Everything that could be wrong is on either side of
+/// carries bytes that a provider built and returns bytes that
+/// the same provider parses. Everything that could be wrong is on either side of
 /// it.
 ///
 /// An implementation must hold two properties that no test above it can check:
@@ -55,7 +55,31 @@ pub trait Transport: Send + Sync {
     /// [`AgentError::Unavailable`] when the transport itself cannot run,
     /// [`AgentError::Failed`] when the request fails, and
     /// [`AgentError::Unreadable`] when the reply is not JSON.
-    fn send(&self, endpoint: &str, api_key: &str, request: &Value) -> Result<Value, AgentError>;
+    fn send(&self, request: &HttpRequest<'_>) -> Result<Value, AgentError>;
+}
+
+/// One request, as the provider composed it.
+///
+/// Headers rather than a bare credential, because providers do not agree on how
+/// a credential is carried: Anthropic wants `x-api-key` and its own API version,
+/// OpenAI-compatible services want `Authorization: Bearer`. Baking either into
+/// the transport made the transport secretly belong to one provider — which it
+/// did, until there was a second one.
+#[derive(Debug, Clone)]
+pub struct HttpRequest<'a> {
+    /// Where it goes.
+    pub endpoint: &'a str,
+
+    /// The headers to send, in order.
+    ///
+    /// **A credential lives here and nowhere else.** Nothing in this crate puts
+    /// a header into an argument vector, a log or an error message; that is the
+    /// property the `curl` implementation exists to preserve, and the reason it
+    /// writes them to a configuration document on stdin.
+    pub headers: Vec<(String, String)>,
+
+    /// The JSON body.
+    pub body: &'a Value,
 }
 
 #[cfg(feature = "curl")]
@@ -64,7 +88,7 @@ pub trait Transport: Send + Sync {
 /// Generation is bounded on wall clock by the loop above this, but a request
 /// that hangs forever would defeat that by never returning to be counted.
 ///
-/// **Coupled to [`crate::wire::MAX_TOKENS`].** The reply is not streamed, so
+/// **Coupled to each provider's token ceiling.** The reply is not streamed, so
 /// nothing arrives until the model has finished writing all of it: a larger
 /// token ceiling means a longer silence, not a longer trickle. Setting the two
 /// independently is how a request times out having received zero bytes, which
@@ -76,14 +100,31 @@ const TIMEOUT_SECONDS: u32 = 900;
 ///
 /// The desktop default. Unavailable on any platform that forbids spawning a
 /// process, which is why it is a feature rather than the only option.
+///
+/// It carries the name of the provider it sends for, so that "curl is not
+/// installed" is reported against the thing a person was trying to use rather
+/// than against the transport they have never heard of.
 #[cfg(feature = "curl")]
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Curl;
+#[derive(Debug, Clone)]
+pub struct Curl {
+    provider: String,
+}
+
+#[cfg(feature = "curl")]
+impl Curl {
+    /// A curl transport that reports failures against `provider`.
+    #[must_use]
+    pub fn for_provider(provider: impl Into<String>) -> Self {
+        Self {
+            provider: provider.into(),
+        }
+    }
+}
 
 #[cfg(feature = "curl")]
 impl Transport for Curl {
-    fn send(&self, endpoint: &str, api_key: &str, request: &Value) -> Result<Value, AgentError> {
-        send(endpoint, api_key, request)
+    fn send(&self, request: &HttpRequest<'_>) -> Result<Value, AgentError> {
+        send(&self.provider, request)
     }
 }
 
@@ -116,18 +157,18 @@ pub fn arguments(endpoint: &str) -> Vec<String> {
 ///
 /// Kept separate from [`arguments`] and never logged. The API key is in here
 /// and nowhere else.
-fn configuration(api_key: &str, body: &str) -> String {
+fn configuration(headers: &[(String, String)], body: &str) -> String {
     // `--data-raw` rather than `--data`, so a body beginning with `@` is never
     // read as a filename. A model-influenced request body that could name a
     // local file would be a fine way to exfiltrate one.
-    format!(
-        "header = \"x-api-key: {api_key}\"\n\
-         header = \"anthropic-version: {version}\"\n\
-         header = \"content-type: application/json\"\n\
-         data-raw = {body}\n",
-        version = crate::wire::API_VERSION,
-        body = quote(body),
-    )
+    use std::fmt::Write as _;
+
+    let mut document = String::new();
+    for (name, value) in headers {
+        let _ = writeln!(document, "header = \"{name}: {value}\"");
+    }
+    let _ = writeln!(document, "data-raw = {}", quote(body));
+    document
 }
 
 #[cfg(feature = "curl")]
@@ -162,8 +203,8 @@ fn quote(value: &str) -> String {
 ///
 /// [`AgentError::Unavailable`] if `curl` is not there, and
 /// [`AgentError::Failed`] if the request fails or the reply is not JSON.
-pub fn send(endpoint: &str, api_key: &str, request: &Value) -> Result<Value, AgentError> {
-    let args = arguments(endpoint);
+pub fn send(provider: &str, request: &HttpRequest<'_>) -> Result<Value, AgentError> {
+    let args = arguments(request.endpoint);
 
     let mut child = Command::new("curl")
         .args(&args)
@@ -172,25 +213,25 @@ pub fn send(endpoint: &str, api_key: &str, request: &Value) -> Result<Value, Age
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| AgentError::Unavailable {
-            provider: crate::NAME.to_owned(),
+            provider: provider.to_owned(),
             reason: format!(
                 "curl could not be run ({error}). Ephemeral uses it to reach the API; \
                  install it, or use `--provider mock`."
             ),
         })?;
 
-    let configuration = configuration(api_key, &request.to_string());
+    let configuration = configuration(&request.headers, &request.body.to_string());
 
     child
         .stdin
         .take()
-        .ok_or_else(|| failed("curl's input could not be written to"))?
+        .ok_or_else(|| failed(provider, "curl's input could not be written to"))?
         .write_all(configuration.as_bytes())
-        .map_err(|error| failed(&format!("the request could not be sent: {error}")))?;
+        .map_err(|error| failed(provider, &format!("the request could not be sent: {error}")))?;
 
     let output = child
         .wait_with_output()
-        .map_err(|error| failed(&format!("curl did not finish: {error}")))?;
+        .map_err(|error| failed(provider, &format!("curl did not finish: {error}")))?;
 
     let body = String::from_utf8_lossy(&output.stdout).into_owned();
 
@@ -198,11 +239,11 @@ pub fn send(endpoint: &str, api_key: &str, request: &Value) -> Result<Value, Age
         // The body of a failed request is the API's own error, which says more
         // than curl's exit code. stderr covers the cases where there is no body.
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(failed(&describe_failure(&body, stderr.trim())));
+        return Err(failed(provider, &describe_failure(&body, stderr.trim())));
     }
 
     serde_json::from_str(&body).map_err(|error| AgentError::Unreadable {
-        provider: crate::NAME.to_owned(),
+        provider: provider.to_owned(),
         reason: format!("the API's reply was not JSON: {error}"),
         raw: body,
     })
@@ -233,9 +274,9 @@ fn describe_failure(body: &str, stderr: &str) -> String {
 
 #[cfg(feature = "curl")]
 /// A transport failure.
-fn failed(reason: &str) -> AgentError {
+fn failed(provider: &str, reason: &str) -> AgentError {
     AgentError::Failed {
-        provider: crate::NAME.to_owned(),
+        provider: provider.to_owned(),
         reason: reason.to_owned(),
     }
 }
@@ -243,12 +284,19 @@ fn failed(reason: &str) -> AgentError {
 #[cfg(all(test, feature = "curl"))]
 mod tests {
     use super::*;
+
+    /// Deliberately nobody's real endpoint. The transport does not care whose
+    /// it is — which is the point of it no longer belonging to one provider —
+    /// and naming a real one here would trip the guard that keeps provider
+    /// endpoints out of this crate, correctly.
+    const TEST_ENDPOINT: &str = "https://models.invalid/v1/messages";
+
     use serde_json::json;
 
     /// The property that makes a recorded command safe to log or show.
     #[test]
     fn no_secret_reaches_the_argument_vector() {
-        let args = arguments(crate::wire::ENDPOINT);
+        let args = arguments(TEST_ENDPOINT);
         let flattened = args.join(" ");
 
         assert!(!flattened.contains("sk-"), "{flattened}");
@@ -264,7 +312,7 @@ mod tests {
     /// it by never returning to be counted.
     #[test]
     fn every_request_is_bounded_in_time() {
-        let args = arguments(crate::wire::ENDPOINT);
+        let args = arguments(TEST_ENDPOINT);
 
         assert!(
             args.windows(2)
@@ -278,7 +326,7 @@ mod tests {
     #[test]
     fn an_error_response_is_a_failure_rather_than_a_body() {
         assert!(
-            arguments(crate::wire::ENDPOINT)
+            arguments(TEST_ENDPOINT)
                 .iter()
                 .any(|arg| arg == "--fail-with-body")
         );
@@ -289,7 +337,7 @@ mod tests {
     #[test]
     fn a_json_body_survives_quoting() {
         let body = json!({ "text": "she said \"hi\"\nand left\\" }).to_string();
-        let configuration = configuration("sk-test", &body);
+        let configuration = configuration(&[("x-api-key".to_owned(), "sk-test".to_owned())], &body);
 
         let quoted = configuration
             .lines()
@@ -327,7 +375,10 @@ mod tests {
     /// be a fine way to exfiltrate a local file.
     #[test]
     fn a_body_is_never_read_as_a_filename() {
-        let configuration = configuration("sk-test", "@/etc/passwd");
+        let configuration = configuration(
+            &[("x-api-key".to_owned(), "sk-test".to_owned())],
+            "@/etc/passwd",
+        );
 
         assert!(configuration.contains("data-raw"), "{configuration}");
         assert!(!configuration.contains("\ndata = "), "{configuration}");
@@ -335,10 +386,16 @@ mod tests {
 
     #[test]
     fn the_credential_and_the_version_travel_in_the_configuration() {
-        let configuration = configuration("sk-test-value", "{}");
+        let configuration = configuration(
+            &[
+                ("x-api-key".to_owned(), "sk-test-value".to_owned()),
+                ("anthropic-version".to_owned(), "2023-06-01".to_owned()),
+            ],
+            "{}",
+        );
 
         assert!(configuration.contains("x-api-key: sk-test-value"));
-        assert!(configuration.contains(crate::wire::API_VERSION));
+        assert!(configuration.contains("2023-06-01"));
     }
 
     /// "Your credit balance is too low" beats "exit status 22".

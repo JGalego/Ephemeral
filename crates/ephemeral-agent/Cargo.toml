@@ -9,6 +9,12 @@ repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
 
+[features]
+default = ["curl"]
+# Spawning `curl` is the desktop transport. A feature rather than the only
+# option, because iOS forbids one process spawning another (ADR-0017).
+curl = []
+
 [dependencies]
 ephemeral-core.workspace = true
 

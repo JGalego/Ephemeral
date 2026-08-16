@@ -70,11 +70,20 @@ if grep -rniE 'reqwest|hyper|ureq|tokio' crates/ephemeral-provider-anthropic/Car
   echo "An HTTP stack appeared in a provider crate (ADR-0016)."
   exit 1
 fi
-if grep -rn 'process::Command' crates/ephemeral-provider-anthropic/src --include='*.rs' \
-     | grep -v 'transport.rs'; then
-  echo "A provider spawns a process outside its transport module."
+# Stronger than it used to be. The transport now lives in ephemeral-agent, so a
+# provider crate has no business spawning anything at all.
+if grep -rn 'process::Command' crates/ephemeral-provider-*/src --include='*.rs'; then
+  echo "A provider spawns a process. Transport belongs in ephemeral-agent."
   exit 1
 fi
+# And the one module that does spawn is the only one that may.
+if grep -rln 'process::Command' crates/ephemeral-agent/src --include='*.rs' \
+     | grep -v 'transport.rs'; then
+  echo "Something outside the transport module spawns a process."
+  exit 1
+fi
+# The transport is a feature, because iOS forbids one process spawning another.
+cargo build -p ephemeral-agent --no-default-features
 
 step "Generation uses no network client"
 if grep -rniE 'reqwest|hyper|ureq|api\.anthropic|api\.openai' \
