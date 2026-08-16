@@ -194,7 +194,16 @@ explicit, irreversible and audited.
 | macOS | Universal `.dmg` | Signing, notarisation, Homebrew |
 | Windows | NSIS `.exe`, `.msi` | Authenticode signing, winget |
 | CLI | Archives for x86-64 and ARM | Homebrew, winget |
-| iOS / Android | — | App Store and Play Store, subject to each store's rules |
+| iOS / Android | The engine: an iOS XCFramework, Android static libraries for four ABIs, and the C header | The app itself — App Store and Play Store, subject to each store's rules |
+
+**The mobile downloads are not an app.** They are the library a phone app
+embeds, published because it exists and is tested, and because it leaves the
+Swift and Kotlin shells as the only thing still to write. On a device that
+library **generates** — a sentence becomes an application whose source is
+written to the phone, through the app's own HTTPS client and a credential from
+Keychain or Keystore. It does not build or run what it generates: that needs a
+sandbox no phone has. See
+[ADR-0017](architecture/decisions/0017-mobile-generates-through-a-host-transport.md).
 
 **Signing is the significant gap.** It needs an Apple Developer account and a
 Windows code-signing certificate, both of which are paid identities belonging to

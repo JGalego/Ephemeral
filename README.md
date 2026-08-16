@@ -90,7 +90,7 @@ next one starts. See [the roadmap](docs/roadmap.md) for detail, and
 | 2 | Provider abstraction, generation agent, build/test/repair loop | 🚧 in progress |
 | 3 | Meta-permissions, app permissions, permission UI, audit, sandboxing | 🚧 enforcement done, UI is the CLI |
 | 4 | Desktop application and dashboard | 🚧 the window compiles and renders |
-| 5 | Windows, macOS, Linux, then mobile | 🚧 desktop three; mobile planned |
+| 5 | Windows, macOS, Linux, then mobile | 🚧 desktop three ship installers; mobile ships the engine, not yet an app |
 | 6 | Threat model, security testing, supply chain, release automation | 🚧 [threat model](docs/security/threat-model.md) written |
 | 7 | Sharing, publishing, and shared sessions | 🚧 publish/install done |
 
