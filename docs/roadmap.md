@@ -92,11 +92,27 @@ Still to do:
 | | |
 |---|---|
 | A local provider, which is the only real answer to "the intent leaves the machine" | |
-| Rolling back to a version that worked | |
+| Each version's source kept, so a recorded version can actually be restored | ✅ |
+| Returning an application to a version it used to be, in the domain model | ✅ |
+| `ephemeral rollback`, and the same from the window | |
 
 **Done when:** the CSV comparator can be built from a natural-language request
 end to end, with CI exercising the whole journey against the mock provider and
 never calling a real model.
+
+**Rolling back was impossible, not merely unimplemented.** ADR-0011 made a
+version immutable and content-addressed, and the manifest recorded the digest —
+but nothing kept the bytes, and one `source/` directory per application was
+overwritten by every generation. The history could say what an application had
+been and could not put it back. Versions now have their own store, and the
+domain model can return to one; what is left is the command that offers it.
+
+Two things that command must carry through, both already decided and tested in
+the core: the built image is cleared on rollback, because running the newer
+image under the older version's name would have the application report one
+identity and execute another; and a rollback that *widens* — returning to a
+version the newer one had stopped needing a capability for — is a permission
+decision to put to a person, not a detail of an undo.
 
 ### Phase 3 — Permissions
 
