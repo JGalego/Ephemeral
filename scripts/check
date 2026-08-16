@@ -45,6 +45,13 @@ step "The whole journey, sentence to running application"
 cargo test -p ephemeral-agent --test journey
 cargo test -p ephemeral-agent --test reference_app -- --nocapture
 
+# Generating is an HTTPS request, and iOS cannot spawn a process. A provider
+# whose only transport is `curl` decides that Ephemeral cannot generate on a
+# phone — so the crate must compile with no process spawning at all (ADR-0007).
+step "Generation is portable (provider without a subprocess transport)"
+cargo build -p ephemeral-provider-anthropic --no-default-features
+cargo test -p ephemeral-provider-anthropic --no-default-features
+
 step "Providers reach the network only through curl"
 if grep -rniE 'reqwest|hyper|ureq|tokio' crates/ephemeral-provider-anthropic/Cargo.toml; then
   echo "An HTTP stack appeared in a provider crate (ADR-0016)."

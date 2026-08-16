@@ -1,6 +1,6 @@
 [package]
 name = "ephemeral-provider-anthropic"
-description = "Ephemeral's Anthropic provider. Prompt construction and response parsing are pure; the transport is curl."
+description = "Ephemeral's Anthropic provider. Prompt construction and response parsing are pure; the transport is pluggable."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,6 +8,15 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
+
+[features]
+# Spawning `curl` is the desktop transport. It is a default rather than a
+# requirement because iOS forbids a process from spawning another one at all —
+# a provider that can only reach the network by exec'ing a binary cannot
+# generate on a phone. Building without this feature is what proves the rest of
+# the crate is portable (ADR-0016).
+default = ["curl"]
+curl = []
 
 [dependencies]
 ephemeral-agent.workspace = true
