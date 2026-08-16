@@ -10,9 +10,17 @@
 //!
 //! ## What is in here
 //!
-//! Views. Nothing else. Every type is plain serialisable data describing what a
-//! client should show, already phrased the way a person reads it. Nothing here
+//! **Views**, in [`view`]: plain serialisable data describing what a client
+//! should show, already phrased the way a person reads it. Nothing here
 //! renders, formats for a terminal, or knows what a button is.
+//!
+//! **Operations**, in [`operation`]: the things a client asks Ephemeral to
+//! *do*, whole. An operation is not a helper a client calls partway through —
+//! creating an application means the manifest, its storage and the audit entry
+//! together, because a client that did two of the three would produce an
+//! application nobody is recorded as having asked for. That is not a
+//! hypothetical: creation was written three times, and one copy had exactly
+//! that hole.
 //!
 //! ## What is deliberately not in here
 //!
@@ -21,10 +29,13 @@
 //! service layer that reimplemented any of them would be exactly the second
 //! Ephemeral it exists to prevent.
 //!
-//! **No I/O.** This crate builds views from a workspace a caller already
-//! opened. It performs no host I/O of its own, so it compiles for every
-//! platform the core does, including the mobile ones that have no runtime at
-//! all.
+//! **No I/O of its own.** Everything here works through a workspace the caller
+//! opened and handed in — this crate names no path and opens no file — so it
+//! compiles for every platform the core does, including the mobile ones that
+//! have no runtime at all.
+//!
+//! **Nothing that needs a daemon or a network.** Generating talks to a model
+//! and running needs a container, so both belong to the clients that have one.
 //!
 //! ## Versioning
 //!
@@ -37,8 +48,10 @@
 
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
+pub mod operation;
 pub mod view;
 
+pub use operation::{create, derive_name};
 pub use view::{
     ApplicationDetail, ApplicationSummary, AuditEntryView, LimitsView, PermissionView,
     PermissionsView, RuntimeView, VersionView,

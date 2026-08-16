@@ -46,9 +46,8 @@ use std::sync::Mutex;
 
 use ephemeral_agent::AgentProvider;
 use ephemeral_core::{
-    Actor, AppId, AppManifest,
+    Actor, AppId,
     lifecycle::TransitionRequest,
-    manifest::Metadata,
     storage::{AppStore as _, Workspace},
 };
 use ephemeral_provider_anthropic::{AnthropicProvider, transport::Transport};
@@ -481,33 +480,18 @@ fn guard(
 }
 
 fn create(ephemeral: &Ephemeral, intent: &str) -> Result<*mut c_char, String> {
-    let intent = intent.trim();
-    if intent.is_empty() {
-        return Err("tell me what you want the application to do".to_owned());
-    }
-
-    let name = derive_name(intent);
-    let id = AppId::generate(&name);
-
-    let mut manifest = AppManifest::requested(id.clone(), &name);
-    intent.clone_into(&mut manifest.description);
-    manifest.metadata = Metadata::for_intent(
-        intent,
-        ephemeral_core::retention::RetentionPolicy::default(),
-    );
-
     let mut workspace = ephemeral.workspace()?;
-    workspace
-        .apps_mut()
-        .create(&manifest)
-        .map_err(|error| format!("could not save {id}: {error}"))?;
-    workspace
-        .apps()
-        .prepare(&id)
-        .map_err(|error| format!("could not create the storage for {id}: {error}"))?;
-    workspace
-        .save()
-        .map_err(|error| format!("could not save: {error}"))?;
+
+    // The whole operation, from `ephemeral-api`, rather than this crate's own
+    // arrangement of the same steps. The arrangement it had before omitted the
+    // audit entry, so an application created on a phone existed with no record
+    // of anybody having asked for it.
+    let manifest = ephemeral_api::create(
+        &mut workspace,
+        intent,
+        None,
+        ephemeral_core::retention::RetentionPolicy::default(),
+    )?;
 
     json(&ephemeral_api::ApplicationSummary::of(
         &manifest,
@@ -684,34 +668,6 @@ fn requested_permissions(
         permissions.request(&request.permission);
     }
     permissions
-}
-
-/// A readable name from what somebody typed.
-fn derive_name(intent: &str) -> String {
-    let words: Vec<&str> = intent
-        .split_whitespace()
-        .filter(|word| word.chars().any(char::is_alphanumeric))
-        .take(4)
-        .collect();
-
-    if words.is_empty() {
-        return "App".to_owned();
-    }
-
-    words
-        .iter()
-        .map(|word| {
-            let cleaned: String = word
-                .chars()
-                .filter(|c| c.is_alphanumeric() || *c == '-')
-                .collect();
-            let mut characters = cleaned.chars();
-            characters.next().map_or_else(String::new, |first| {
-                first.to_uppercase().collect::<String>() + characters.as_str()
-            })
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 /// Serialises a view for the host.

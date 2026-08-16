@@ -234,6 +234,7 @@ dependencies = [
  "chrono",
  "clap",
  "ephemeral-agent",
+ "ephemeral-api",
  "ephemeral-core",
  "ephemeral-provider-anthropic",
  "ephemeral-runtime",

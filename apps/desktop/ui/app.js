@@ -5,7 +5,13 @@
 // It decides nothing — a client that evaluated a permission or computed a
 // transition would be a second, subtly different Ephemeral.
 
-import { applicationList, applicationDetail, isConsent, problem } from './render.js';
+import {
+  applicationList,
+  applicationDetail,
+  composer,
+  isConsent,
+  problem,
+} from './render.js';
 
 /** Calls a command, or explains why it could not. */
 async function ask(command, args = {}) {
@@ -49,6 +55,7 @@ async function refresh() {
   try {
     await reload();
     document.getElementById('applications').hidden = false;
+    document.getElementById('compose').hidden = false;
     document.getElementById('detail').hidden = true;
   } catch (error) {
     // The message from the core is already written for a person; adding to it
@@ -68,6 +75,10 @@ async function open(id) {
     // this window showed both at once, which reads as two pages at the same
     // time.
     document.getElementById('applications').hidden = true;
+    // The composer goes with it. Leaving "what do you want?" above the page
+    // somebody is reading offers a new application instead of the one in front
+    // of them.
+    document.getElementById('compose').hidden = true;
   } catch (error) {
     reportProblem(String(error.message ?? error));
   }
@@ -105,6 +116,41 @@ async function decide(item, answer) {
   }
 }
 
+/** Records what somebody asked for, then shows them the result.
+ *
+ * The intent is sent exactly as typed. Trimming, emptiness and naming are all
+ * decided by `ephemeral-api`, so the window cannot accept something the
+ * terminal would refuse — or refuse something it would accept.
+ */
+async function submitIntent(form) {
+  const field = form.querySelector('textarea.intent');
+  const button = form.querySelector('button.create');
+
+  // Creating touches the disk, and a second click before the first returns
+  // would create a second application nobody asked for.
+  button.disabled = true;
+  try {
+    const created = await ask('create', { intent: field.value });
+    field.value = '';
+    // Straight to the new application's page: it says what state it is in and
+    // what happens next, in the lifecycle's own words rather than the window's.
+    await reload();
+    await open(created.id);
+  } catch (error) {
+    reportProblem(String(error.message ?? error));
+  } finally {
+    button.disabled = false;
+  }
+}
+
+document.addEventListener('submit', (event) => {
+  const form = event.target.closest('form.composer');
+  if (form) {
+    event.preventDefault();
+    submitIntent(form);
+  }
+});
+
 document.addEventListener('click', (event) => {
   const back = event.target.closest('button.back');
   if (back) {
@@ -123,6 +169,8 @@ document.addEventListener('click', (event) => {
   const item = event.target.closest('li.application');
   if (item) open(item.dataset.id);
 });
+
+document.getElementById('compose').replaceChildren(composer());
 
 refresh();
 

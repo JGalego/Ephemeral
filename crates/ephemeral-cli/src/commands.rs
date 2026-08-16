@@ -10,7 +10,7 @@ use ephemeral_core::{
     Actor, AppId, Principal,
     audit::{AuditEvent, AuditLog},
     lifecycle::{LifecycleEvent, LifecycleState, TransitionRequest},
-    manifest::{AppManifest, Metadata},
+    manifest::AppManifest,
     permission::{Permission, RiskLevel},
     retention::{RetentionPeriod, RetentionPolicy},
     storage::{AppStore as _, Workspace},
@@ -37,39 +37,18 @@ pub(crate) fn find(workspace: &Workspace, reference: &str) -> Result<AppManifest
 
 /// Creates an application record from an intent.
 pub(crate) fn create(home: &Path, intent: &str, name: Option<&str>, retention: &str) -> Result<()> {
-    let intent = intent.trim();
-    if intent.is_empty() {
-        bail!("tell me what you want the application to do");
-    }
-
     let policy = parse_retention(retention)?;
-    let name = name.map_or_else(|| derive_name(intent), str::to_owned);
-    let id = AppId::generate(&name);
-
-    let mut manifest = AppManifest::requested(id.clone(), &name);
-    intent.clone_into(&mut manifest.description);
-    manifest.metadata = Metadata::for_intent(intent, policy);
-
     let mut workspace = open(home)?;
-    workspace
-        .apps_mut()
-        .create(&manifest)
-        .with_context(|| format!("could not save {id}"))?;
-    workspace
-        .apps()
-        .prepare(&id)
-        .with_context(|| format!("could not create the storage for {id}"))?;
 
-    workspace.audit_mut().append(
-        Actor::User,
-        AuditEvent::AppCreated {
-            app: id.clone(),
-            purpose: intent.to_owned(),
-        },
-    );
-    workspace.save()?;
+    // The whole operation lives in `ephemeral-api`, so that the terminal, the
+    // window and a phone create applications the same way rather than three
+    // similar ways. Validation and the audit entry come with it.
+    let manifest =
+        ephemeral_api::create(&mut workspace, intent, name, policy).map_err(anyhow::Error::msg)?;
+    let name = &manifest.name;
+    let id = &manifest.id;
 
-    println!("{} {}", output::good("Created"), output::bold(&name));
+    println!("{} {}", output::good("Created"), output::bold(name));
     println!("{}", output::field("id", id.as_str()));
     println!(
         "{}",
@@ -755,36 +734,6 @@ fn parse_retention(value: &str) -> Result<RetentionPolicy> {
     })
 }
 
-/// A readable name from what somebody typed, for when they did not give one.
-fn derive_name(intent: &str) -> String {
-    let words: Vec<&str> = intent
-        .split_whitespace()
-        .filter(|word| word.chars().any(char::is_alphanumeric))
-        .take(4)
-        .collect();
-
-    if words.is_empty() {
-        return "App".to_owned();
-    }
-
-    let mut name = String::new();
-    for (index, word) in words.iter().enumerate() {
-        if index > 0 {
-            name.push(' ');
-        }
-        let cleaned: String = word
-            .chars()
-            .filter(|c| c.is_alphanumeric() || *c == '-')
-            .collect();
-        let mut chars = cleaned.chars();
-        if let Some(first) = chars.next() {
-            name.extend(first.to_uppercase());
-            name.push_str(chars.as_str());
-        }
-    }
-    name
-}
-
 /// The riskiest thing anything on this machine is currently allowed to do.
 pub(crate) fn highest_granted_risk(workspace: &Workspace) -> Option<RiskLevel> {
     workspace
@@ -799,22 +748,6 @@ pub(crate) fn highest_granted_risk(workspace: &Workspace) -> Option<RiskLevel> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn names_are_derived_from_what_somebody_typed() {
-        assert_eq!(
-            derive_name("compare these two CSV files and show me the differences"),
-            "Compare These Two CSV"
-        );
-        assert_eq!(derive_name("build a todo list"), "Build A Todo List");
-    }
-
-    /// An intent with nothing usable in it still has to produce a name.
-    #[test]
-    fn a_name_is_produced_even_from_nonsense() {
-        assert_eq!(derive_name("!!! ???"), "App");
-        assert_eq!(derive_name(""), "App");
-    }
 
     #[test]
     fn retention_policies_parse_and_typos_are_refused() {

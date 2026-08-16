@@ -467,6 +467,159 @@ await check('a refusal is on screen, not below the fold', async () => {
   await stubbed.close();
 });
 
+// The window could show applications and answer their questions but not start
+// one, so the first thing anybody had to do with a graphical application was
+// open a terminal. These drive the real page: the composer only matters as
+// something a person can actually type into and submit.
+await check('somebody can ask for an application without a terminal', async () => {
+  const stubbed = await browser.newPage();
+  const asked = [];
+
+  await stubbed.addInitScript((app) => {
+    window.__asked = [];
+    let created = false;
+    window.__TAURI__ = {
+      core: {
+        invoke: async (command, args) => {
+          window.__asked.push({ command, args });
+          if (command === 'applications') return created ? [app] : [];
+          if (command === 'create') {
+            created = true;
+            return app;
+          }
+          if (command === 'application') {
+            return {
+              summary: app,
+              explanation: 'Requested. Nothing has been written yet.',
+              description: app.purpose,
+              runtime: null,
+              limits: { description: 'small', cpu_millis: 500, memory_mib: 512, storage_mib: 1024 },
+              permissions: { allowed: [], outstanding: [], highest_granted_risk: null, isolated: true },
+              versions: [],
+              retention: 'a week',
+            };
+          }
+          throw new Error(`no such command: ${command}`);
+        },
+      },
+    };
+  }, summary({ state: 'Requested', state_kind: 'working' }));
+
+  await stubbed.goto(origin);
+  await stubbed.fill('textarea.intent', 'compare these two CSV files');
+  await stubbed.click('form.composer button.create');
+  await stubbed.waitForSelector('#detail:not([hidden])');
+
+  const seen = await stubbed.evaluate(() => ({
+    sent: window.__asked.filter((call) => call.command === 'create'),
+    // The field is cleared, so the next thing typed is not appended to the
+    // last thing asked for.
+    field: document.querySelector('textarea.intent').value,
+    // The composer is not left hovering over the page it just opened, offering
+    // a new application instead of the one in front of the person.
+    composerVisible: !document.getElementById('compose').hidden,
+    detail: document.getElementById('detail').textContent,
+  }));
+
+  assert.equal(seen.sent.length, 1, 'exactly one application should have been created');
+  assert.equal(seen.sent[0].args.intent, 'compare these two CSV files');
+  assert.equal(seen.field, '', 'the field should be cleared after creating');
+  assert.equal(seen.composerVisible, false, 'the composer should not sit over the new page');
+  assert.match(seen.detail, /Nothing has been written yet/);
+
+  asked.push(...seen.sent);
+  await stubbed.close();
+});
+
+// An application recorded is not an application built, and somebody who is not
+// told that will wait for a build nobody started. The same honesty the mobile
+// library owes its host, a window owes the person in front of it.
+await check('the composer says that asking is not building', async () => {
+  const text = await page.evaluate(async () => {
+    const { composer } = await import('./render.js');
+    return composer().textContent;
+  });
+
+  assert.match(text, /Nothing is written or run until you generate it/);
+});
+
+// A second click before the first returns would create a second application
+// nobody asked for — and creating touches the disk, so it would really be
+// there.
+await check('creating cannot be double-submitted', async () => {
+  const stubbed = await browser.newPage();
+
+  await stubbed.addInitScript((app) => {
+    window.__creates = 0;
+    window.__TAURI__ = {
+      core: {
+        invoke: async (command) => {
+          if (command === 'applications') return [];
+          if (command === 'create') {
+            window.__creates += 1;
+            // Slow, the way a disk write under load is slow.
+            await new Promise((resolve) => setTimeout(resolve, 300));
+            return app;
+          }
+          if (command === 'application') throw new Error('not reached');
+          throw new Error(`no such command: ${command}`);
+        },
+      },
+    };
+  }, summary());
+
+  await stubbed.goto(origin);
+  await stubbed.fill('textarea.intent', 'count the words in a file');
+
+  const button = 'form.composer button.create';
+  await stubbed.click(button);
+  const disabled = await stubbed.getAttribute(button, 'disabled');
+  await stubbed.click(button, { force: true }).catch(() => {});
+  await stubbed.waitForTimeout(500);
+
+  const creates = await stubbed.evaluate(() => window.__creates);
+  assert.notEqual(disabled, null, 'the button must be disabled while a creation is in flight');
+  assert.equal(creates, 1, 'a second click created a second application');
+
+  await stubbed.close();
+});
+
+// An intent the terminal would refuse must not be accepted by the window, and
+// the reason shown has to be the core's own words rather than the window's.
+await check('an intent Ephemeral refuses is refused here too', async () => {
+  const stubbed = await browser.newPage();
+
+  await stubbed.addInitScript(() => {
+    window.__TAURI__ = {
+      core: {
+        invoke: async (command) => {
+          if (command === 'applications') return [];
+          if (command === 'create') {
+            throw new Error('tell me what you want the application to do');
+          }
+          throw new Error(`no such command: ${command}`);
+        },
+      },
+    };
+  });
+
+  await stubbed.goto(origin);
+  await stubbed.click('form.composer button.create');
+  await stubbed.waitForSelector('#problem:not([hidden])');
+
+  const seen = await stubbed.evaluate(() => ({
+    text: document.getElementById('problem').textContent,
+    // Usable again: a window that stays disabled after a refusal has stopped
+    // being a window.
+    disabled: document.querySelector('form.composer button.create').disabled,
+  }));
+
+  assert.match(seen.text, /tell me what you want the application to do/);
+  assert.equal(seen.disabled, false, 'the button must come back after a refusal');
+
+  await stubbed.close();
+});
+
 await browser.close();
 server.close();
 

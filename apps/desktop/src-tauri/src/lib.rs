@@ -1,10 +1,11 @@
 //! The desktop window's Rust half.
 //!
 //! Every command here does the same three things: open the workspace, ask
-//! `ephemeral-api` for a view, hand it over. Nothing in this file evaluates a
-//! permission, computes a lifecycle transition, or joins a path — a client that
-//! did any of those would be a second, subtly different Ephemeral, which is the
-//! failure this layer exists to prevent.
+//! `ephemeral-api` for a view or an operation, hand the result over. Nothing in
+//! this file evaluates a permission, computes a lifecycle transition, joins a
+//! path, or arranges the steps of an operation itself — a client that did any of
+//! those would be a second, subtly different Ephemeral, which is the failure
+//! this layer exists to prevent.
 //!
 //! It is deliberately thin. The interesting decisions are in `ephemeral-core`
 //! and the interesting rendering is in `ui/render.js`, and both are tested
@@ -76,6 +77,26 @@ fn application(id: String) -> Result<ApplicationDetail, Failure> {
         .map_err(|_| format!("There is no application called {id}."))?;
 
     Ok(ephemeral_api::application(&manifest, &workspace))
+}
+
+/// Records a new application from what somebody typed into the window.
+///
+/// The whole operation is `ephemeral-api`'s, so the window creates applications
+/// the same way the terminal and a phone do rather than a fourth similar way.
+/// Nothing is generated, built or run: this is the act of asking, and the
+/// application lands in the state the lifecycle calls *requested*.
+#[tauri::command]
+fn create(intent: String) -> Result<ApplicationSummary, Failure> {
+    let mut workspace = open()?;
+
+    let manifest = ephemeral_api::create(
+        &mut workspace,
+        &intent,
+        None,
+        ephemeral_core::retention::RetentionPolicy::default(),
+    )?;
+
+    Ok(ApplicationSummary::of(&manifest, workspace.ledger()))
 }
 
 /// The security record, newest first.
@@ -176,6 +197,7 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             applications,
+            create,
             application,
             activity,
             decide,

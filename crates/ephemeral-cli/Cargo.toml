@@ -14,6 +14,7 @@ name = "ephemeral"
 path = "src/main.rs"
 
 [dependencies]
+ephemeral-api.workspace = true
 ephemeral-core.workspace = true
 ephemeral-runtime.workspace = true
 ephemeral-agent.workspace = true

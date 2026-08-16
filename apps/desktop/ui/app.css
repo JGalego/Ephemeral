@@ -139,3 +139,51 @@ h3.waiting { color: var(--high); }
 
 /* The detail replaces the list rather than piling up under it. */
 #applications[hidden] { display: none; }
+#compose[hidden], #detail[hidden] { display: none; }
+
+/* The front door, so it reads as one. Until this existed the window could show
+   applications and answer their questions but not start one, which meant the
+   first thing anybody had to do with a graphical application was open a
+   terminal. */
+form.composer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 1.75rem;
+}
+
+form.composer label.ask {
+  font-weight: 600;
+}
+
+form.composer textarea.intent {
+  font: inherit;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--edge);
+  border-radius: 6px;
+  resize: vertical;
+  min-height: 3.2rem;
+}
+
+form.composer button.create {
+  font: inherit;
+  align-self: flex-start;
+  padding: 0.35rem 1.1rem;
+  border: 1px solid var(--edge);
+  border-radius: 6px;
+  background: white;
+  cursor: pointer;
+}
+
+/* Disabled while a creation is in flight, so it has to look disabled. */
+form.composer button.create:disabled {
+  color: var(--quiet);
+  cursor: progress;
+}
+
+/* Quiet, but present before somebody asks rather than after they have waited. */
+form.composer p.note {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--quiet);
+}

@@ -276,3 +276,45 @@ export function applicationDetail(detail) {
 export function problem(message) {
   return element('p', 'problem', message);
 }
+
+/** Where somebody says what they want.
+ *
+ * The front door. Until this existed the window could show applications and
+ * answer their questions but not start one, so the first thing anybody had to
+ * do with a graphical application was open a terminal.
+ *
+ * It is a `form` rather than a textarea and a button, because a form is what a
+ * keyboard already knows how to submit and what a screen reader already knows
+ * how to announce. Nothing here validates the intent: whether a sentence is
+ * enough to build from is Ephemeral's judgement, and a window that made that
+ * call separately would be making it differently.
+ */
+export function composer() {
+  const form = element('form', 'composer');
+  form.id = 'composer';
+
+  const label = element('label', 'ask', 'What do you want?');
+  label.setAttribute('for', 'intent');
+
+  const intent = element('textarea', 'intent');
+  intent.id = 'intent';
+  intent.name = 'intent';
+  intent.rows = 2;
+  intent.placeholder = 'compare these two CSV files and show me the differences';
+
+  const submit = element('button', 'create', 'Create');
+  submit.type = 'submit';
+
+  // Said before somebody asks, not after they have waited. An application
+  // starts as a description and nothing else — no code is written and nothing
+  // runs until it is generated, which is a separate act. A window that implied
+  // otherwise would leave a person watching for a build that was never started.
+  const note = element(
+    'p',
+    'note',
+    'This records what you want. Nothing is written or run until you generate it.',
+  );
+
+  form.append(label, intent, submit, note);
+  return form;
+}
