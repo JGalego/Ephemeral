@@ -65,6 +65,13 @@ crates/ephemeral-ffi/tests/c-abi.sh
 step "Ephemeral builds for the device"
 crates/ephemeral-ffi/tests/device-targets.sh
 
+# Android reaches that C ABI through JNI, and JNI is looked up by name at run
+# time: a symbol or a signature that has drifted compiles perfectly and fails on
+# a phone. A desktop JVM binds it the same way, so the bridge is driven here —
+# including the callback into Java that generation depends on.
+step "The JNI bridge Android loads"
+crates/ephemeral-android/tests/jni.sh
+
 step "Providers reach the network only through curl"
 if grep -rniE 'reqwest|hyper|ureq|tokio' crates/ephemeral-provider-anthropic/Cargo.toml; then
   echo "An HTTP stack appeared in a provider crate (ADR-0016)."

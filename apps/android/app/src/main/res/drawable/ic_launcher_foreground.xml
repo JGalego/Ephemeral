@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  One bubble's life, cut down to what survives at 48dp: the whole one, and two
+  smaller ones already leaving. The full drawing is docs/assets/logo.svg.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path
+        android:pathData="M26,56 a24,24 0 1,0 48,0 a24,24 0 1,0 -48,0 Z"
+        android:strokeColor="#c4b5fd"
+        android:strokeWidth="4" />
+
+    <path
+        android:pathData="M38,48 a10,10 0 0,1 8,-8"
+        android:strokeColor="#5eead4"
+        android:strokeWidth="3"
+        android:strokeLineCap="round" />
+
+    <path
+        android:pathData="M72,38 a8,8 0 1,0 16,0 a8,8 0 1,0 -16,0 Z"
+        android:strokeColor="#5eead4"
+        android:strokeWidth="3" />
+
+    <path
+        android:pathData="M78,68 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0 Z"
+        android:strokeColor="#f0abfc"
+        android:strokeWidth="2.5" />
+</vector>

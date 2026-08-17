@@ -13,7 +13,7 @@ honest record of where that line currently sits.
 | | |
 |---|---|
 | Repository, licence, contribution guide, security policy | ✅ |
-| [ARCHITECTURE.md](../ARCHITECTURE.md) and seventeen [ADRs](architecture/decisions/) | ✅ |
+| [ARCHITECTURE.md](../ARCHITECTURE.md) and eighteen [ADRs](architecture/decisions/) | ✅ |
 | CI: format, lint, docs, tests on Linux/macOS/Windows, supply chain | ✅ |
 | One-command development bootstrap | ✅ |
 | `ephemeral-core`: identity, actors, errors | ✅ |
@@ -159,7 +159,10 @@ are real work rather than a wiring job.
 | Signing and notarisation, which need credentials this repository must never hold | |
 | A C ABI for mobile, with the host supplying its own HTTPS transport ([ADR-0017](architecture/decisions/0017-mobile-generates-through-a-host-transport.md)) | ✅ |
 | iOS and Android libraries built and published, and checked against the header on every commit | ✅ |
-| The Swift and Kotlin shells, and builds on a device | |
+| The Kotlin shell: an Android application, and an `.apk` in the release | ✅ |
+| The JNI bridge driven from a real JVM on every commit, callback included | ✅ |
+| The Swift shell, and an iOS application | |
+| A run on a physical device, which no machine in CI is | |
 | Building and running on mobile, which needs the control plane in [ADR-0007](architecture/decisions/0007-mobile-control-plane.md) | |
 
 **Done when:** somebody can download and run Ephemeral on their own machine
@@ -182,9 +185,25 @@ afternoon; the seam then paid for itself immediately, since the provider's
 request building and error mapping had been untestable by construction and are
 now driven by fake transports in CI.
 
-What is left for mobile is a user interface, not a contract: the C ABI is
-compiled against from C on every commit, and the libraries are built for five
-device architectures and checked against the header.
+**Android has an application; iOS has a library.** The Kotlin shell exists, in
+[`apps/android`](../apps/android), and ships as an APK. It declares no
+dependencies at all — the engine is the only thing it needs, and HTTPS, JSON,
+the keystore and the widgets are already in the platform — which is why it
+carries no AndroidX and uses plain views.
+
+The bridge between Kotlin and the C ABI is JNI, and JNI resolves by name at run
+time: a symbol or signature that drifts compiles perfectly and fails on a phone.
+So `crates/ephemeral-android` is built for every target rather than only for
+Android, and `tests/jni.sh` loads it into an ordinary `java` process and drives
+it — including the callback into Java that generation depends on, a transport
+that refuses, and a transport that throws. Restricting that crate to Android
+would have made the one piece of code here that is easy to get wrong the one
+piece nothing could test without a phone.
+
+What that does **not** cover is the application's own screens. Nobody has run
+this on a device; there is no KVM in the container it was written in, so there
+was no emulator either. It is in exactly the position the desktop window was in
+before it was filmed, and it should be read that way.
 
 **Signing is the remaining gap, and it is not a small one.** Until these builds
 are signed, macOS refuses to open the application and Windows warns before

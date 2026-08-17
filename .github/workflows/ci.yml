@@ -155,6 +155,11 @@ jobs:
         env:
           # A check that quietly stops checking is worse than no check.
           EPHEMERAL_REQUIRE_SYMBOLS: 1
+      # Android reaches that C ABI through JNI, which is resolved by name at run
+      # time — so a drifted symbol or signature compiles and then fails on a
+      # phone. A desktop JVM binds it identically, and the runner has one.
+      - name: The JNI bridge Android loads
+        run: crates/ephemeral-android/tests/jni.sh
       - name: A real provider reaches the network only through curl
         run: |
           if grep -rniE 'reqwest|hyper|ureq|tokio' \

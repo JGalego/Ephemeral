@@ -64,6 +64,37 @@ SmartScreen will say "Windows protected your PC" and hide the Run button behind
 **More info** → **Run anyway**. That warning means Windows has never seen this
 publisher's signature, which is true: there is not one.
 
+## Android
+
+**`ephemeral-<version>.apk`** — the application, with the engine already in it.
+It runs on Android 8.0 and later, on all four ABIs.
+
+Android will not install an app at all unless it is signed, so this one is —
+but with a key generated for that release and then destroyed, because a signing
+key is a credential and does not live in the repository. Two consequences, both
+worth knowing before you tap install:
+
+- Your phone will ask you to allow installing unknown apps for whatever opened
+  the file — usually your browser or file manager. It is telling you it cannot
+  identify the developer, which is true.
+- **A new release will not install over an old one.** Android refuses an upgrade
+  whose signature changed, and every release's signature is different. Uninstall
+  the old one first — which takes its workspace with it, so treat anything you
+  care about as something to move to a desktop before upgrading.
+
+Both of these end when a real signing identity exists, in the same way the macOS
+and Windows warnings do.
+
+What it does on a phone is narrower than on a desktop, on purpose: it records
+what you want and generates it, writing real source to the device, and it does
+not build or run that source. Running generated code needs a sandbox, a phone
+has none a third-party app may use, and running it without one is the specific
+thing Ephemeral exists to prevent. The app says so on its first screen. See
+[mobile.md](mobile.md).
+
+To finish an application generated on a phone, generate it again on a machine
+that can build — the workspaces are the same shape.
+
 ## The command line
 
 Download the archive for your platform, unpack it, and put `ephemeral`

@@ -90,7 +90,7 @@ next one starts. See [the roadmap](docs/roadmap.md) for detail, and
 | 2 | Provider abstraction, generation agent, build/test/repair loop | 🚧 generate, repair and roll back all work; one hosted provider, no local one yet |
 | 3 | Meta-permissions, app permissions, permission UI, audit, sandboxing | 🚧 enforcement done, UI is the CLI |
 | 4 | Desktop application and dashboard | 🚧 ask, list, inspect and decide; generating and running are still terminal-only |
-| 5 | Windows, macOS, Linux, then mobile | 🚧 desktop three ship installers; mobile ships the engine, not yet an app |
+| 5 | Windows, macOS, Linux, then mobile | 🚧 the desktop three and Android ship installable builds; iOS ships the engine, not yet an app |
 | 6 | Threat model, security testing, supply chain, release automation | 🚧 [threat model](docs/security/threat-model.md) written |
 | 7 | Sharing, publishing, and shared sessions | 🚧 publish/install done |
 
@@ -152,11 +152,16 @@ cargo run -p ephemeral-cli -- states    # the whole lifecycle state machine
 
 Or install a build rather than making one:
 [the releases page](https://github.com/JGalego/Ephemeral/releases) carries
-`.deb`, `.rpm` and AppImage for Linux, a universal `.dmg` for macOS, and both
-installers for Windows, alongside CLI archives for six targets. They are
-**unsigned**, so macOS and Windows will warn you they cannot tell who built
-them — [docs/install.md](docs/install.md) says exactly what you will see and
-what to do about it.
+`.deb`, `.rpm` and AppImage for Linux, a universal `.dmg` for macOS, both
+installers for Windows, and an `.apk` for Android, alongside CLI archives for
+six targets. None of them is signed by a known identity, so every platform will
+say so in its own way — macOS and Windows warn, and Android refuses to upgrade
+one release over another. [docs/install.md](docs/install.md) says exactly what
+you will see and what to do about it.
+
+The Android app records and generates; it does not build or run what it
+generated, because a phone has no sandbox to run it in. That limit is on its
+first screen, and the reasoning is in [docs/mobile.md](docs/mobile.md).
 
 See [docs/development.md](docs/development.md) for the full development guide.
 

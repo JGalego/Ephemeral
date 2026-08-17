@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Ephemeral</string>
+
+    <string name="intent_hint">What do you need?</string>
+    <string name="create">Create</string>
+    <string name="nothing_yet">Nothing here yet.\n\nDescribe what you need below. Ephemeral records it — nothing is written or run until you generate it.</string>
+
+    <!--
+      Said on the first screen rather than buried in an about box. Somebody who
+      taps "generate" and is left waiting for a build that will never happen has
+      been misled by this app, not by the engine.
+    -->
+    <string name="phone_limits">Generating writes the source to this phone. Building and running it needs a sandbox a phone does not have, so that part happens on a computer.</string>
+
+    <string name="generate">Generate</string>
+    <string name="generate_again">Generate again</string>
+    <!-- Attributed on purpose: the reason was written by whatever asked for the
+         permission, and it is the only part a person cannot check. -->
+    <string name="it_says">It says: %1$s</string>
+    <string name="risk">Risk: %1$s</string>
+    <string name="generating">Planning and writing it. This can take a minute.</string>
+    <string name="needs_credential">Add a model key first — menu, then \"Model key\".</string>
+
+    <string name="credential_title">Model key</string>
+    <string name="credential_hint">sk-ant-…</string>
+    <string name="credential_explains">Kept in this phone\'s keystore, sent only to the model provider, and never written to Ephemeral\'s files or its log.</string>
+    <string name="credential_saved">Key saved.</string>
+    <string name="credential_forget">Forget</string>
+    <string name="credential_forgotten">Key forgotten.</string>
+    <string name="save">Save</string>
+    <string name="cancel">Cancel</string>
+
+    <string name="allow">Allow</string>
+    <string name="refuse">Refuse</string>
+    <string name="wants_nothing">This can see nothing of yours.</string>
+    <string name="asked_for">What it has asked for</string>
+    <string name="allowed_to">What it may do</string>
+    <string name="versions">Versions</string>
+    <string name="retention">Kept</string>
+</resources>

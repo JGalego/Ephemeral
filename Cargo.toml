@@ -8,6 +8,7 @@ members = [
     "crates/ephemeral-api",
     "crates/ephemeral-cli",
     "crates/ephemeral-ffi",
+    "crates/ephemeral-android",
 ]
 
 # The desktop window is its own workspace. Tauri brings a large native

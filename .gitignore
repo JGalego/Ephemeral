@@ -51,3 +51,13 @@ apps/desktop/src-tauri/gen/
 # the tree ages into a picture of a bug somebody already fixed, and it looks
 # exactly as current as the code next to it.
 apps/desktop/recordings/
+
+# Android. The engine's .so files are built by apps/android/build-native.sh from
+# the Rust in this repository; a compiled library committed next to its own
+# source ages into something that looks current and is not.
+apps/android/app/src/main/jniLibs/
+apps/android/.gradle/
+apps/android/build/
+apps/android/app/build/
+# Written by Android Studio and holds a machine-specific SDK path.
+apps/android/local.properties

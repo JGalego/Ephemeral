@@ -1,10 +1,20 @@
 # Ephemeral on a phone
 
-Ephemeral's engine runs on iOS and Android. What is published for mobile is that
-engine — a static library and a C header — not an application. There is nothing
-here to install on a phone; there is something here to build one with.
+Ephemeral's engine runs on iOS and Android.
 
-This page is for whoever writes that application.
+**On Android there is an application.** It is built from
+[`apps/android`](../apps/android), it ships as an APK on the
+[releases page](https://github.com/JGalego/Ephemeral/releases), and its own
+README covers installing and building it. Read that first if you want to *use*
+Ephemeral on a phone.
+
+**On iOS there is not, yet.** What is published there is the engine — a static
+library and a C header — and there is something to build an application with
+rather than something to install.
+
+This page is for whoever writes that application, on either platform. It
+describes the boundary both sides use; the Android app is one implementation of
+it, and a readable example of what the rest of this page is asking for.
 
 ## What it does on a device, and what it does not
 
@@ -34,6 +44,11 @@ The reasoning is in
 |---|---|---|
 | iOS | `Ephemeral-<version>-ios.xcframework.zip` | Device and simulator slices, `ephemeral.h`, and a module map |
 | Android | `ephemeral-<version>-android.tar.gz` | `jniLibs/{arm64-v8a,armeabi-v7a,x86_64,x86}/libephemeral_ffi.a` and `include/ephemeral.h` |
+| Android | `ephemeral-<version>.apk` | The application, with the engine already in it |
+
+The APK is for installing. The tarball is for building something else with — it
+carries the C ABI, not the JNI bridge, so a Kotlin caller wanting the shortcut
+should look at `crates/ephemeral-android` instead.
 
 Both are on the [releases page](https://github.com/JGalego/Ephemeral/releases).
 `ephemeral.h` is the specification: it documents ownership, threading and the

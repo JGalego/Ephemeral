@@ -470,9 +470,114 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+  android-app:
+    name: Android application
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add aarch64-linux-android armv7-linux-androideabi \
+            x86_64-linux-android i686-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android-app
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.14.3"
+
+      # Pinned rather than "whatever the runner ships". The NDK decides which
+      # libc symbols the engine links against, so a silent bump is a silent
+      # change to which devices the application still starts on.
+      - name: Install the NDK
+        run: |
+          sdkmanager --install "ndk;26.3.11579264" \
+            "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Build the engine
+        run: |
+          set -euo pipefail
+          export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/26.3.11579264"
+          apps/android/build-native.sh
+
+      # A signing key is a credential, and SECURITY.md says those do not live in
+      # this repository. Until a real one lives in repository secrets, the
+      # release is signed with a key generated here and destroyed with the
+      # runner. The APK installs; it will not upgrade over an earlier release,
+      # because Android refuses an upgrade whose signature changed. This is the
+      # Android equivalent of the unsigned .dmg, and it ends the same way.
+      - name: Build the application
+        run: |
+          set -euo pipefail
+          password="$(openssl rand -base64 32)"
+          echo "::add-mask::$password"
+          keystore="$RUNNER_TEMP/release.jks"
+
+          keytool -genkeypair -keystore "$keystore" -alias ephemeral \
+            -keyalg RSA -keysize 4096 -validity 10000 \
+            -storepass "$password" -keypass "$password" \
+            -dname "CN=Ephemeral, O=Ephemeral" >/dev/null
+
+          version="${GITHUB_REF_NAME#v}"
+          [ "${GITHUB_REF_TYPE:-}" = "tag" ] || version="$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)"
+
+          EPHEMERAL_VERSION="$version" \
+          EPHEMERAL_ANDROID_KEYSTORE="$keystore" \
+          EPHEMERAL_ANDROID_KEYSTORE_PASSWORD="$password" \
+          EPHEMERAL_ANDROID_KEY_ALIAS=ephemeral \
+          EPHEMERAL_ANDROID_KEY_PASSWORD="$password" \
+            gradle --no-daemon -p apps/android assembleRelease
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          [ "${GITHUB_REF_TYPE:-}" = "tag" ] || version="$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)"
+
+          mkdir -p dist
+          cp apps/android/app/build/outputs/apk/release/app-release.apk \
+             "dist/ephemeral-${version}.apk"
+
+          # Refuse to ship an APK that cannot load its own engine. An APK is a
+          # zip, and one that quietly lost an ABI installs perfectly and then
+          # dies on `System.loadLibrary` — on somebody else's phone.
+          for abi in arm64-v8a armeabi-v7a x86_64 x86; do
+            unzip -l "dist/ephemeral-${version}.apk" \
+              | grep -q "lib/$abi/libephemeral_android.so" \
+              || { echo "no engine for $abi in the APK" >&2; exit 1; }
+            echo "  $abi"
+          done
+
+          # The signing certificate's fingerprint. Not a secret, and with a
+          # per-release key it is the only way to see that this release and the
+          # last one were signed by different keys — which they were.
+          "$ANDROID_SDK_ROOT/build-tools/34.0.0/apksigner" verify --print-certs \
+            "dist/ephemeral-${version}.apk" | tee dist/ANDROID-SIGNING.txt
+
+      - name: Checksums
+        run: |
+          cd dist && sha256sum * > SHA256SUMS-android-app.txt
+          cat SHA256SUMS-android-app.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-app
+          path: dist/
+          if-no-files-found: error
+
   publish:
     name: Publish
-    needs: [cli, desktop, mobile-apple, mobile-android]
+    needs: [cli, desktop, mobile-apple, mobile-android, android-app]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     steps:

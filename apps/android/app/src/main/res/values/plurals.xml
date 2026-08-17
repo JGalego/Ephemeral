@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <plurals name="awaiting">
+        <item quantity="one">%d question waiting</item>
+        <item quantity="other">%d questions waiting</item>
+    </plurals>
+
+    <plurals name="granted">
+        <item quantity="one">%d permission granted</item>
+        <item quantity="other">%d permissions granted</item>
+    </plurals>
+</resources>
