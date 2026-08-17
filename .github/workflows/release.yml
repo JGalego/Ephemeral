@@ -501,7 +501,22 @@ jobs:
       # change to which devices the application still starts on.
       - name: Install the NDK
         run: |
-          sdkmanager --install "ndk;26.3.11579264" \
+          set -euo pipefail
+          sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          [ -n "$sdk" ] || { echo "::error::No Android SDK on this runner."; exit 1; }
+
+          # `sdkmanager` is not on PATH on the hosted runners — it lives under
+          # the SDK, in a directory whose name has changed before. Found rather
+          # than assumed, and the failure says so instead of "command not found".
+          manager="$(find "$sdk/cmdline-tools" -name sdkmanager -type f 2>/dev/null | head -n1)"
+          [ -x "$manager" ] || { echo "::error::No sdkmanager under $sdk."; exit 1; }
+
+          # Separately, and allowed to fail: the runner pre-accepts these, and
+          # `yes |` in front of the install would take the pipeline down with
+          # SIGPIPE the moment sdkmanager stopped reading.
+          yes 2>/dev/null | "$manager" --licenses >/dev/null 2>&1 || true
+
+          "$manager" --install "ndk;26.3.11579264" \
             "platforms;android-34" "build-tools;34.0.0"
 
       - name: Build the engine
