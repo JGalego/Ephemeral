@@ -1,3 +1,11 @@
+> **This is a pre-release.** Ephemeral is mid-Phase 2 of seven, nothing here is
+> signed by a known identity, and the Android application has never been run on
+> a physical device. [The roadmap](https://github.com/JGalego/Ephemeral/blob/main/docs/roadmap.md)
+> says which phases are finished and which are not, and
+> [the threat model](https://github.com/JGalego/Ephemeral/blob/main/docs/security/threat-model.md)
+> says what Ephemeral does not defend against. Both are worth reading before you
+> point this at anything you care about.
+
 ## Installing
 
 | You want | Download |

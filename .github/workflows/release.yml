@@ -603,8 +603,18 @@ jobs:
         with:
           files: release/*
           generate_release_notes: true
-          # Every release is a draft until somebody looks at it. Publishing
-          # automatically would mean the first person to see a broken artifact
-          # is whoever downloaded it.
-          draft: true
+          # Marked a pre-release, and published rather than drafted.
+          #
+          # The draft gate existed so the first person to see a broken artifact
+          # would not be whoever downloaded it. `workflow_dispatch` does that
+          # job better and earlier: it builds every artifact and publishes
+          # nothing, so the pipeline is proved before a tag exists rather than
+          # after one has been cut. Run it before tagging.
+          #
+          # `prerelease` carries the rest of the warning, and it is the honest
+          # label for what this is: unsigned on every platform, an Android
+          # application nobody has installed on a physical device, and phases
+          # the roadmap openly lists as unfinished.
+          prerelease: true
+          draft: false
           body_path: .github/RELEASE_BODY.md
