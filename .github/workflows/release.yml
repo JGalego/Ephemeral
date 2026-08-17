@@ -138,7 +138,7 @@ jobs:
           fi
           cat "SHA256SUMS-cli-${{ matrix.target }}.txt"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: cli-${{ matrix.target }}
           path: dist/
@@ -301,7 +301,7 @@ jobs:
           fi
           cat "SHA256SUMS-desktop-${{ matrix.name }}.txt"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: desktop-${{ matrix.name }}
           path: dist/
@@ -398,7 +398,7 @@ jobs:
           cd dist && shasum -a 256 * > SHA256SUMS-mobile-apple.txt
           cat SHA256SUMS-mobile-apple.txt
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: mobile-apple
           path: dist/
@@ -464,7 +464,7 @@ jobs:
           cd dist && sha256sum * > SHA256SUMS-mobile-android.txt
           cat SHA256SUMS-mobile-android.txt
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: mobile-android
           path: dist/
@@ -569,7 +569,7 @@ jobs:
           cd dist && sha256sum * > SHA256SUMS-android-app.txt
           cat SHA256SUMS-android-app.txt
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: android-app
           path: dist/
