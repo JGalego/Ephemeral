@@ -6,25 +6,31 @@
 | The window, on macOS | `.dmg` — one file, both Apple and Intel machines |
 | The window, on Windows | `-setup.exe` to double-click, or `.msi` to deploy |
 | The command line | `ephemeral-<version>-<target>.tar.gz`, or `.zip` on Windows |
+| Ephemeral on an Android phone | `ephemeral-<version>.apk` |
 | To build a phone app on it | `Ephemeral-<version>-ios.xcframework.zip`, or `ephemeral-<version>-android.tar.gz` |
 
 Full instructions, including how to put `ephemeral` on your `PATH`, are in
 [docs/install.md](https://github.com/JGalego/Ephemeral/blob/main/docs/install.md).
 
-## There is no phone app yet
+## On a phone
 
-The two mobile downloads are the engine, not an application: a static library
-and a C header, for somebody writing the Swift or Kotlin shell around them.
-There is nothing here to install on a phone.
+**Android has an application** — `ephemeral-<version>.apk`, Android 8.0 and
+later. **iOS does not yet**: its download is the engine, a static library and a
+C header, for somebody writing the Swift shell around it. The
+`ephemeral-<version>-android.tar.gz` is the same thing for anyone building
+their own Android app rather than installing this one.
 
-What the library does on a device is **generate** — a sentence becomes an
-application, its source written to the phone, using the app's own HTTPS client
-and a credential from Keychain or Keystore. What it deliberately does not do is
-build or run that application: that needs a sandbox no phone has, and running
-generated code outside one is the thing Ephemeral exists to prevent. The
+What Ephemeral does on a phone is narrower than on a desktop, on purpose. It
+**generates**: a sentence becomes an application, its source written to the
+phone, using the app's own HTTPS client and a credential from Keychain or
+Keystore. It deliberately does **not** build or run that application — that
+needs a sandbox no phone has, and running generated code outside one is the
+thing Ephemeral exists to prevent. The app says so on its first screen. The
 reasoning is in
-[ADR-0017](https://github.com/JGalego/Ephemeral/blob/main/docs/architecture/decisions/0017-mobile-generates-through-a-host-transport.md),
-and the contract is documented in the header itself.
+[ADR-0017](https://github.com/JGalego/Ephemeral/blob/main/docs/architecture/decisions/0017-mobile-generates-through-a-host-transport.md).
+
+Nobody has run the Android app on a physical device. Its bridge to the engine
+is tested on every commit; its screens have been seen by no one.
 
 ## These builds are not signed
 
@@ -38,6 +44,13 @@ that your operating system will treat it as software from nobody:
 - **Windows** SmartScreen will warn you before running the installer. **More
   info** → **Run anyway**.
 - **Linux** does not check, so it will simply install.
+- **Android** refuses to install anything unsigned at all, so the APK *is*
+  signed — with a key generated for this release and then destroyed, because a
+  signing key is a credential and does not live in the repository. Your phone
+  will still ask you to permit installing unknown apps, and **this release will
+  not install over an earlier one**: Android rejects an upgrade whose signature
+  changed, and every release's differs. Uninstall the old one first, which
+  takes its workspace with it.
 
 Do not wave those warnings away because a README told you to. They are the
 operating system correctly reporting that it cannot tell who built this file.
