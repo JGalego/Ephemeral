@@ -266,6 +266,7 @@ dependencies = [
  "ephemeral-agent",
  "ephemeral-api",
  "ephemeral-core",
+ "ephemeral-engine",
  "ephemeral-provider-anthropic",
  "ephemeral-provider-local",
  "ephemeral-provider-openai",
@@ -287,6 +288,23 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "uuid",
+]
+
+[[package]]
+name = "ephemeral-engine"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "ephemeral-agent",
+ "ephemeral-api",
+ "ephemeral-core",
+ "ephemeral-provider-anthropic",
+ "ephemeral-provider-local",
+ "ephemeral-provider-openai",
+ "ephemeral-runtime",
+ "serde",
+ "tempfile",
 ]
 
 [[package]]

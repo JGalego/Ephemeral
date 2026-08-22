@@ -93,6 +93,22 @@ pub(crate) fn risk(level: RiskLevel) -> String {
     }
 }
 
+/// The same, for a risk that arrives from the shared layers as a name.
+///
+/// A view carries the risk as the string the core calls it, because a client
+/// that mapped a level to its own vocabulary would eventually disagree with the
+/// one next to it. Anything unrecognised is drawn plainly rather than as a
+/// reassuring colour — the one case where guessing is worst.
+pub(crate) fn risk_named(level: &str) -> String {
+    match level {
+        "low" => paint("32", "low"),
+        "medium" => paint("33", "medium"),
+        "high" => paint("1;33", "HIGH"),
+        "critical" => paint("1;31", "CRITICAL"),
+        other => other.to_owned(),
+    }
+}
+
 /// A bullet with a status mark, used by `doctor`.
 pub(crate) fn check(ok: Option<bool>, text: &str) -> String {
     let mark = match ok {

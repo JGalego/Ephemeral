@@ -15,7 +15,7 @@ you're done.
 [![CI](https://github.com/JGalego/Ephemeral/actions/workflows/ci.yml/badge.svg)](https://github.com/JGalego/Ephemeral/actions/workflows/ci.yml)
 [![Licence](https://img.shields.io/badge/licence-Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-dea584.svg?logo=rust&logoColor=white)](rust-toolchain.toml)
-[![Status](https://img.shields.io/badge/status-phase%202%20·%20generation-f0abfc.svg)](docs/roadmap.md)
+[![Status](https://img.shields.io/badge/status-phase%203%20·%20permissions%20enforced-a3e635.svg)](docs/roadmap.md)
 [![Platforms](https://img.shields.io/badge/platforms-macOS%20·%20Windows%20·%20Linux%20·%20iOS%20·%20Android-8ab4f8.svg)](ARCHITECTURE.md)
 
 </div>
@@ -73,11 +73,24 @@ not a reason to trust it.
 
 ## Status
 
-**Phase 2 — Generation.** An application can now be described, written, built,
-tested and run without anybody touching its code. The sandbox from Phase 1 is
-what it runs in: a granted scope becomes a mount, an inbound port becomes a
-loopback binding, and an application with an empty ledger gets a container that
-can see nothing of yours.
+**Phases 0–3 are done.** An application can be described, written, built, tested
+and run without anybody touching its code, and what it may do is enforced rather
+than described.
+
+Generation was not called finished until somebody watched it happen: a sentence
+into a real `docker build`, an image out, the application running in the sandbox
+and printing the right answer — with the mock provider and with a real model,
+which wrote a working application and passed its own tests first time. What was
+[actually run](docs/roadmap.md#not-a-claim-this-time-it-was-run) is written down,
+including the two bugs it found.
+
+Permissions are now consulted by the things that act. A capability needs both
+halves — the application allowed to have it, and Ephemeral allowed to carry it
+out — so one revocation of Ephemeral's authority empties every sandbox at once,
+and anything running on what was just taken back is stopped rather than keeping
+it. [Every promise is mapped to the code that enforces
+it](docs/security/enforcement.md), which is a claim you can check rather than
+take.
 
 Ephemeral is built in phases, and each phase must demonstrably work before the
 next one starts. See [the roadmap](docs/roadmap.md) for detail, and

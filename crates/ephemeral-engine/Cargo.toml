@@ -1,6 +1,6 @@
 [package]
-name = "ephemeral-cli"
-description = "The Ephemeral command line: the same domain model the desktop application uses, driven from a terminal."
+name = "ephemeral-engine"
+description = "The Ephemeral operations that need this machine: generating with a model provider, and running applications in a container runtime."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,28 +9,20 @@ repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
 
-[[bin]]
-name = "ephemeral"
-path = "src/main.rs"
-
 [dependencies]
-ephemeral-api.workspace = true
 ephemeral-core.workspace = true
 ephemeral-runtime.workspace = true
 ephemeral-agent.workspace = true
-ephemeral-engine.workspace = true
-serde_norway.workspace = true
+ephemeral-api.workspace = true
 ephemeral-provider-anthropic.workspace = true
-# The wire format's `curl` transport, which the root manifest leaves off so the
-# local provider can borrow the format without it.
 ephemeral-provider-openai = { workspace = true, features = ["curl"] }
 ephemeral-provider-local.workspace = true
 
 anyhow.workspace = true
-chrono.workspace = true
-clap.workspace = true
+serde.workspace = true
 
 [dev-dependencies]
+chrono.workspace = true
 tempfile.workspace = true
 
 [lints]

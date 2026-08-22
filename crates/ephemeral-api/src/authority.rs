@@ -120,6 +120,127 @@ pub fn grant_argument(permission: &MetaPermission) -> Option<String> {
     Some(written)
 }
 
+/// The authorities a client may offer to grant, in the order they are met.
+///
+/// Deliberately short, and deliberately not "every meta-permission". These are
+/// the three a person hits by using the product — building and running needs a
+/// container runtime, generating with a hosted model needs the network and a
+/// credential — and each is a single yes-or-no with no path to get wrong.
+///
+/// The scoped ones (`read:~/Downloads/**`) are absent on purpose: granting one
+/// means choosing a region of the filesystem, and a client that composed a path
+/// from a text field would be a client that can grant Ephemeral something
+/// nobody typed. Those are granted from the terminal, where the path is the
+/// argument; a client can still take back one that is held, because taking back
+/// is matched against what is already there.
+pub const OFFERED: [MetaPermission; 3] = [RUNTIME, HOSTED_PROVIDER, CREDENTIAL];
+
+/// One thing Ephemeral may or may not do, as a client shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthorityView {
+    /// The stable name, which is also how it is written on a command line.
+    pub capability: String,
+
+    /// What it means, completing "Ephemeral may …".
+    pub wants: String,
+
+    /// What allowing it lets Ephemeral do.
+    pub if_allowed: String,
+
+    /// Whether it is currently allowed.
+    pub granted: bool,
+
+    /// How emphatically to ask.
+    pub risk: String,
+
+    /// Whether granting it should take more than a single click.
+    ///
+    /// This is Ephemeral's own authority rather than one application's, so it
+    /// outlives every application and covers all of them at once. A client that
+    /// asked for it as casually as it asks about one folder would be teaching
+    /// the wrong reflex.
+    pub needs_explicit_confirmation: bool,
+
+    /// Whether a client may offer to grant this one.
+    ///
+    /// False for something held that a client cannot compose — it can still be
+    /// taken back, because taking back names what is already there.
+    pub grantable: bool,
+}
+
+/// Everything Ephemeral holds, and the operational authorities it does not.
+///
+/// Both halves in one list, because "what may Ephemeral do" is a question with
+/// a complete answer, and a screen that showed only what was granted would
+/// leave somebody wondering why nothing happens.
+#[must_use]
+pub fn overview(ledger: &PermissionLedger) -> Vec<AuthorityView> {
+    let mut seen: Vec<MetaPermission> = Vec::new();
+
+    for grant in ledger.active_grants(&ephemeral_core::Principal::Ephemeral) {
+        if let Permission::Meta(permission) = &grant.permission
+            && grant.decision.is_allowed()
+            && !seen.contains(permission)
+        {
+            seen.push(permission.clone());
+        }
+    }
+
+    let held: Vec<AuthorityView> = seen
+        .iter()
+        .map(|permission| view(permission, true))
+        .collect();
+    let missing: Vec<AuthorityView> = OFFERED
+        .iter()
+        .filter(|permission| !seen.contains(permission))
+        .map(|permission| view(permission, false))
+        .collect();
+
+    [held, missing].concat()
+}
+
+/// One authority, as a client shows it.
+fn view(permission: &MetaPermission, granted: bool) -> AuthorityView {
+    AuthorityView {
+        capability: grant_argument(permission)
+            .unwrap_or_else(|| permission.capability().to_owned()),
+        wants: permission.describe(),
+        if_allowed: permission.consequences(),
+        granted,
+        risk: permission.risk().as_str().to_owned(),
+        // Every one of these is Ephemeral-wide and outlives any application, so
+        // none of them is a single click.
+        needs_explicit_confirmation: true,
+        grantable: OFFERED.contains(permission),
+    }
+}
+
+/// The authority a client named, if it is one a client may name.
+///
+/// Matched against a fixed list and against what is already held, never
+/// composed from what was sent: a client that could build a permission out of a
+/// string would be a client that can grant Ephemeral something nobody chose.
+/// `allow` decides which of the two sets is searched — anything held may be
+/// taken back, and only the offered three may be granted.
+#[must_use]
+pub fn named(ledger: &PermissionLedger, capability: &str, allow: bool) -> Option<MetaPermission> {
+    if allow {
+        return OFFERED
+            .iter()
+            .find(|permission| grant_argument(permission).as_deref() == Some(capability))
+            .cloned();
+    }
+
+    ledger
+        .active_grants(&ephemeral_core::Principal::Ephemeral)
+        .into_iter()
+        .filter_map(|grant| match &grant.permission {
+            Permission::Meta(permission) => Some(permission.clone()),
+            Permission::App(_) => None,
+        })
+        .find(|permission| grant_argument(permission).as_deref() == Some(capability))
+}
+
 /// One capability an application holds, and whether it can actually be used.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Held {

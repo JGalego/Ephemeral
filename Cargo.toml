@@ -8,6 +8,7 @@ members = [
     "crates/ephemeral-provider-openai",
     "crates/ephemeral-provider-local",
     "crates/ephemeral-api",
+    "crates/ephemeral-engine",
     "crates/ephemeral-cli",
     "crates/ephemeral-ffi",
     "crates/ephemeral-android",
@@ -39,6 +40,7 @@ ephemeral-provider-anthropic = { path = "crates/ephemeral-provider-anthropic", v
 ephemeral-provider-openai = { path = "crates/ephemeral-provider-openai", version = "0.1.0", default-features = false }
 ephemeral-provider-local = { path = "crates/ephemeral-provider-local", version = "0.1.0" }
 ephemeral-api = { path = "crates/ephemeral-api", version = "0.1.0" }
+ephemeral-engine = { path = "crates/ephemeral-engine", version = "0.1.0" }
 ephemeral-ffi = { path = "crates/ephemeral-ffi", version = "0.1.0" }
 
 anyhow = "1.0.104"
