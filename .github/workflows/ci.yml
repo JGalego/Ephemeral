@@ -133,14 +133,18 @@ jobs:
           fi
           echo "No network client in the agent crate."
       - run: cargo test -p ephemeral-provider-anthropic
+      - run: cargo test -p ephemeral-provider-openai
+      - run: cargo test -p ephemeral-provider-local
       # Generating is an HTTPS request; iOS cannot spawn a process. A provider
       # whose only transport is `curl` silently decides that Ephemeral cannot
       # generate on a phone, so the crate must build with no subprocess at all
       # (ADR-0007). This is the check that keeps mobile generation possible.
       - name: Generation is portable off the desktop
         run: |
-          cargo build -p ephemeral-provider-anthropic --no-default-features
-          cargo test -p ephemeral-provider-anthropic --no-default-features
+          for provider in anthropic openai local; do
+            cargo build -p "ephemeral-provider-$provider" --no-default-features
+            cargo test -p "ephemeral-provider-$provider" --no-default-features
+          done
       # Swift and Kotlin both reach Ephemeral through C. Compiling a host
       # against the real header and static library is the only check that
       # catches a declaration drifting from its export.
@@ -163,7 +167,7 @@ jobs:
       - name: A real provider reaches the network only through curl
         run: |
           if grep -rniE 'reqwest|hyper|ureq|tokio' \
-               crates/ephemeral-provider-anthropic/Cargo.toml; then
+               crates/ephemeral-provider-*/Cargo.toml; then
             echo "An HTTP stack appeared in a provider crate (ADR-0016)."
             exit 1
           fi
@@ -182,6 +186,19 @@ jobs:
           fi
           cargo build -p ephemeral-agent --no-default-features
           echo "Provider transport is confined to curl, in one module."
+      # `local` is a promise about where a request goes (ADR-0019). Which URLs
+      # it accepts is tested in the crate, against the ones built to defeat it —
+      # a loopback address as userinfo, as a subdomain, as a label. What a test
+      # inside the crate cannot make obvious is the default, which is what
+      # somebody who configures nothing gets.
+      - name: The local provider's default endpoint is loopback
+        run: |
+          if ! grep -qE '^pub const BASE_URL: &str = "http://(127\.0\.0\.1|\[::1\]|localhost)' \
+                 crates/ephemeral-provider-local/src/lib.rs; then
+            echo "The local provider's default endpoint is not on this machine."
+            exit 1
+          fi
+          echo "The local provider defaults to loopback."
 
   # The desktop window renders the permission prompt, and a UI that can only be
   # exercised by opening a window is a UI nobody tests. Its rendering is pure

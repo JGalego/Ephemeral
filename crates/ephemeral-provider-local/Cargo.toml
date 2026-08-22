@@ -1,0 +1,29 @@
+[package]
+name = "ephemeral-provider-local"
+description = "Ephemeral's local provider: an OpenAI-compatible model server on this machine, and nowhere else."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+[features]
+# The desktop transport, as everywhere else. A local model is reached over
+# loopback rather than the internet, but it is still an HTTP request, and iOS
+# still forbids spawning the process that would make it (ADR-0016).
+default = ["curl"]
+curl = ["ephemeral-agent/curl"]
+
+[dependencies]
+ephemeral-agent.workspace = true
+# The wire format, not a second copy of it: a model server on this machine
+# speaks OpenAI's chat completions API, because they all do (ADR-0019). What
+# this crate adds is where the request may go, which is the whole point of it.
+ephemeral-provider-openai.workspace = true
+
+serde_json.workspace = true
+
+[lints]
+workspace = true

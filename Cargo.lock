@@ -267,6 +267,8 @@ dependencies = [
  "ephemeral-api",
  "ephemeral-core",
  "ephemeral-provider-anthropic",
+ "ephemeral-provider-local",
+ "ephemeral-provider-openai",
  "ephemeral-runtime",
  "serde_norway",
  "tempfile",
@@ -302,6 +304,25 @@ dependencies = [
 
 [[package]]
 name = "ephemeral-provider-anthropic"
+version = "0.1.0"
+dependencies = [
+ "ephemeral-agent",
+ "ephemeral-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "ephemeral-provider-local"
+version = "0.1.0"
+dependencies = [
+ "ephemeral-agent",
+ "ephemeral-provider-openai",
+ "serde_json",
+]
+
+[[package]]
+name = "ephemeral-provider-openai"
 version = "0.1.0"
 dependencies = [
  "ephemeral-agent",

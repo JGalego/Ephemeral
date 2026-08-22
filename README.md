@@ -87,7 +87,7 @@ next one starts. See [the roadmap](docs/roadmap.md) for detail, and
 |-------|-------|--------|
 | 0 | Repo, docs, architecture, CI, app model, state machine | ✅ done |
 | 1 | Docker runtime, sandbox, run/stop/watch, logs, cleanup | ✅ done |
-| 2 | Provider abstraction, generation agent, build/test/repair loop | 🚧 generate, repair and roll back all work; one hosted provider, no local one yet |
+| 2 | Provider abstraction, generation agent, build/test/repair loop | 🚧 generate, repair and roll back all work; hosted providers and a local one |
 | 3 | Meta-permissions, app permissions, permission UI, audit, sandboxing | 🚧 enforcement done, UI is the CLI |
 | 4 | Desktop application and dashboard | 🚧 ask, list, inspect and decide; generating and running are still terminal-only |
 | 5 | Windows, macOS, Linux, then mobile | 🚧 the desktop three and Android ship installable builds; iOS ships the engine, not yet an app |
@@ -103,7 +103,8 @@ delete or purge it.
 ```console
 $ ephemeral create "compare these two CSV files and show me what's different"
 $ ephemeral generate <app>          # plan, write, build, test — bounded and cancellable
-                                    # --provider mock (no credential) or anthropic
+                                    # --provider mock (no credential), local (nothing
+                                    # leaves the machine), anthropic or openai
 $ ephemeral review <app>            # decide what it may do, one question at a time
 $ ephemeral run <app> -- /data/left.csv /data/right.csv
 $ ephemeral rollback <app> <digest> # back to a version that worked
@@ -113,12 +114,16 @@ $ ephemeral publish <app> ./my-app  # an ordinary directory; git init and push
 No Docker daemon? `EPHEMERAL_CONTAINER_COMMAND=podman` runs the whole thing
 without one.
 
+Not willing to send what you asked for to a company? `--provider local`
+generates against a model server on this machine — Ollama by default, or
+llama.cpp, LM Studio or vLLM — and refuses any endpoint that is not a loopback
+address. It is the only real answer to "my intent leaves the machine"; a model
+small enough to run on a laptop is also likelier to return something Ephemeral
+refuses to act on, and that trade is yours to make. `--provider mock` produces a
+genuine working CSV comparator with no model at all.
+
 **What you cannot do yet.**
 
-- **Run a model locally.** `--provider anthropic` works with an
-  `ANTHROPIC_API_KEY`, and `--provider mock` produces a genuine working CSV
-  comparator with no credential at all. What does not exist is an offline
-  provider, which is the only real answer to "my intent leaves the machine".
 - **Trust the desktop window yet.** It exists, compiles, and its rendering is
   tested in a headless browser — but nobody has ever looked at it, and a UI
   nobody has seen has problems no test finds.

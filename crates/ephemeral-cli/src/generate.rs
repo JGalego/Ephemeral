@@ -487,11 +487,17 @@ fn provider(name: &str) -> Result<Box<dyn AgentProvider>> {
         "anthropic" => Ok(Box::new(
             ephemeral_provider_anthropic::AnthropicProvider::new(),
         )),
+        "openai" => Ok(Box::new(ephemeral_provider_openai::OpenAiProvider::new())),
+        "local" => Ok(Box::new(ephemeral_provider_local::LocalProvider::new())),
         other => bail!(
             "there is no provider called {other}. `mock` produces a fixed example \
-             application without a credential, a network connection or a bill; `anthropic` \
-             uses a hosted model and needs {}.",
-            ephemeral_provider_anthropic::API_KEY_VARIABLE
+             application without a credential, a network connection or a bill; `local` \
+             uses a model on this machine, so the intent does not leave it; `anthropic` \
+             needs {}, and `openai` needs {} — or {} pointed at anything that speaks the \
+             same format.",
+            ephemeral_provider_anthropic::API_KEY_VARIABLE,
+            ephemeral_provider_openai::API_KEY_VARIABLE,
+            ephemeral_provider_openai::BASE_URL_VARIABLE
         ),
     }
 }
@@ -935,18 +941,33 @@ mod tests {
     #[test]
     fn an_unknown_provider_says_what_does_exist() {
         assert!(provider("mock").is_ok(), "the mock provider should exist");
-        assert!(
-            provider("anthropic").is_ok(),
-            "a real provider should be constructible even without a credential — \
-             the missing key is reported by `availability`, not by construction"
-        );
+
+        for real in ["anthropic", "openai", "local"] {
+            assert!(
+                provider(real).is_ok(),
+                "a real provider should be constructible even without a credential — \
+                 the missing key is reported by `availability`, not by construction: {real}"
+            );
+        }
 
         let error = match provider("gpt") {
             Ok(_) => panic!("there is no provider called gpt"),
             Err(error) => error.to_string(),
         };
         assert!(error.contains("no provider called gpt"), "{error}");
-        assert!(error.contains("mock"), "{error}");
-        assert!(error.contains("anthropic"), "{error}");
+        for named in ["mock", "local", "anthropic", "openai"] {
+            assert!(error.contains(named), "{error}");
+        }
+    }
+
+    /// Every provider the CLI can build names itself, because that name is
+    /// written into the audit record and into the manifest's version history.
+    #[test]
+    fn every_provider_names_itself() {
+        for name in ["mock", "anthropic", "openai", "local"] {
+            let built = provider(name).expect("the provider exists");
+
+            assert_eq!(built.name(), name);
+        }
     }
 }

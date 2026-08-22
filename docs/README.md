@@ -34,6 +34,7 @@
 | | |
 |---|---|
 | [install.md](install.md) | Installation, where files go, uninstalling |
+| [providers.md](providers.md) | Where the code comes from, and what leaves the machine with each |
 | [../SECURITY.md](../SECURITY.md) | The security model, and how to report a vulnerability |
 
 

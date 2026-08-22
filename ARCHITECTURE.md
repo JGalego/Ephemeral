@@ -72,15 +72,25 @@ crates/
                        the Docker implementation of it.  The container spec is
                        data; turning it into a command line is a pure function,
                        so every hardening flag is a test.
-  ephemeral-cli/       command-line client of the core API
-  (planned)
-  ephemeral-agent/     AgentProvider trait + Anthropic/OpenAI/local/mock
-  ephemeral-platform/  PlatformAdapter trait + per-OS implementations
+  ephemeral-agent/     AgentProvider trait, the shared prompts and reply
+                       parsing, the bounded build/repair loop, the deterministic
+                       mock, and the one transport module that spawns curl.
+  ephemeral-provider-anthropic/  Anthropic's Messages API
+  ephemeral-provider-openai/     OpenAI's chat completions API, and everything
+                                 that copied it
+  ephemeral-provider-local/      that same format, refused unless the endpoint
+                                 is on this machine (ADR-0019)
   ephemeral-api/       the versioned service layer the UI and CLI consume
-apps/
+  ephemeral-cli/       command-line client of the core API
+  ephemeral-ffi/       the C ABI a phone links against
+  ephemeral-android/   the JNI bridge Android loads
   (planned)
+  ephemeral-platform/  PlatformAdapter trait + per-OS implementations
+apps/
   desktop/             Tauri v2 desktop shell
-  mobile/              Tauri v2 mobile client
+  android/             the Kotlin shell, over the C ABI
+  (planned)
+  ios/                 the Swift shell, over the same C ABI
 ```
 
 `ephemeral-core` deliberately has no dependency that performs I/O against the
@@ -309,9 +319,17 @@ Rationale: [ADR-0007](docs/architecture/decisions/0007-mobile-control-plane.md).
 ## 8. Generation
 
 The agent layer is provider-neutral behind an `AgentProvider` trait — Anthropic,
-OpenAI, a local model, or a deterministic mock. **CI never depends on a live LLM
-call**; the mock provider produces fixed, reproducible outputs so end-to-end
-tests are deterministic.
+OpenAI and anything that speaks its format, a local model, or a deterministic
+mock. **CI never depends on a live LLM call**; the mock provider produces fixed,
+reproducible outputs so end-to-end tests are deterministic.
+
+The prompts and the reply parsing are shared by every provider, so two cannot
+drift into generating subtly different applications from the same sentence; what
+is per-provider is a request envelope and where the text sits in a reply. The
+local provider is the OpenAI format with one addition — the endpoint must be a
+loopback address, checked before every request — which is what makes "the intent
+does not leave the machine" a property rather than a name
+([ADR-0019](docs/architecture/decisions/0019-openai-compatible-and-a-local-model.md)).
 
 The build/repair loop is bounded on every axis — iterations, wall-clock, CPU,
 memory, artifact size, network, and spend — and the user can cancel it at any

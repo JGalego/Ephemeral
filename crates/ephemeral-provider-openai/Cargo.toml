@@ -1,0 +1,29 @@
+[package]
+name = "ephemeral-provider-openai"
+description = "Ephemeral's OpenAI-compatible provider. Prompt construction and response parsing are pure; the transport is pluggable."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+[features]
+# Spawning `curl` is the desktop transport, and a default for the same reason
+# it is one in the Anthropic crate: iOS forbids a process from spawning
+# another, so a provider that can only reach the network by exec'ing a binary
+# cannot generate on a phone. Building without this feature is what proves the
+# rest of the crate is portable (ADR-0016).
+default = ["curl"]
+curl = ["ephemeral-agent/curl"]
+
+[dependencies]
+ephemeral-agent.workspace = true
+ephemeral-core.workspace = true
+
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

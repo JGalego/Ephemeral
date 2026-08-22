@@ -20,6 +20,10 @@ ephemeral-runtime.workspace = true
 ephemeral-agent.workspace = true
 serde_norway.workspace = true
 ephemeral-provider-anthropic.workspace = true
+# The wire format's `curl` transport, which the root manifest leaves off so the
+# local provider can borrow the format without it.
+ephemeral-provider-openai = { workspace = true, features = ["curl"] }
+ephemeral-provider-local.workspace = true
 
 anyhow.workspace = true
 chrono.workspace = true

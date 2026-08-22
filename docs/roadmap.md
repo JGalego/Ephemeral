@@ -13,7 +13,7 @@ honest record of where that line currently sits.
 | | |
 |---|---|
 | Repository, licence, contribution guide, security policy | ✅ |
-| [ARCHITECTURE.md](../ARCHITECTURE.md) and eighteen [ADRs](architecture/decisions/) | ✅ |
+| [ARCHITECTURE.md](../ARCHITECTURE.md) and nineteen [ADRs](architecture/decisions/) | ✅ |
 | CI: format, lint, docs, tests on Linux/macOS/Windows, supply chain | ✅ |
 | One-command development bootstrap | ✅ |
 | `ephemeral-core`: identity, actors, errors | ✅ |
@@ -86,12 +86,13 @@ Done so far:
 | Regenerating, with a widening update's grants withdrawn rather than inherited | ✅ |
 | A real provider (`--provider anthropic`), behind the same trait | ✅ |
 | Prompts and reply parsing shared by every provider, so two cannot drift apart | ✅ |
+| OpenAI's wire format (`--provider openai`), which reaches everything that copied it | ✅ |
+| A local provider, which is the only real answer to "the intent leaves the machine" ([ADR-0019](architecture/decisions/0019-openai-compatible-and-a-local-model.md)) | ✅ |
 
 Still to do:
 
 | | |
 |---|---|
-| A local provider, which is the only real answer to "the intent leaves the machine" | |
 | Each version's source kept, so a recorded version can actually be restored | ✅ |
 | Returning an application to a version it used to be, in the domain model | ✅ |
 | `ephemeral rollback`, with the grants a widening rollback would inherit withdrawn | ✅ |
@@ -100,6 +101,27 @@ Still to do:
 **Done when:** the CSV comparator can be built from a natural-language request
 end to end, with CI exercising the whole journey against the mock provider and
 never calling a real model.
+
+**A local model is the only answer to "the intent leaves the machine".** Every
+other provider sends what somebody asked for to a company, and no amount of
+policy changes that — which is why the threat model has always said the
+mitigation is choice rather than prevention. `--provider local` is that choice:
+Ollama, llama.cpp, LM Studio or vLLM on the loopback interface, generating
+without the request leaving the machine.
+
+It came almost free, because a local model server speaks OpenAI's chat
+completions API — they all do — so the same wire format serves a hosted
+alternative to Anthropic and a model on the user's own laptop. What is not free
+is the promise. `local` is a destination, not a format, so the provider checks
+one before every request: an endpoint that is not loopback is refused by name,
+and the URLs built to look loopback and resolve elsewhere — the address as
+userinfo, as a subdomain, as a label — are refused with it.
+
+Two things are said out loud rather than implied. A model small enough to run on
+a laptop fails at single-shot structured output more often than a hosted one,
+and the honest description of `--provider local` includes that. And a local
+model is not a *more trustworthy* model: its output is validated identically,
+because privacy is not integrity.
 
 **Rolling back was impossible, not merely unimplemented.** ADR-0011 made a
 version immutable and content-addressed, and the manifest recorded the digest —
@@ -273,11 +295,16 @@ is better than shipping a plausible-looking version of either.
 **A provider's transport cannot be tested here**, because doing so needs a
 credential and a live call, which
 [ADR-0008](architecture/decisions/0008-agent-provider-abstraction.md) forbids CI
-from making. `ephemeral-provider-anthropic` is built so that this costs as
-little as possible: prompts, request bodies, response parsing, capability
-translation and error mapping are pure and tested, and the untested part is one
-module that hands a string to `curl`. CI guards that split rather than trusting
-it.
+from making. The provider crates are built so that this costs as little as
+possible: prompts, request bodies, response parsing, capability translation and
+error mapping are pure and tested, and the untested part is one module, shared
+by all three, that hands a string to `curl`. CI guards that split rather than
+trusting it.
+
+`--provider local` narrows the gap without closing it. Nothing in CI runs a
+model server either, so what has never been exercised here is the same for
+`local` as for the hosted providers: the request actually going out and a real
+model's reply coming back.
 
 **Nobody has looked at the desktop window.** It compiles, its commands are
 typed against the same service layer the CLI uses, and its rendering is tested

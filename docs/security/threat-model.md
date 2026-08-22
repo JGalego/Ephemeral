@@ -129,12 +129,20 @@ The provider sees every intent, and chooses every line of generated code.
 | | |
 |---|---|
 | **Mitigation** | Provider-neutral interface, so a provider can be replaced; a local provider is a supported shape; output is validated as structured data rather than trusted; generated code is confined regardless of who wrote it |
-| **Status** | ⚠️ The trait, the mock and one hosted provider exist. No local provider yet, which is the only answer to "the intent leaves the machine" |
+| **Status** | ✅ The trait, the mock, two hosted providers and a local one ([ADR-0019](../architecture/decisions/0019-openai-compatible-and-a-local-model.md)). `--provider local` reaches a model on the loopback interface and refuses an endpoint that is anywhere else |
 | **Residual risk** | The provider learns what the user asked for. That is inherent to using a hosted model |
 
 **Accepted and stated:** using a hosted provider means the intent leaves the
 machine. The mitigation available is choice, not prevention — and the offline
-path is a local model, not a promise that a remote one is private.
+path is a local model, not a promise that a remote one is private. That path now
+exists: `--provider local` sends the request to a model server on this machine,
+and refuses any endpoint that is not a loopback address, including the ones
+written to look like one (`http://127.0.0.1@elsewhere.example/`). Which URLs it
+accepts is a pure function with the attacks against it in its tests.
+
+It is a privacy answer and not an integrity one. A local model's output is
+validated exactly as a hosted model's is, because a model running on the user's
+own machine is not a more honest model — only a more private one.
 
 The credential never enters an argument vector: it travels to `curl` in a
 configuration document on stdin, so the command Ephemeral ran is safe to record
@@ -238,8 +246,8 @@ get missed.
    and is presented as such. Nothing verifies it.
 4. **An attacker with the user's privileges.** They can read the same files and
    delete the same logs.
-5. **A hosted provider learning the user's intent.** Inherent; the answer is a
-   local model, not a promise.
+5. **A hosted provider learning the user's intent.** Inherent to using one; the
+   answer is `--provider local`, not a promise about the hosted ones.
 6. **Disk and time ceilings when nothing is watching.** Both are enforced by
    `ephemeral watch`, and nothing starts it for you.
 7. **Malicious dependencies of generated code.** Confined, not vetted.

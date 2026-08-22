@@ -5,6 +5,8 @@ members = [
     "crates/ephemeral-runtime",
     "crates/ephemeral-agent",
     "crates/ephemeral-provider-anthropic",
+    "crates/ephemeral-provider-openai",
+    "crates/ephemeral-provider-local",
     "crates/ephemeral-api",
     "crates/ephemeral-cli",
     "crates/ephemeral-ffi",
@@ -30,6 +32,12 @@ ephemeral-core = { path = "crates/ephemeral-core", version = "0.1.0" }
 ephemeral-runtime = { path = "crates/ephemeral-runtime", version = "0.1.0" }
 ephemeral-agent = { path = "crates/ephemeral-agent", version = "0.1.0" }
 ephemeral-provider-anthropic = { path = "crates/ephemeral-provider-anthropic", version = "0.1.0" }
+# Default features off at the root: the local provider borrows this crate's wire
+# format and nothing else, and pulling a subprocess transport in behind it would
+# quietly undo the portability check (ADR-0016). A consumer that sends requests
+# asks for `curl` explicitly.
+ephemeral-provider-openai = { path = "crates/ephemeral-provider-openai", version = "0.1.0", default-features = false }
+ephemeral-provider-local = { path = "crates/ephemeral-provider-local", version = "0.1.0" }
 ephemeral-api = { path = "crates/ephemeral-api", version = "0.1.0" }
 ephemeral-ffi = { path = "crates/ephemeral-ffi", version = "0.1.0" }
 

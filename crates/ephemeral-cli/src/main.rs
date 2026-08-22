@@ -168,10 +168,25 @@ enum Command {
     },
 
     /// Build an application from the intent already recorded for it.
+    #[command(
+        long_about = "Plans, writes, builds and tests an application, repairing it \
+                      when the build fails, until it is ready or a bound is reached.\n\n\
+                      Providers:\n\
+                      \x20 mock       a fixed example application: no credential, no \
+                      network, no bill\n\
+                      \x20 local      a model on this machine\n\
+                      \x20 anthropic  a hosted model\n\
+                      \x20 openai     OpenAI, or anything that speaks its API\n\n\
+                      Configured from the environment: EPHEMERAL_LOCAL_BASE_URL and \
+                      EPHEMERAL_LOCAL_MODEL for `local`; ANTHROPIC_API_KEY; \
+                      OPENAI_API_KEY, OPENAI_BASE_URL and OPENAI_MODEL.\n\n\
+                      Every provider but `local` sends what you asked for to somebody \
+                      else's computer."
+    )]
     Generate {
         /// Which application.
         app: String,
-        /// Which model provider to use: `mock` or `anthropic`.
+        /// Which model provider to use: `mock`, `local`, `anthropic` or `openai`.
         #[arg(long, default_value = "mock")]
         provider: String,
     },
