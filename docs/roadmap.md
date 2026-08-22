@@ -146,17 +146,25 @@ is in CI, because none of it can be: it needs a daemon and a credential, which
 is the same position the desktop window was in before somebody filmed it, and
 the release workflow before somebody ran it.
 
-**Three things the same afternoon found, not yet fixed.** A granted directory is
-reported to the user by its path on this machine and mounted inside the sandbox
-under `/mnt`, and nothing says so — the first two runs failed on paths the
-application could not possibly see. `ephemeral logs` withholds an application's
-own output once it has crashed, which is the one time somebody needs it, because
-the output is only fetched for states that hold a container. And an application
-that is `Ready` cannot be regenerated at all: `Ready` offers no event that leads
+**Three more things the same afternoon found; two are fixed.** A granted
+directory has two names — the one on this machine, which is the one somebody
+granted, and the one inside the sandbox under `/mnt`, which is the only one the
+application can open — and only the first was ever printed. It reads as an
+instruction, and following it fails on a file the application cannot possibly
+see, which is exactly how the first two runs by hand went. Both names are
+reported now, with the prefix to type in front of you. And `ephemeral logs`
+withheld an application's own output once it had crashed, because output was
+fetched only for states that still hold a container: the traceback explaining a
+crash was the one thing not shown, while an application that had exited cleanly
+and had nothing to explain handed its output over. A container outlives the run
+that ended it, so the output is asked for whenever there might be one.
+
+The third is a lifecycle question and is deliberately left alone: an application
+that is `Ready` cannot be regenerated at all. `Ready` offers no event leading
 back to planning, so `generate` answers "stop it first" about something that is
-not running. The last one is a lifecycle question rather than a bug fix — the
-transition table withholds that route deliberately — so it is written down here
-rather than quietly changed.
+not running. The transition table withholds that route on purpose — a ready
+application is running code somebody approved — so changing it is a decision
+rather than a fix, and it is written down here instead of quietly made.
 
 **A local model is the only answer to "the intent leaves the machine".** Every
 other provider sends what somebody asked for to a company, and no amount of

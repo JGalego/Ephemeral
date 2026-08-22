@@ -233,13 +233,29 @@ pub(crate) fn resume(home: &Path, reference: &str) -> Result<()> {
     Ok(())
 }
 
+/// Whether there might be a container holding this application's output.
+///
+/// Not "is it running". A container outlives the run that ended it: a crashed
+/// application still has one, and the last thing it printed is the most useful
+/// thing on the machine — the traceback that says *why* it crashed. Asking only
+/// for states that hold a container withheld the output at exactly the moment
+/// somebody needed it, and handed it over once the application had exited
+/// cleanly and had nothing to explain.
+///
+/// An application that was never built has no container and never had one, so
+/// there is nothing to ask about. Everything else is worth asking, and Docker
+/// answering "no such container" is a fine answer to have asked for.
+fn has_output(manifest: &AppManifest) -> bool {
+    manifest.runtime.is_some()
+}
+
 /// Shows what the application itself has printed, when there is one to ask.
 ///
 /// Best-effort by design. This is extra context on the end of a history that is
 /// already useful, so a missing runtime or a container that has gone is a quiet
 /// omission rather than a failure of `ephemeral logs`.
 pub(crate) fn print_output(manifest: &AppManifest, lines: u32) {
-    if !manifest.lifecycle.state().requires_runtime() {
+    if !has_output(manifest) {
         return;
     }
 
@@ -926,6 +942,44 @@ fn explain_refusal(event: LifecycleEvent, state: LifecycleState, app: &AppId) ->
     }
 }
 
+/// One mount, in both the names it has.
+///
+/// A granted directory has two paths: the one on this machine, which is the one
+/// the person granted and recognises, and the one inside the sandbox, which is
+/// the only one the application can open. Reporting the first alone is what
+/// this used to do, and it reads as an instruction — the obvious next move is to
+/// pass that path as an argument, and the application then fails on a file it
+/// cannot possibly see. Both, always.
+fn describe_mount(mount: &ephemeral_runtime::Mount) -> String {
+    format!(
+        "Can {} {}, which it sees as {}",
+        if mount.writable {
+            "read and write"
+        } else {
+            "read"
+        },
+        mount.host_path.display(),
+        mount.container_path
+    )
+}
+
+/// How to write the paths this application is given, if it is given any.
+///
+/// Built from a mount it actually has rather than stated in the abstract: a
+/// person about to type a command needs the prefix in front of them, not a rule
+/// about prefixes.
+fn argument_hint(spec: &ContainerSpec) -> Option<String> {
+    let first = spec.host_mounts().next()?;
+
+    Some(format!(
+        "Paths you pass to it are the ones it sees: {}/… , not {}/… . \
+         Its own storage is {}.",
+        first.container_path,
+        first.host_path.display(),
+        ephemeral_runtime::spec::DATA_MOUNT
+    ))
+}
+
 /// Tells the user what they just started, and what it can reach.
 fn report_started(manifest: &AppManifest, spec: &ContainerSpec, container: Option<&str>) {
     println!(
@@ -951,18 +1005,11 @@ fn report_started(manifest: &AppManifest, spec: &ContainerSpec, container: Optio
     }
 
     for mount in spec.host_mounts() {
-        println!(
-            "{}",
-            output::dim(&format!(
-                "Can {} {}",
-                if mount.writable {
-                    "read and write"
-                } else {
-                    "read"
-                },
-                mount.host_path.display()
-            ))
-        );
+        println!("{}", output::dim(&describe_mount(mount)));
+    }
+
+    if let Some(hint) = argument_hint(spec) {
+        println!("{}", output::dim(&hint));
     }
 
     println!(
@@ -1094,6 +1141,89 @@ mod tests {
 
         assert!(granted_permissions(&workspace, &app()).is_empty());
         assert!(specification(&workspace, &built()).unwrap().is_isolated());
+    }
+
+    /// A granted directory has two names and the application only answers to
+    /// one of them. Reporting the one on this machine alone reads as an
+    /// instruction — and following it fails on a file the application cannot
+    /// possibly see, which is exactly what happened the first time somebody ran
+    /// a generated application by hand.
+    #[test]
+    fn a_mount_is_reported_by_both_of_its_names() {
+        let mount = ephemeral_runtime::Mount::read_only("/srv/listings", "/mnt/srv-listings");
+        let described = describe_mount(&mount);
+
+        assert!(described.contains("/srv/listings"), "{described}");
+        assert!(described.contains("/mnt/srv-listings"), "{described}");
+        assert!(described.starts_with("Can read"), "{described}");
+
+        let writable = ephemeral_runtime::Mount::writable("/srv/out", "/mnt/srv-out");
+        assert!(describe_mount(&writable).starts_with("Can read and write"));
+    }
+
+    /// The hint is built from a mount the application actually has: somebody
+    /// about to type a command needs the prefix in front of them, not a rule
+    /// about prefixes.
+    #[test]
+    fn the_paths_to_pass_are_named_when_there_are_any() {
+        let mut spec = ContainerSpec::minimal(app(), "python:3.12-slim", vec!["python".to_owned()]);
+        assert_eq!(
+            argument_hint(&spec),
+            None,
+            "an application that can see nothing of yours needs no advice about paths"
+        );
+
+        spec.mounts.push(ephemeral_runtime::Mount::read_only(
+            "/srv/listings",
+            "/mnt/srv-listings",
+        ));
+        let hint = argument_hint(&spec).expect("a hint");
+
+        assert!(hint.contains("/mnt/srv-listings/"), "{hint}");
+        assert!(hint.contains("/srv/listings/"), "{hint}");
+        assert!(
+            hint.contains("/data"),
+            "its own storage is worth naming: {hint}"
+        );
+    }
+
+    /// The output is withheld from an application that never had a container,
+    /// and shown for one whose container outlived it — which is every state a
+    /// run can end in, crashes included. It used to be the other way round for
+    /// a crash: the traceback explaining the failure was the one thing not
+    /// printed.
+    #[test]
+    fn a_crashed_application_still_has_its_last_words() {
+        let mut crashed = built();
+        for (event, actor) in [
+            (LifecycleEvent::Plan, Actor::Ephemeral),
+            (LifecycleEvent::PlanCompleted, Actor::Ephemeral),
+            (LifecycleEvent::GenerationCompleted, Actor::Agent),
+            (LifecycleEvent::BuildSucceeded, Actor::Runtime),
+            (LifecycleEvent::ValidationPassed, Actor::Ephemeral),
+            (LifecycleEvent::Start, Actor::User),
+            (LifecycleEvent::Started, Actor::Runtime),
+            (LifecycleEvent::RuntimeCrashed, Actor::Runtime),
+        ] {
+            crashed
+                .apply(TransitionRequest::new(
+                    event,
+                    actor,
+                    "generated, run, crashed",
+                ))
+                .expect("the route from a description to a crash");
+        }
+
+        assert_eq!(crashed.lifecycle.state(), LifecycleState::RuntimeFailed);
+        assert!(
+            has_output(&crashed),
+            "a crash is when its output matters most"
+        );
+        assert!(has_output(&built()), "a built application may have run");
+        assert!(
+            !has_output(&AppManifest::requested(app(), "CSV comparator")),
+            "an application that was never built never had a container"
+        );
     }
 
     /// An application that has not been generated yet says so, rather than

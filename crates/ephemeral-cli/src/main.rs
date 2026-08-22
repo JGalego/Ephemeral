@@ -250,10 +250,22 @@ enum Command {
     Doctor,
 
     /// Start an application.
+    #[command(
+        long_about = "Starts an application in its sandbox, under exactly the permissions \
+                      you have granted it.\n\n\
+                      Anything after `--` is passed to the application itself. Write file \
+                      paths as the application sees them, not as this machine does: a \
+                      granted folder appears inside the sandbox under /mnt, and the \
+                      application's own storage is /data. Starting it prints both names \
+                      for everything it can reach."
+    )]
     Run {
         /// Which application.
         app: String,
         /// Arguments for the application itself, after `--`.
+        ///
+        /// Paths here are the ones inside the sandbox: a granted folder appears
+        /// under /mnt, and the application's own storage is /data.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         arguments: Vec<String>,
     },
