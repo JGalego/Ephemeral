@@ -402,9 +402,15 @@ fn fail(workspace: &mut Workspace, manifest: &mut AppManifest, error: &AgentErro
     // different story from one that never planned, and the machine can tell
     // them apart only if the events it is given are the ones that happened.
     let route: &[(LifecycleEvent, Actor)] = match error {
-        AgentError::Refused(_) | AgentError::Unreadable { .. } | AgentError::Unavailable { .. } => {
-            &[(LifecycleEvent::Block, Actor::Ephemeral)]
-        }
+        // A provider that could not be reached, would not answer, or answered
+        // with something unusable is a blocker: the person fixes the credential
+        // or the network and asks again. It is not a build failure — no build
+        // was attempted, and saying one failed would be a record of something
+        // that did not happen.
+        AgentError::Refused(_)
+        | AgentError::Unreadable { .. }
+        | AgentError::Unavailable { .. }
+        | AgentError::Failed { .. } => &[(LifecycleEvent::Block, Actor::Ephemeral)],
         AgentError::Cancelled => &[(LifecycleEvent::Cancel, Actor::User)],
         _ => &[
             (LifecycleEvent::PlanCompleted, Actor::Ephemeral),
@@ -419,6 +425,30 @@ fn fail(workspace: &mut Workspace, manifest: &mut AppManifest, error: &AgentErro
         if step(workspace, manifest, *event, *actor, &error.to_string()).is_err() {
             break;
         }
+    }
+
+    // Whatever route was taken, the application must not be left somewhere it
+    // can only be deleted from. A run that fails before any code exists cannot
+    // take the build-failure route — a manifest with no runtime may not enter
+    // `Building`, so the events are refused one at a time and the application
+    // is stranded in `Generating`, which offers no way to start again.
+    //
+    // Found by running it: a rejected API key left an application that could
+    // not be generated even after the key was fixed. Blocking is what that
+    // situation is — something the person resolves and retries — and `Blocked`
+    // offers exactly that.
+    if starting_event(manifest).is_none()
+        && manifest
+            .lifecycle
+            .can_apply(LifecycleEvent::Block, Actor::Ephemeral)
+    {
+        let _ = step(
+            workspace,
+            manifest,
+            LifecycleEvent::Block,
+            Actor::Ephemeral,
+            &error.to_string(),
+        );
     }
 
     workspace.apps_mut().save(manifest)?;
@@ -687,6 +717,53 @@ mod tests {
     /// The route has to actually arrive. An event sequence that the state
     /// machine rejects halfway would leave every generated application stranded
     /// in whatever state it got to.
+    /// A run that fails must leave the application somewhere it can be picked
+    /// up from. This was found with a real credential: Anthropic rejected the
+    /// key, the failure took the build-failure route, `GenerationCompleted` was
+    /// refused because a manifest with no runtime may not enter `Building`, and
+    /// the application sat in `Generating` — which offers no way to start again
+    /// — so fixing the key changed nothing and the only way out was to delete
+    /// it and describe what you wanted a second time.
+    #[test]
+    fn a_run_that_fails_before_any_code_exists_can_be_tried_again() {
+        use ephemeral_core::storage::Workspace;
+
+        let home = tempfile::tempdir().expect("a temporary directory");
+        let mut workspace = Workspace::open(home.path()).expect("a workspace");
+        let mut manifest = requested();
+        workspace.apps_mut().create(&manifest).expect("created");
+
+        // As far as a run gets before it asks a model anything.
+        manifest
+            .apply(TransitionRequest::new(
+                LifecycleEvent::Plan,
+                Actor::Ephemeral,
+                "planning",
+            ))
+            .expect("planning starts from Requested");
+
+        fail(
+            &mut workspace,
+            &mut manifest,
+            &AgentError::Failed {
+                provider: "anthropic".to_owned(),
+                reason: "API key is invalid.".to_owned(),
+            },
+        )
+        .expect("a failed run is still recorded");
+
+        assert_eq!(
+            manifest.lifecycle.state(),
+            LifecycleState::Blocked,
+            "a provider that refused is something to resolve, not a build that failed"
+        );
+        assert_eq!(
+            starting_event(&manifest),
+            Some(LifecycleEvent::Retry),
+            "and fixing what blocked it has to be enough to try again"
+        );
+    }
+
     /// A rollback's own advice is "generate again to rebuild", and for as long
     /// as this looked only for `Plan`, that advice was impossible to follow:
     /// every state a rolled-back or failed application is in offers `Retry`

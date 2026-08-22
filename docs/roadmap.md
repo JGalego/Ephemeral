@@ -6,7 +6,9 @@ honest record of where that line currently sits.
 
 ## Where we are
 
-**Phase 2 — Generation.** In progress.
+**Phase 2 — Generation.** Complete, and demonstrated rather than asserted — see
+[what was actually run](#not-a-claim-this-time-it-was-run). Phase 3 —
+Permissions — is next, and nothing has been built for it yet.
 
 ### Done
 
@@ -102,16 +104,59 @@ Everything since, which was one story told in four rows:
 end to end, with CI exercising the whole journey against the mock provider and
 never calling a real model.
 
-**Not closed yet, and here is what is left.** Every row above is done, and CI
-runs the journey from a sentence to a ready application on every commit — but it
-runs it against a build step that records what it was given rather than a
-container, because CI has no daemon. So the last thing this phase claims,
-*built*, is the one thing no machine here has watched happen: a generated
-Dockerfile going into Docker and an image coming out. Nobody has recorded a run
-of `ephemeral generate` against a real provider either. Both are a person with a
-laptop and half an hour, and neither is something a test in this repository can
-do — which is exactly the position the desktop window was in before somebody
-filmed it, and the release workflow before somebody ran it.
+### Not a claim this time: it was run
+
+Every row above is done, and CI runs the journey from a sentence to a ready
+application on every commit — but against a build step that records what it was
+given rather than a container, because CI has no daemon. *Built*, the word this
+phase turns on, was the one thing no machine had watched happen. On 2026-08-22
+somebody sat down with a daemon and a credential and watched it.
+
+**With the mock provider and real Docker.** `create` → `generate` → a real
+`docker build` → `ephemeral-compare-these-two-csv-5ce0e03f:8a5426d900da` → `run`
+in the sandbox, which reported `added: flat-c / removed: flat-b / changed:
+flat-a` from two CSV files. The container ran as uid 65534, with a read-only
+root filesystem, every capability dropped, no network, and the granted directory
+mounted read-only — the confinement the argument-vector tests assert, observed
+this time rather than computed. `archive`, `restore`, `delete`, `restore` and
+`purge` were walked through afterwards, which is Phase 1's definition of done
+finally being watched end to end.
+
+**With a real model.** `ephemeral generate --provider anthropic` planned, wrote
+a 90-line application with a 101-line test suite, built it and passed its tests
+on the first attempt — 1,225 tokens in, 6,565 out, no repair round. It ran in
+the sandbox holding *no* permissions at all and printed a correct unified diff.
+The credential appears nowhere under `EPHEMERAL_HOME`: not in the manifest, not
+in the audit record, not in a recorded argument vector.
+
+**What that turned up.** A rejected API key was reported perfectly — "anthropic
+failed: API key is invalid", the provider's own words, from the one module CI
+cannot exercise — and then left the application **stranded in `Generating`**. A
+failure before any code exists cannot take the build-failure route, because a
+manifest with no runtime may not enter `Building`; the events were refused one
+at a time and the run ended in a state that offers no way to start again. Fixing
+the key changed nothing: the only way out was to delete the application and
+describe what you wanted a second time. A provider failure is now what it
+actually is — a blocker to resolve — and no failed run may end anywhere it
+cannot be retried from.
+
+**Still not proven, and honest about it:** the repair round has never run
+against a real model. Every failure so far has been the mock's. And none of this
+is in CI, because none of it can be: it needs a daemon and a credential, which
+is the same position the desktop window was in before somebody filmed it, and
+the release workflow before somebody ran it.
+
+**Three things the same afternoon found, not yet fixed.** A granted directory is
+reported to the user by its path on this machine and mounted inside the sandbox
+under `/mnt`, and nothing says so — the first two runs failed on paths the
+application could not possibly see. `ephemeral logs` withholds an application's
+own output once it has crashed, which is the one time somebody needs it, because
+the output is only fetched for states that hold a container. And an application
+that is `Ready` cannot be regenerated at all: `Ready` offers no event that leads
+back to planning, so `generate` answers "stop it first" about something that is
+not running. The last one is a lifecycle question rather than a bug fix — the
+transition table withholds that route deliberately — so it is written down here
+rather than quietly changed.
 
 **A local model is the only answer to "the intent leaves the machine".** Every
 other provider sends what somebody asked for to a company, and no amount of
