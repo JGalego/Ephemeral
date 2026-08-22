@@ -370,10 +370,28 @@ impl AppManifest {
                 // A containerised runtime without an image has nothing to run,
                 // and a web app with no port cannot be opened. Both would fail
                 // later, less legibly.
-                if runtime.kind.is_containerised() && runtime.image.is_none() {
+                //
+                // Asked of a state that could actually be started, and not of
+                // every state. An application between being described and being
+                // built knows what runtime it wants and has nothing built yet,
+                // and so does one that has just been rolled back: `revert_to`
+                // clears the image deliberately, because running the newer
+                // build under an older version's name would report one thing
+                // and run another. Requiring an image there made a rollback
+                // produce a manifest that could not be saved — the refusal
+                // arrived at the end, after the source on disk had already gone
+                // back, which is the half-done state the operation is written
+                // to avoid.
+                if runtime.kind.is_containerised()
+                    && runtime.image.is_none()
+                    && self.lifecycle.state().is_runnable()
+                {
                     return Err(ManifestError::invalid(
                         "runtime.image",
-                        "a containerised runtime needs an image",
+                        format!(
+                            "an application that is {} has to have something to run",
+                            self.lifecycle.state()
+                        ),
                     ));
                 }
                 if runtime.interface == AppInterface::Web && runtime.port.is_none() {
@@ -907,6 +925,34 @@ mod tests {
         })
     }
 
+    /// Drives a manifest to `Ready`, the way generation does.
+    ///
+    /// Written out rather than assigned, because the state a manifest is in is
+    /// reached through the machine and not set — a test that set it could
+    /// assert something no application can actually be.
+    fn built(mut manifest: AppManifest) -> AppManifest {
+        use crate::actor::Actor;
+        use crate::lifecycle::LifecycleEvent;
+
+        for (event, actor) in [
+            (LifecycleEvent::Plan, Actor::Ephemeral),
+            (LifecycleEvent::PlanCompleted, Actor::Ephemeral),
+            (LifecycleEvent::GenerationCompleted, Actor::Agent),
+            (LifecycleEvent::BuildSucceeded, Actor::Runtime),
+            (LifecycleEvent::ValidationPassed, Actor::Ephemeral),
+        ] {
+            manifest
+                .apply(crate::lifecycle::TransitionRequest::new(
+                    event,
+                    actor,
+                    "reaching ready",
+                ))
+                .expect("the route to ready");
+        }
+
+        manifest
+    }
+
     // --- least privilege by default -------------------------------------------
 
     /// A new application asks for nothing. Every capability it ends up with was
@@ -1007,6 +1053,55 @@ mod tests {
 
     // --- validation ------------------------------------------------------------
 
+    /// The invariant that matters, at the moment it matters: an application
+    /// cannot *become* ready with nothing to run. Relaxing the stored-manifest
+    /// rule to runnable states only would be a hole if this were not true, so
+    /// it is asserted rather than reasoned about.
+    #[test]
+    fn an_application_cannot_become_ready_with_nothing_to_run() {
+        use crate::actor::Actor;
+        use crate::lifecycle::{LifecycleEvent, TransitionRequest};
+
+        let spec = apartment_comparator().runtime.clone().unwrap();
+        let mut manifest = AppManifest {
+            runtime: Some(RuntimeSpec {
+                image: None,
+                ..spec
+            }),
+            ..apartment_comparator()
+        };
+
+        for (event, actor) in [
+            (LifecycleEvent::Plan, Actor::Ephemeral),
+            (LifecycleEvent::PlanCompleted, Actor::Ephemeral),
+            (LifecycleEvent::GenerationCompleted, Actor::Agent),
+            (LifecycleEvent::BuildSucceeded, Actor::Runtime),
+        ] {
+            manifest
+                .apply(TransitionRequest::new(event, actor, "on the way"))
+                .expect("everything before ready is fine without a build");
+        }
+
+        let refused = manifest
+            .apply(TransitionRequest::new(
+                LifecycleEvent::ValidationPassed,
+                Actor::Ephemeral,
+                "claiming to be ready",
+            ))
+            .expect_err("ready with nothing to run");
+
+        assert!(
+            matches!(
+                refused,
+                crate::Error::Manifest(ManifestError::InvalidField {
+                    field: "runtime.image",
+                    ..
+                })
+            ),
+            "{refused:?}"
+        );
+    }
+
     #[test]
     fn validation_rejects_manifests_that_could_not_work() {
         let base = apartment_comparator();
@@ -1021,12 +1116,15 @@ mod tests {
         ));
 
         let spec = base.runtime.clone().unwrap();
+        // Asked of a state that could be started. A stored manifest claiming to
+        // be ready with nothing to run is a contradiction, and one that has not
+        // been built yet is an ordinary Tuesday.
         let imageless = AppManifest {
             runtime: Some(RuntimeSpec {
                 image: None,
                 ..spec.clone()
             }),
-            ..base.clone()
+            ..built(base.clone())
         };
         assert!(matches!(
             imageless.validate(),
@@ -1035,6 +1133,18 @@ mod tests {
                 ..
             })
         ));
+        assert!(
+            AppManifest {
+                runtime: Some(RuntimeSpec {
+                    image: None,
+                    ..spec.clone()
+                }),
+                ..base.clone()
+            }
+            .validate()
+            .is_ok(),
+            "an application that has not been built yet has nothing to run, and that is normal"
+        );
 
         let unreachable = AppManifest {
             runtime: Some(RuntimeSpec { port: None, ..spec }),

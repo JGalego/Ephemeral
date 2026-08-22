@@ -89,18 +89,29 @@ Done so far:
 | OpenAI's wire format (`--provider openai`), which reaches everything that copied it | ✅ |
 | A local provider, which is the only real answer to "the intent leaves the machine" ([ADR-0019](architecture/decisions/0019-openai-compatible-and-a-local-model.md)) | ✅ |
 
-Still to do:
+Everything since, which was one story told in four rows:
 
 | | |
 |---|---|
 | Each version's source kept, so a recorded version can actually be restored | ✅ |
 | Returning an application to a version it used to be, in the domain model | ✅ |
 | `ephemeral rollback`, with the grants a widening rollback would inherit withdrawn | ✅ |
-| Rolling back from the window | |
+| Rolling back from the window, through the same operation the terminal calls | ✅ |
 
 **Done when:** the CSV comparator can be built from a natural-language request
 end to end, with CI exercising the whole journey against the mock provider and
 never calling a real model.
+
+**Not closed yet, and here is what is left.** Every row above is done, and CI
+runs the journey from a sentence to a ready application on every commit — but it
+runs it against a build step that records what it was given rather than a
+container, because CI has no daemon. So the last thing this phase claims,
+*built*, is the one thing no machine here has watched happen: a generated
+Dockerfile going into Docker and an image coming out. Nobody has recorded a run
+of `ephemeral generate` against a real provider either. Both are a person with a
+laptop and half an hour, and neither is something a test in this repository can
+do — which is exactly the position the desktop window was in before somebody
+filmed it, and the release workflow before somebody ran it.
 
 **A local model is the only answer to "the intent leaves the machine".** Every
 other provider sends what somebody asked for to a company, and no amount of
@@ -137,6 +148,41 @@ rollback that *widens* — returning to a version the newer one had stopped
 needing a capability for — withdraws the grants it would otherwise inherit,
 because an approval given for different code is not an approval for this one.
 
+**Rolling back had never been finished, and putting it in the window is what
+showed it.** The terminal's version sequenced the steps itself, so the window
+would have been a second copy of them — and a rollback is exactly the operation
+whose steps must not come apart, since the source on disk goes back *before* the
+grants the older version must not inherit are withdrawn. Moving it into
+[`ephemeral-api`](../crates/ephemeral-api) meant writing it as one function with
+tests that drive it through a real store, and those tests failed immediately on
+something no test had reached before: **`ephemeral rollback` could not save.**
+
+`revert_to` clears the built image, deliberately — running the newer build under
+an older version's name would have the application report one thing and execute
+another. The manifest's own validation then refused the result, because a
+containerised runtime with no image "has nothing to run". Both rules were right;
+they had simply never met, since the domain test asserted on the manifest in
+memory and the storage test never rolled anything back. The invariant now asks
+its question of a state that could actually be started: an application claiming
+to be ready with nothing to run is still refused — and cannot even transition
+into ready, which is asserted separately — while one that has just been rolled
+back is in the ordinary condition of having source and no build.
+
+The second thing the same test found: the advice `rollback` prints —
+*generate again to rebuild* — was impossible to follow. Generation checked for
+one lifecycle event, `Plan`, which only an application that has never been
+generated can raise. Everything a rolled-back or failed application is in offers
+`Retry` instead, so the answer was "cannot regenerate: it is blocked". It now
+starts from whichever of the two the application can actually raise.
+
+What the window adds beyond the button is the part a person needs before
+clicking it: which versions can be returned to at all. A version can be recorded
+in the history with its source swept away by retention, and "recorded" is not
+"restorable" — so the view carries both facts, and a version whose source is
+gone is drawn as an absence rather than offered as a button that cannot work.
+Rolling back is asked twice, because clearing a build and taking permissions
+back are not undone by clicking again.
+
 ### Phase 3 — Permissions
 
 Enforcement, not just modelling: meta-permissions wired to real operations, app
@@ -158,6 +204,7 @@ and the terminal show the same views worded identically.
 | Rendering tested in headless Chromium, including that untrusted names cannot become markup | ✅ |
 | Deciding permissions from the window, under the same rules as the terminal | ✅ |
 | Asking for an application from the window, without opening a terminal | ✅ |
+| Returning an application to an earlier version from the window | ✅ |
 | Running and generating from the window | |
 
 **Done when:** somebody can do everything the CLI does without opening a

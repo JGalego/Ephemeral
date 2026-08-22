@@ -39,6 +39,24 @@ const DOCKERFILE: &str = "Dockerfile";
 /// The provisional tag a build carries before its version is known.
 const BUILDING_TAG: &str = "building";
 
+/// The event that starts a run, or `None` if this application cannot start one.
+///
+/// Two events lead to planning, and which one applies depends on where the
+/// application has been. `Plan` is for one that has never been generated;
+/// `Retry` is for one that has, and whose last attempt ended somewhere it can
+/// be picked up from — a failed build, a cancelled run, a blocker the user has
+/// resolved, or a rollback, which clears the built image and leaves an
+/// application that has source and nothing to run.
+///
+/// Checking only for `Plan` meant every one of those answered "cannot
+/// regenerate: it is blocked", including the rollback whose own advice is to
+/// generate again.
+fn starting_event(manifest: &AppManifest) -> Option<LifecycleEvent> {
+    [LifecycleEvent::Plan, LifecycleEvent::Retry]
+        .into_iter()
+        .find(|event| manifest.lifecycle.can_apply(*event, Actor::Ephemeral))
+}
+
 /// Builds an application from the intent already recorded for it.
 pub(crate) fn run(home: &Path, reference: &str, provider_name: &str) -> Result<()> {
     let mut workspace = crate::commands::open(home)?;
@@ -46,10 +64,7 @@ pub(crate) fn run(home: &Path, reference: &str, provider_name: &str) -> Result<(
 
     let regenerating = manifest.runtime.is_some();
 
-    if !manifest
-        .lifecycle
-        .can_apply(LifecycleEvent::Plan, Actor::Ephemeral)
-    {
+    let Some(start) = starting_event(&manifest) else {
         bail!(
             "cannot {} {}: it is {}. {}",
             if regenerating {
@@ -65,7 +80,7 @@ pub(crate) fn run(home: &Path, reference: &str, provider_name: &str) -> Result<(
                 ""
             }
         );
-    }
+    };
 
     let provider = provider(provider_name)?;
     provider
@@ -103,7 +118,7 @@ pub(crate) fn run(home: &Path, reference: &str, provider_name: &str) -> Result<(
     step(
         &mut workspace,
         &mut manifest,
-        LifecycleEvent::Plan,
+        start,
         Actor::Ephemeral,
         &format!("planning with {}", provider.name()),
     )?;
@@ -315,7 +330,7 @@ fn finish(
     // newly requested has its existing grants withdrawn — the user is asked
     // again rather than assumed to have agreed in advance.
     let withdrawn = if delta.widens() {
-        withdraw_widened(workspace, &manifest.id, &delta)
+        ephemeral_api::withdraw_widened(workspace, &manifest.id, &delta)
     } else {
         0
     };
@@ -379,33 +394,6 @@ fn finish(
     }
 
     Ok(())
-}
-
-/// Withdraws grants that a widening update would otherwise silently inherit.
-///
-/// Returns how many were withdrawn. Only the ones the *new* request touches:
-/// an update that adds network access does not cost the user the file access
-/// they already agreed to.
-pub(crate) fn withdraw_widened(
-    workspace: &mut Workspace,
-    app: &ephemeral_core::AppId,
-    delta: &ephemeral_core::PermissionDelta,
-) -> usize {
-    let subject = ephemeral_core::Principal::app(app.clone());
-    let mut withdrawn = 0;
-
-    for permission in &delta.added {
-        withdrawn += workspace
-            .ledger_mut()
-            .revoke(
-                &subject,
-                &ephemeral_core::permission::Permission::App(permission.clone()),
-                Actor::User,
-            )
-            .unwrap_or(0);
-    }
-
-    withdrawn
 }
 
 /// Records a failed run, so the manifest says what happened.
@@ -699,6 +687,72 @@ mod tests {
     /// The route has to actually arrive. An event sequence that the state
     /// machine rejects halfway would leave every generated application stranded
     /// in whatever state it got to.
+    /// A rollback's own advice is "generate again to rebuild", and for as long
+    /// as this looked only for `Plan`, that advice was impossible to follow:
+    /// every state a rolled-back or failed application is in offers `Retry`
+    /// instead, and the answer was "cannot regenerate: it is blocked".
+    #[test]
+    fn a_run_starts_from_whichever_event_this_application_can_actually_raise() {
+        let fresh = requested();
+        assert_eq!(
+            starting_event(&fresh),
+            Some(LifecycleEvent::Plan),
+            "an application nobody has generated plans"
+        );
+
+        let mut failed = requested();
+        for (event, actor) in [
+            (LifecycleEvent::Plan, Actor::Ephemeral),
+            (LifecycleEvent::PlanCompleted, Actor::Ephemeral),
+            (LifecycleEvent::GenerationCompleted, Actor::Agent),
+            (LifecycleEvent::BuildFailed, Actor::Runtime),
+        ] {
+            // Building means knowing what it runs on, which generation records
+            // before it hands anything to the builder.
+            if event == LifecycleEvent::GenerationCompleted {
+                failed.runtime = Some(ephemeral_core::manifest::RuntimeSpec::docker_job(
+                    "python:3.12-slim",
+                    vec!["python".to_owned()],
+                ));
+            }
+            failed
+                .apply(TransitionRequest::new(event, actor, "the build broke"))
+                .expect("the route to a failed build");
+        }
+        assert_eq!(
+            starting_event(&failed),
+            Some(LifecycleEvent::Retry),
+            "an application that has been here before retries"
+        );
+
+        let mut ready = requested();
+        for (event, actor) in [
+            (LifecycleEvent::Plan, Actor::Ephemeral),
+            (LifecycleEvent::PlanCompleted, Actor::Ephemeral),
+            (LifecycleEvent::GenerationCompleted, Actor::Agent),
+            (LifecycleEvent::BuildSucceeded, Actor::Runtime),
+            (LifecycleEvent::ValidationPassed, Actor::Ephemeral),
+        ] {
+            // A manifest reaches Ready only with something to run, so the
+            // runtime is set on the way, as generation sets it.
+            if event == LifecycleEvent::GenerationCompleted {
+                ready.runtime = Some(ephemeral_core::manifest::RuntimeSpec::docker_job(
+                    "python:3.12-slim",
+                    vec!["python".to_owned()],
+                ));
+            }
+            ready
+                .apply(TransitionRequest::new(event, actor, "generating"))
+                .expect("the route to ready");
+        }
+        assert_eq!(
+            starting_event(&ready),
+            None,
+            "a ready application is running code somebody approved; it is stopped or archived \
+             before it is replaced"
+        );
+    }
+
     #[test]
     fn the_success_route_takes_a_requested_application_to_ready() {
         let outcome = outcome_from(Behaviour::Succeeds, &AlwaysBuilds);
@@ -897,7 +951,7 @@ mod tests {
             removed: Vec::new(),
         };
 
-        let withdrawn = withdraw_widened(&mut workspace, &app, &delta);
+        let withdrawn = ephemeral_api::withdraw_widened(&mut workspace, &app, &delta);
 
         assert!(
             withdrawn > 0,
@@ -927,7 +981,7 @@ mod tests {
         let mut workspace = Workspace::open(home.path()).expect("a workspace");
         let app = AppId::parse("csv-comparator").expect("a valid id");
 
-        let withdrawn = withdraw_widened(
+        let withdrawn = ephemeral_api::withdraw_widened(
             &mut workspace,
             &app,
             &ephemeral_core::PermissionDelta::default(),

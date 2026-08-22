@@ -127,7 +127,36 @@ const base = {
     memory_mib: 512,
     storage_mib: 1024,
   },
-  versions: [],
+  // Two versions and a third that predates snapshots, because what a person
+  // needs to see here is the difference between a version they can go back to
+  // and one that is only recorded. A film with an empty history would show none
+  // of the page that offers a rollback.
+  versions: [
+    {
+      digest: 'c4f1d90a8b21',
+      sequence: 3,
+      reason: 'repaired',
+      created_at: '2026-08-20T09:12:00Z',
+      current: true,
+      source_kept: true,
+    },
+    {
+      digest: '7b3e5a2c1d40',
+      sequence: 2,
+      reason: 'generated',
+      created_at: '2026-08-19T17:40:00Z',
+      current: false,
+      source_kept: true,
+    },
+    {
+      digest: '10ab99ce7f22',
+      sequence: 1,
+      reason: 'generated',
+      created_at: '2026-08-18T11:05:00Z',
+      current: false,
+      source_kept: false,
+    },
+  ],
   retention: 'keep for 1 week',
 };
 
@@ -203,7 +232,25 @@ await page.addInitScript(
             if (!into.includes(args.capability)) into.push(args.capability);
             return null;
           }
-          if (command === 'api_version') return 1;
+          if (command === 'rollback') {
+            return {
+              app: args.id,
+              sequence: 2,
+              digest: args.version,
+              grants_withdrawn: 1,
+              newly_requested: 1,
+              headline: `Rolled ${args.id} back to version 2 (${args.version}).`,
+              caution:
+                'This version asks for 1 thing(s) the one it replaced had stopped needing, so ' +
+                '1 grant(s) were withdrawn. Look at what it asks for now and allow again only ' +
+                'what you still want.',
+              note:
+                'The built image was cleared: a version is its source, and running the newer ' +
+                "build under this version's name would report one thing and run another. " +
+                'Generate again to rebuild.',
+            };
+          }
+          if (command === 'api_version') return 2;
           throw new Error(`no such command: ${command}`);
         },
       },
@@ -251,6 +298,20 @@ await page.fill(`${critical} input.confirm`, '');
 await page.type(`${critical} input.confirm`, 'allow', { delay: 200 });
 await page.click(`${critical} button.confirm-allow`);
 await scene('the-word-typed-in-full', 2000);
+
+// What it has been. A version whose source is gone must read as an absence
+// rather than as an offer somebody's click will bounce off.
+await page.evaluate(() => document.querySelector('section.versions')?.scrollIntoView());
+await scene('what-it-has-been', 1500);
+
+// Rolling back asks twice, and the first click has to say what the second one
+// costs — the build and, possibly, permissions already granted.
+await page.click('li.version:not(.current) button.rollback');
+await scene('what-going-back-costs', 1600);
+
+// And what it says afterwards, which is the sentence somebody has to act on.
+await page.click('button.confirm-rollback');
+await scene('what-the-rollback-took-back', 2000);
 
 // Back out: with everything answered, nothing should still be asking.
 await page.click('button.back');

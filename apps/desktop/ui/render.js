@@ -243,6 +243,136 @@ export function permissionsSection(permissions) {
   return section;
 }
 
+/** What an application has been, and what can be gone back to.
+ *
+ * Two facts decide what each entry offers, and both come from the service layer
+ * rather than being worked out here. `current` is not "the newest entry": the
+ * history keeps the version rolled away from, so after one rollback the newest
+ * entry and the current version are different things. `source_kept` is not
+ * "recorded": a version can be in the history with its source swept away by
+ * retention or never kept at all, and only a store knows which — `null` means
+ * nobody checked, and is drawn as neither offer nor refusal.
+ */
+export function versionsSection(versions) {
+  const section = element('section', 'versions');
+  if (versions.length === 0) return section;
+
+  section.appendChild(
+    element(
+      'h3',
+      'history',
+      versions.length === 1 ? '1 version' : `${versions.length} versions`,
+    ),
+  );
+
+  const list = element('ul', 'version-list');
+  for (const version of versions) list.appendChild(versionItem(version));
+  section.appendChild(list);
+
+  return section;
+}
+
+/** One version, and what may be done with it. */
+export function versionItem(version) {
+  const item = element('li', `version${version.current ? ' current' : ''}`);
+  item.dataset.digest = version.digest;
+  item.dataset.sequence = String(version.sequence);
+  item.dataset.current = String(Boolean(version.current));
+
+  item.appendChild(element('div', 'what', `Version ${version.sequence} · ${version.digest}`));
+  // The reason is written by Ephemeral, not by a model — and goes through
+  // `textContent` anyway, because which strings are trusted is not a fact worth
+  // relying on twice.
+  if (version.reason) item.appendChild(element('div', 'reason', version.reason));
+
+  if (version.current) {
+    item.appendChild(element('div', 'now', 'This is the version it is on now.'));
+    return item;
+  }
+
+  if (version.source_kept !== true) {
+    // Deliberately no button for an unknown answer. Offering a rollback that
+    // cannot happen wastes somebody's click on a refusal they could have been
+    // shown instead.
+    item.appendChild(
+      element(
+        'div',
+        'gone',
+        version.source_kept === false
+          ? 'Its source is not on this machine, so there is nothing to go back to.'
+          : 'Whether its source is still on this machine is not known.',
+      ),
+    );
+    return item;
+  }
+
+  item.appendChild(rollbackControl(version));
+  return item;
+}
+
+/** The offer to return to one version. */
+export function rollbackControl(version) {
+  const controls = element('div', 'revert');
+  const button = element('button', 'rollback', 'Return to this version');
+  button.dataset.digest = version.digest;
+  controls.appendChild(button);
+
+  return controls;
+}
+
+/** What a rollback costs, asked before it happens rather than reported after.
+ *
+ * Rolling back is not undoable by another click: it clears the build and can
+ * take permissions away, and the sentence saying so belongs in front of the
+ * decision. The same two facts are what the service layer reports afterwards,
+ * in the same order, so nobody is told something new once it is too late.
+ */
+export function rollbackConfirm(version) {
+  const controls = element('div', 'revert confirming');
+
+  controls.appendChild(
+    element(
+      'p',
+      'consequence',
+      `Return to version ${version.sequence} (${version.digest})? The built image is cleared, ` +
+        'so it has to be generated again before it can run — and any permission this version ' +
+        'asks for that the current one had stopped needing is taken back.',
+    ),
+  );
+
+  const confirm = element('button', 'confirm-rollback', 'Return to this version');
+  confirm.dataset.digest = version.digest;
+  controls.appendChild(confirm);
+
+  const cancel = element('button', 'cancel-rollback', 'Keep the current version');
+  controls.appendChild(cancel);
+
+  return controls;
+}
+
+/** What a rollback did, in the service layer's own words.
+ *
+ * Every sentence here arrives from `ephemeral-api`, which is what keeps a
+ * rollback in the window from reporting something different from the same
+ * rollback in the terminal — including the caution, which is the part somebody
+ * has to act on.
+ */
+export function rollbackNotice(done) {
+  const notice = element('div', 'notice-body');
+  notice.appendChild(element('p', 'headline', done.headline));
+  if (done.caution) notice.appendChild(element('p', 'caution', done.caution));
+  notice.appendChild(element('p', 'note', done.note));
+
+  // Pinned to the viewport, like the refusal banner, so it cannot land below
+  // the fold — which means it covers whatever is behind it, and a frame of the
+  // film showed it sitting squarely on top of the permissions it was telling
+  // somebody to go and look at. Three sentences with no way to put them down is
+  // a notice that has to be scrolled around.
+  notice.appendChild(element('button', 'dismiss', 'Dismiss'));
+
+  return notice;
+}
+
 /** An application's page. */
 export function applicationDetail(detail) {
   const page = element('section', 'detail');
@@ -268,6 +398,7 @@ export function applicationDetail(detail) {
 
   page.appendChild(element('p', 'limits', detail.limits.description));
   page.appendChild(permissionsSection(detail.permissions));
+  page.appendChild(versionsSection(detail.versions ?? []));
 
   return page;
 }

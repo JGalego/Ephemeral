@@ -51,7 +51,7 @@
 pub mod operation;
 pub mod view;
 
-pub use operation::{create, derive_name};
+pub use operation::{Rollback, create, derive_name, rollback, withdraw_widened};
 pub use view::{
     ApplicationDetail, ApplicationSummary, AuditEntryView, LimitsView, PermissionView,
     PermissionsView, RuntimeView, VersionView,
@@ -69,7 +69,7 @@ use ephemeral_core::{
 /// Incremented when a client would notice a difference. A client that checks it
 /// can refuse to run against a service it does not understand, rather than
 /// misreading one.
-pub const API_VERSION: u32 = 1;
+pub const API_VERSION: u32 = 2;
 
 /// Everything a client needs in order to draw a list of applications.
 ///
@@ -89,9 +89,28 @@ pub fn applications(loaded: &[AppManifest], ledger: &PermissionLedger) -> Vec<Ap
 }
 
 /// Everything a client needs in order to draw one application's page.
+///
+/// The workspace is what separates this from [`ApplicationDetail::of`]: a
+/// version's source can be recorded in the history and gone from the disk —
+/// swept away by retention, or never kept at all because it predates snapshots
+/// — and only the store knows which. A client that offered to return to a
+/// version whose source is missing would offer something that cannot happen.
 #[must_use]
 pub fn application(manifest: &AppManifest, workspace: &Workspace) -> ApplicationDetail {
-    ApplicationDetail::of(manifest, workspace.ledger())
+    let mut detail = ApplicationDetail::of(manifest, workspace.ledger());
+
+    // Matched by digest against the manifest rather than by position, because
+    // the view is reversed and a client of this crate should not have to know
+    // that to read it.
+    for view in &mut detail.versions {
+        view.source_kept = manifest
+            .versions
+            .iter()
+            .find(|version| version.digest.short() == view.digest)
+            .map(|version| workspace.apps().has_version(&manifest.id, &version.digest));
+    }
+
+    detail
 }
 
 /// What an application has asked for and not been given.

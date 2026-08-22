@@ -64,6 +64,16 @@ const summary = (over = {}) => ({
   ...over,
 });
 
+const version = (over = {}) => ({
+  digest: 'a1b2c3d4e5f6',
+  sequence: 2,
+  reason: 'generated',
+  created_at: '2026-08-15T12:00:00Z',
+  current: false,
+  source_kept: true,
+  ...over,
+});
+
 const permission = (over = {}) => ({
   capability: 'filesystem_read',
   wants: 'read the files in ~/Downloads',
@@ -616,6 +626,259 @@ await check('an intent Ephemeral refuses is refused here too', async () => {
 
   assert.match(seen.text, /tell me what you want the application to do/);
   assert.equal(seen.disabled, false, 'the button must come back after a refusal');
+
+  await stubbed.close();
+});
+
+// Rolling back needs a version to roll back to, and the page said nothing about
+// versions at all: everything an application had been was visible in the
+// terminal and nowhere in the window.
+await check('the page lists what an application has been', async () => {
+  const seen = await page.evaluate(
+    async ([one, two]) => {
+      const { versionsSection } = await import('./render.js');
+      const section = versionsSection([two, one]);
+      return {
+        heading: section.querySelector('h3.history')?.textContent,
+        entries: [...section.querySelectorAll('li.version')].map((item) => item.textContent),
+        first: section.querySelector('li.version')?.dataset.digest,
+      };
+    },
+    [version(), version({ digest: 'ffff1111', sequence: 3, current: true })],
+  );
+
+  assert.match(seen.heading, /2 versions/);
+  assert.equal(seen.entries.length, 2);
+  assert.match(seen.entries[0], /Version 3/);
+  assert.equal(seen.first, 'ffff1111', 'newest first, as the service layer ordered them');
+});
+
+// Three states, three different offers. The one that matters is the middle one:
+// a version can be in the history with its source gone, and a button offering
+// to return to it is a button that cannot work.
+await check('only a version that can be returned to offers to be', async () => {
+  const seen = await page.evaluate(
+    async ([kept, gone, unknown, now]) => {
+      const { versionItem } = await import('./render.js');
+      const rendered = (data) => {
+        const item = versionItem(data);
+        return {
+          offers: item.querySelector('button.rollback') !== null,
+          text: item.textContent,
+        };
+      };
+      return {
+        kept: rendered(kept),
+        gone: rendered(gone),
+        unknown: rendered(unknown),
+        now: rendered(now),
+      };
+    },
+    [
+      version(),
+      version({ source_kept: false }),
+      version({ source_kept: null }),
+      version({ current: true }),
+    ],
+  );
+
+  assert.equal(seen.kept.offers, true);
+  assert.equal(seen.gone.offers, false, 'a version whose source is gone cannot be returned to');
+  assert.match(seen.gone.text, /nothing to go back to/);
+  assert.equal(seen.unknown.offers, false, 'an unchecked answer is not a yes');
+  assert.equal(seen.now.offers, false, 'the version it is on is not somewhere to go');
+  assert.match(seen.now.text, /version it is on now/);
+});
+
+// Rolling back clears the build and can take permissions away, and clicking
+// again does not undo either. The cost is said before the second click, the way
+// a critical permission takes a typed word rather than a reflex.
+await check('rolling back is asked twice, and says what it costs first', async () => {
+  const seen = await page.evaluate(async (data) => {
+    const { rollbackConfirm } = await import('./render.js');
+    const controls = rollbackConfirm(data);
+    return {
+      text: controls.querySelector('.consequence')?.textContent,
+      confirms: controls.querySelector('button.confirm-rollback')?.dataset.digest,
+      cancels: controls.querySelector('button.cancel-rollback') !== null,
+    };
+  }, version());
+
+  assert.match(seen.text, /Version 2|version 2/);
+  assert.match(seen.text, /image is cleared/);
+  assert.match(seen.text, /taken back/, 'the permissions it costs are said before the click');
+  assert.equal(seen.confirms, 'a1b2c3d4e5f6');
+  assert.equal(seen.cancels, true, 'saying no must be one click');
+});
+
+// What a rollback took away is the sentence somebody has to act on, and it
+// arrives in the service layer's words so the window cannot report it
+// differently from the terminal.
+await check('what a rollback did is shown in the words the service layer used', async () => {
+  const seen = await page.evaluate(async (done) => {
+    const { rollbackNotice } = await import('./render.js');
+    const notice = rollbackNotice(done);
+    return {
+      headline: notice.querySelector('.headline')?.textContent,
+      caution: notice.querySelector('.caution')?.textContent,
+      note: notice.querySelector('.note')?.textContent,
+      dismissable: notice.querySelector('button.dismiss') !== null,
+      quiet: rollbackNotice({ ...done, caution: null }).querySelector('.caution'),
+    };
+  }, {
+    app: 'csv-comparator',
+    sequence: 1,
+    digest: 'a1b2c3d4e5f6',
+    grants_withdrawn: 1,
+    newly_requested: 1,
+    headline: 'Rolled csv-comparator back to version 1 (a1b2c3d4e5f6).',
+    caution: 'This version asks for 1 thing(s) the one it replaced had stopped needing.',
+    note: 'The built image was cleared.',
+  });
+
+  assert.match(seen.headline, /Rolled csv-comparator back to version 1/);
+  assert.match(seen.caution, /stopped needing/);
+  assert.match(seen.note, /built image was cleared/);
+  assert.equal(seen.quiet, null, 'a caution nobody needs is a caution nobody reads');
+  assert.equal(seen.dismissable, true, 'a banner pinned over the page has to be dismissable');
+});
+
+// The window is the asking half. What it must not do is compose a rollback of
+// its own: the digest it sends is one the service layer gave it.
+await check('the window rolls back through the service layer and shows what it said', async () => {
+  const stubbed = await browser.newPage();
+
+  await stubbed.addInitScript(
+    ([app, restorable]) => {
+      window.__asked = [];
+      const detail = {
+        summary: app,
+        explanation: 'It is ready.',
+        description: 'Built, validated and available to run.',
+        runtime: null,
+        limits: { description: 'half a core', cpu_millis: 500, memory_mib: 512, storage_mib: 512 },
+        permissions: { isolated: true, allowed: [], outstanding: [] },
+        versions: [
+          { ...restorable, sequence: 2, digest: 'ffff1111', current: true },
+          restorable,
+        ],
+        retention: 'a week',
+      };
+
+      window.__TAURI__ = {
+        core: {
+          invoke: async (command, args) => {
+            window.__asked.push([command, args]);
+            if (command === 'applications') return [app];
+            if (command === 'application') return detail;
+            if (command === 'rollback') {
+              return {
+                app: app.id,
+                sequence: 1,
+                digest: args.version,
+                grants_withdrawn: 2,
+                newly_requested: 1,
+                headline: `Rolled ${app.id} back to version 1 (${args.version}).`,
+                caution: 'Two grants were withdrawn.',
+                note: 'The built image was cleared.',
+              };
+            }
+            throw new Error(`no such command: ${command}`);
+          },
+        },
+      };
+    },
+    [summary(), version()],
+  );
+
+  await stubbed.goto(origin);
+  await stubbed.click('li.application');
+  await stubbed.waitForSelector('li.version button.rollback');
+
+  // One click offers; it must not have rolled anything back yet.
+  await stubbed.click('li.version button.rollback');
+  const askedAfterFirstClick = await stubbed.evaluate(() =>
+    window.__asked.filter(([command]) => command === 'rollback').length,
+  );
+
+  await stubbed.click('button.confirm-rollback');
+  await stubbed.waitForSelector('#notice:not([hidden])');
+
+  const seen = await stubbed.evaluate(() => ({
+    rollbacks: window.__asked.filter(([command]) => command === 'rollback'),
+    notice: document.getElementById('notice').textContent,
+    problem: document.getElementById('problem').hidden,
+  }));
+
+  assert.equal(askedAfterFirstClick, 0, 'the first click asks, it does not act');
+  assert.equal(seen.rollbacks.length, 1);
+  assert.equal(seen.rollbacks[0][1].version, 'a1b2c3d4e5f6', 'the digest is the one it was given');
+  assert.match(seen.notice, /Rolled csv-comparator back to version 1/);
+  assert.match(seen.notice, /Two grants were withdrawn/, 'the caution has to survive the redraw');
+  assert.equal(seen.problem, true, 'a rollback that worked is not a problem');
+
+  // Pinned over the page, so it has to be possible to put down.
+  await stubbed.click('#notice button.dismiss');
+  assert.equal(
+    await stubbed.evaluate(() => document.getElementById('notice').hidden),
+    true,
+    'dismissing puts the notice away',
+  );
+
+  await stubbed.close();
+});
+
+// A refusal from the service layer is the person's answer, in its words. The
+// window must not turn "there is nothing to go back to" into a stack trace, and
+// must not leave a notice claiming something happened.
+await check('a refused rollback says why, in the core\'s own words', async () => {
+  const stubbed = await browser.newPage();
+
+  await stubbed.addInitScript(
+    ([app, restorable]) => {
+      const detail = {
+        summary: app,
+        explanation: 'It is ready.',
+        description: 'Built, validated and available to run.',
+        runtime: null,
+        limits: { description: 'half a core', cpu_millis: 500, memory_mib: 512, storage_mib: 512 },
+        permissions: { isolated: true, allowed: [], outstanding: [] },
+        versions: [{ ...restorable, sequence: 2, digest: 'ffff1111', current: true }, restorable],
+        retention: 'a week',
+      };
+
+      window.__TAURI__ = {
+        core: {
+          invoke: async (command) => {
+            if (command === 'applications') return [app];
+            if (command === 'application') return detail;
+            if (command === 'rollback') {
+              throw new Error(
+                'version a1b2c3d4e5f6 of csv-comparator is recorded but its source is not on ' +
+                  'this machine, so there is nothing to go back to.',
+              );
+            }
+            throw new Error(`no such command: ${command}`);
+          },
+        },
+      };
+    },
+    [summary(), version()],
+  );
+
+  await stubbed.goto(origin);
+  await stubbed.click('li.application');
+  await stubbed.click('li.version button.rollback');
+  await stubbed.click('button.confirm-rollback');
+  await stubbed.waitForSelector('#problem:not([hidden])');
+
+  const seen = await stubbed.evaluate(() => ({
+    problem: document.getElementById('problem').textContent,
+    notice: document.getElementById('notice').hidden,
+  }));
+
+  assert.match(seen.problem, /nothing to go back to/);
+  assert.equal(seen.notice, true, 'nothing happened, so nothing is announced');
 
   await stubbed.close();
 });

@@ -144,6 +144,9 @@ impl ApplicationDetail {
     /// Builds a detail view.
     #[must_use]
     pub fn of(manifest: &AppManifest, ledger: &PermissionLedger) -> Self {
+        let current = manifest
+            .current_version()
+            .map(|version| version.digest.clone());
         let mut versions: Vec<VersionView> = manifest
             .versions
             .iter()
@@ -152,6 +155,11 @@ impl ApplicationDetail {
                 sequence: version.sequence,
                 reason: version.reason.clone(),
                 created_at: version.created_at,
+                current: current.as_ref() == Some(&version.digest),
+                // Unknown here, and said so: this constructor has a ledger and
+                // no store, and whether the bytes are still on disk is a
+                // question only a store can answer.
+                source_kept: None,
             })
             .collect();
         versions.reverse();
@@ -340,6 +348,24 @@ pub struct VersionView {
 
     /// When it was produced.
     pub created_at: Timestamp,
+
+    /// Whether this is the version the application is on now.
+    ///
+    /// Carried rather than inferred from position, because "the newest entry"
+    /// and "the current version" stop being the same thing the moment somebody
+    /// rolls back — the history keeps the version rolled away from, and a
+    /// client that assumed otherwise would offer to return to the version it is
+    /// already on.
+    pub current: bool,
+
+    /// Whether this version's source is still on this machine.
+    ///
+    /// `None` means nobody checked — the view was built without a store, which
+    /// is a different statement from "the source is gone". A client deciding
+    /// whether to offer a rollback should treat only `Some(true)` as yes;
+    /// guessing at `None` is how a window offers to restore something that
+    /// cannot be restored.
+    pub source_kept: Option<bool>,
 }
 
 /// One entry from the security record.

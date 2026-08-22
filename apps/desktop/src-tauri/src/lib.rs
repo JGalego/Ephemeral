@@ -178,6 +178,28 @@ fn decide(id: String, capability: String, target: Option<String>, allow: bool) -
         .map_err(|error| format!("That decision could not be saved: {error}"))
 }
 
+/// Returns an application to a version it used to be.
+///
+/// The whole operation is `ephemeral-api`'s: the source on disk going back, the
+/// manifest recording it, the built image being cleared, and the withdrawal of
+/// any grant the older version would otherwise inherit. Those four are one act,
+/// and a window that sequenced them itself would eventually sequence them
+/// differently from the terminal — with the difference showing up as an
+/// application holding a permission nobody approved for the code it now runs.
+///
+/// `version` is a digest, matched by prefix against what this application
+/// actually recorded. The window sends one it was given rather than one it
+/// composed, but the matching is the service layer's either way: a digest that
+/// is not in the history is not a version of this application.
+#[tauri::command]
+fn rollback(id: String, version: String) -> Result<ephemeral_api::Rollback, Failure> {
+    let mut workspace = open()?;
+    let app =
+        AppId::parse(&id).map_err(|error| format!("{id} is not an application id: {error}"))?;
+
+    ephemeral_api::rollback(&mut workspace, &app, &version)
+}
+
 /// Which view shape this window speaks.
 ///
 /// Exposed so the window can refuse to run against a service it does not
@@ -201,6 +223,7 @@ pub fn run() {
             application,
             activity,
             decide,
+            rollback,
             api_version
         ])
         .run(tauri::generate_context!())

@@ -187,3 +187,80 @@ form.composer p.note {
   font-size: 0.85rem;
   color: var(--quiet);
 }
+
+/* What an application has been. Quiet by default: the version somebody is on is
+   rarely what they came for, and the list of the ones they are not on is never
+   what they came for. */
+h3.history { font-size: 0.95rem; margin: 1.5rem 0 0.5rem; }
+
+li.version {
+  border-left: 3px solid var(--edge);
+  padding: 0.4rem 0 0.4rem 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+li.version.current { border-left-color: var(--low); }
+
+li.version .what { font-variant-numeric: tabular-nums; }
+li.version .now { color: var(--low); font-size: 0.9rem; }
+
+/* A version whose source is gone is drawn as an absence rather than a warning.
+   Nothing is wrong; there is simply nothing to go back to. */
+li.version .gone { color: var(--quiet); font-size: 0.9rem; }
+
+.revert { margin-top: 0.4rem; }
+.revert button {
+  font: inherit;
+  padding: 0.2rem 0.7rem;
+  margin-right: 0.4rem;
+  border: 1px solid var(--edge);
+  border-radius: 5px;
+  background: white;
+  cursor: pointer;
+}
+.revert button.cancel-rollback { color: var(--quiet); }
+.revert button:disabled { color: var(--quiet); cursor: progress; }
+
+/* Said before the click, not after it. Rolling back clears a build and can take
+   permissions away, and neither is undone by clicking again. */
+.revert .consequence {
+  margin: 0 0 0.5rem;
+  font-size: 0.9rem;
+  color: var(--medium);
+}
+
+/* Pinned like the problem banner, for the same reason: what a rollback took
+   away is the sentence somebody has to act on, and one rendered below the fold
+   is one nobody reads. Neutral rather than alarming — a rollback that did
+   exactly what was asked is not a failure. */
+.notice {
+  position: fixed;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9;
+  max-width: min(40rem, calc(100vw - 2rem));
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  background: #f7f9f8;
+  box-shadow: 0 2px 12px rgb(0 0 0 / 12%);
+}
+
+.notice p { margin: 0 0 0.4rem; }
+.notice p:last-child { margin-bottom: 0; }
+.notice .headline { font-weight: 600; }
+.notice .caution { color: var(--medium); }
+.notice .note { color: var(--quiet); font-size: 0.9rem; }
+
+/* Something this long, pinned over the page, needs a way to be put down. */
+.notice button.dismiss {
+  font: inherit;
+  margin-top: 0.4rem;
+  padding: 0.15rem 0.7rem;
+  border: 1px solid var(--edge);
+  border-radius: 5px;
+  background: white;
+  color: var(--quiet);
+  cursor: pointer;
+}
