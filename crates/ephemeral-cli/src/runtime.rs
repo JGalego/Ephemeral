@@ -800,7 +800,8 @@ fn specification(workspace: &Workspace, manifest: &AppManifest) -> Result<Contai
     let Some(runtime) = &manifest.runtime else {
         bail!(
             "{} has no runtime yet — it is a record of an intent, not an application. \
-             Generating one arrives in Phase 2; see docs/roadmap.md.",
+             Run `ephemeral generate {}` to write and build one.",
+            manifest.id,
             manifest.id
         );
     };
@@ -1107,7 +1108,10 @@ mod tests {
             .to_string();
 
         assert!(error.contains("no runtime yet"), "{error}");
-        assert!(error.contains("Phase 2"), "{error}");
+        assert!(
+            error.contains("ephemeral generate"),
+            "an application that has not been built yet is told how to build it: {error}"
+        );
     }
 
     #[test]

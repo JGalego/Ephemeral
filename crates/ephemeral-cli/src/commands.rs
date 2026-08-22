@@ -63,10 +63,12 @@ pub(crate) fn create(home: &Path, intent: &str, name: Option<&str>, retention: &
     println!();
     println!(
         "{}",
-        output::dim(
-            "Generation arrives in Phase 2, so nothing is being built yet. Everything else \
-             works: try `ephemeral inspect`, `ephemeral grant`, `ephemeral logs`."
-        )
+        output::dim(&format!(
+            "Nothing has been written or run yet: asking and building are separate acts, so \
+             that what you asked for is recorded before anything acts on it. \
+             `ephemeral generate {}` writes it, builds it and tests it.",
+            manifest.id
+        ))
     );
 
     Ok(())

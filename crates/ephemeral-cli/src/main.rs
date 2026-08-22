@@ -5,12 +5,13 @@
 //! other can too, and a permission decision means the same thing in both
 //! ([`ARCHITECTURE.md` §5](https://github.com/JGalego/Ephemeral/blob/main/ARCHITECTURE.md)).
 //!
-//! Phase 1 gives you everything that does not need a model provider: creating
-//! an application record, inspecting it, moving it through its lifecycle,
+//! Everything an application does in its life is here: asking for one, having
+//! it written and built, inspecting it, moving it through its lifecycle,
 //! granting and revoking permissions, running it in a container under exactly
-//! those permissions, reading the audit trail, and diagnosing the environment.
-//! Generating an application from a description arrives in Phase 2, and the
-//! commands that need it say so plainly rather than pretending.
+//! those permissions, returning it to a version it used to be, reading the
+//! audit trail, and diagnosing the environment. What needs something this
+//! machine may not have — a container runtime, a model provider — says so
+//! plainly rather than pretending.
 
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
@@ -57,9 +58,12 @@ struct Cli {
 enum Command {
     /// Ask for an application.
     #[command(
-        long_about = "Records what you want. Generation arrives in Phase 2; until then \
-                            this creates the application's identity, intent and retention \
-                            policy so the rest of its life can be exercised."
+        long_about = "Records what you want, and nothing else: this creates the \
+                            application's identity, intent and retention policy.\n\n\
+                            Asking and building are separate acts, so that what you asked \
+                            for is written down before anything acts on it — and so that a \
+                            request costs nothing until you decide to spend on it. \
+                            `ephemeral generate` is what writes, builds and tests it."
     )]
     Create {
         /// What you want the application to do, in your own words.
