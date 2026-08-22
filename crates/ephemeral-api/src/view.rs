@@ -101,7 +101,12 @@ impl ApplicationSummary {
             state: state.headline().to_owned(),
             state_kind: format!("{:?}", state.kind()).to_lowercase(),
             runnable: state.is_runnable(),
-            running: state.requires_runtime(),
+            // What it *holds*, not what it must know. `requires_runtime` is
+            // true of a built application that has never been started — it
+            // means "must already know what it runs on" — and reading it as
+            // "running" put a Stop button on an idle application in the desktop
+            // window, with no way to archive it.
+            running: state.holds_runtime_resources(),
             put_away: matches!(state, LifecycleState::Archived | LifecycleState::Deleted),
             granted: held.len(),
             highest_granted_risk,
@@ -137,6 +142,19 @@ pub struct ApplicationDetail {
 
     /// How long it is kept.
     pub retention: String,
+
+    /// Which lifecycle events a person could raise right now, by name.
+    ///
+    /// A client that works out its own buttons from a handful of booleans ends
+    /// up offering one the state machine refuses — which is how the desktop
+    /// window came to offer "Stop" for an application that was merely built.
+    /// The machine already knows the answer
+    /// ([`Lifecycle::available_events`](ephemeral_core::lifecycle::Lifecycle::available_events)),
+    /// so it is carried here and every client draws the same set.
+    ///
+    /// Only what the *user* may raise. Ephemeral's own events — a build
+    /// finishing, a container crashing — are not buttons.
+    pub can: Vec<String>,
 }
 
 impl ApplicationDetail {
@@ -184,6 +202,12 @@ impl ApplicationDetail {
             permissions: PermissionsView::of(manifest, ledger),
             versions,
             retention: manifest.metadata.retention.headline().clone(),
+            can: manifest
+                .lifecycle
+                .available_events(ephemeral_core::Actor::User)
+                .into_iter()
+                .map(|event| event.as_str().to_owned())
+                .collect(),
         }
     }
 }
@@ -697,6 +721,124 @@ mod tests {
 
         let parsed: ApplicationDetail = serde_json::from_str(&json).expect("readable");
         assert_eq!(parsed, detail);
+    }
+
+    /// Drives a manifest to a state, through the transitions that reach it.
+    /// There is no way to set a lifecycle state directly, which is the point.
+    fn moved_to(events: &[(ephemeral_core::lifecycle::LifecycleEvent, Actor)]) -> AppManifest {
+        use ephemeral_core::lifecycle::TransitionRequest;
+
+        let mut manifest = manifest();
+        manifest.runtime = Some(ephemeral_core::manifest::RuntimeSpec::docker_job(
+            "python:3.12-slim",
+            vec!["python".to_owned()],
+        ));
+
+        for (event, actor) in events {
+            manifest
+                .lifecycle
+                .apply(TransitionRequest::new(*event, *actor, "in a test"))
+                .expect("a route that exists");
+        }
+
+        manifest
+    }
+
+    fn to_ready() -> Vec<(ephemeral_core::lifecycle::LifecycleEvent, Actor)> {
+        use ephemeral_core::lifecycle::LifecycleEvent as E;
+
+        vec![
+            (E::Plan, Actor::Ephemeral),
+            (E::PlanCompleted, Actor::Ephemeral),
+            (E::GenerationCompleted, Actor::Agent),
+            (E::BuildSucceeded, Actor::Runtime),
+            (E::ValidationPassed, Actor::Ephemeral),
+        ]
+    }
+
+    /// `running` means a container exists, and nothing else. It once meant
+    /// "must know what it runs on", which is true of an application that has
+    /// only ever been built — and the desktop window, reading it literally,
+    /// offered Stop for something that was not started and no way to archive it.
+    #[test]
+    fn a_built_application_that_was_never_started_is_not_running() {
+        use ephemeral_core::lifecycle::LifecycleEvent as E;
+
+        let ready = moved_to(&to_ready());
+        let summary = ApplicationSummary::of(&ready, &PermissionLedger::new());
+
+        assert_eq!(summary.state, "Ready");
+        assert!(summary.runnable, "it can be started");
+        assert!(!summary.running, "but nothing is running");
+
+        let mut route = to_ready();
+        route.extend([(E::Start, Actor::User), (E::Started, Actor::Runtime)]);
+        let started = ApplicationSummary::of(&moved_to(&route), &PermissionLedger::new());
+
+        assert!(started.running, "now something is");
+        assert!(!started.runnable, "and it cannot be started again");
+    }
+
+    /// A client that infers its buttons from booleans eventually offers one the
+    /// state machine refuses. The available events travel with the view so that
+    /// every client offers the same set — including the two the window was
+    /// missing entirely, because no boolean described them.
+    #[test]
+    fn the_page_carries_what_a_person_may_actually_do() {
+        use ephemeral_core::lifecycle::LifecycleEvent as E;
+
+        let ready = ApplicationDetail::of(&moved_to(&to_ready()), &PermissionLedger::new());
+
+        assert!(ready.can.contains(&"start".to_owned()));
+        assert!(ready.can.contains(&"archive".to_owned()));
+        assert!(
+            !ready.can.contains(&"pause".to_owned()),
+            "nothing to pause yet"
+        );
+
+        let mut route = to_ready();
+        route.extend([(E::Start, Actor::User), (E::Started, Actor::Runtime)]);
+        let running = ApplicationDetail::of(&moved_to(&route), &PermissionLedger::new());
+
+        assert!(running.can.contains(&"pause".to_owned()));
+        assert!(running.can.contains(&"stop".to_owned()));
+        assert!(
+            !running.can.contains(&"archive".to_owned()),
+            "not while it holds a container"
+        );
+
+        route.push((E::Pause, Actor::User));
+        let paused = ApplicationDetail::of(&moved_to(&route), &PermissionLedger::new());
+
+        assert!(paused.can.contains(&"resume".to_owned()));
+        assert!(!paused.can.contains(&"pause".to_owned()));
+    }
+
+    /// Only a person's events are buttons. A build finishing or a container
+    /// crashing is something Ephemeral or the runtime reports, and a client that
+    /// could raise those could drive an application into a state nobody asked
+    /// for.
+    #[test]
+    fn what_only_ephemeral_may_raise_is_not_offered_as_a_button() {
+        let building = moved_to(&[
+            (
+                ephemeral_core::lifecycle::LifecycleEvent::Plan,
+                Actor::Ephemeral,
+            ),
+            (
+                ephemeral_core::lifecycle::LifecycleEvent::PlanCompleted,
+                Actor::Ephemeral,
+            ),
+            (
+                ephemeral_core::lifecycle::LifecycleEvent::GenerationCompleted,
+                Actor::Agent,
+            ),
+        ]);
+
+        let detail = ApplicationDetail::of(&building, &PermissionLedger::new());
+
+        assert!(!detail.can.contains(&"build_succeeded".to_owned()));
+        assert!(!detail.can.contains(&"build_failed".to_owned()));
     }
 
     #[test]

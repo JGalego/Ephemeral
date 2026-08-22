@@ -358,6 +358,35 @@ fn halt(id: String) -> Result<(), Failure> {
     .map_err(|error| format!("{error:#}"))
 }
 
+/// Suspends a running application, or picks a suspended one back up.
+///
+/// Pausing keeps the container and everything in it — the difference from Stop,
+/// which is why both are offered rather than one. Matched against a fixed pair
+/// for the same reason `move_app` is: a client that could name any lifecycle
+/// event could drive an application into a state nobody asked for.
+#[tauri::command]
+fn hold(id: String, event: String) -> Result<String, Failure> {
+    let mut workspace = open()?;
+    let mut manifest = load(&workspace, &id)?;
+
+    match event.as_str() {
+        "pause" => ephemeral_engine::container::pause(
+            &mut workspace,
+            &mut manifest,
+            "paused from the desktop window",
+        ),
+        "resume" => ephemeral_engine::container::resume(
+            &mut workspace,
+            &mut manifest,
+            "resumed from the desktop window",
+        ),
+        other => return Err(format!("{other} is not something this window can do.")),
+    }
+    .map_err(|error| format!("{error:#}"))?;
+
+    Ok(manifest.lifecycle.state().headline().to_owned())
+}
+
 /// Brings an application's record back in line with its container.
 ///
 /// A window can ask this on a timer, which is the closest thing it has to the
@@ -630,6 +659,7 @@ pub fn run() {
             rollback,
             start,
             halt,
+            hold,
             refresh,
             logs,
             move_app,

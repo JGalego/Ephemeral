@@ -492,7 +492,9 @@ document.addEventListener('click', (event) => {
     return;
   }
 
-  const act = event.target.closest('button.start, button.halt, button.generate, button.move, button.purge');
+  const act = event.target.closest(
+    'button.start, button.halt, button.hold, button.generate, button.move, button.purge',
+  );
   if (act) {
     const page = act.closest('.detail');
     const id = page.dataset.id;
@@ -501,6 +503,10 @@ document.addEventListener('click', (event) => {
       start(id, page.querySelector('input.arguments')?.value ?? '');
     } else if (act.classList.contains('halt')) {
       simply('halt', { id }, id);
+    } else if (act.classList.contains('hold')) {
+      // Pausing keeps the container and everything in it; stopping does not.
+      // Both are the terminal's, and until now only one of them was here.
+      simply('hold', { id, event: act.dataset.event }, id);
     } else if (act.classList.contains('generate')) {
       beginGenerating(id);
     } else if (act.classList.contains('purge')) {

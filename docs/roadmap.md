@@ -319,6 +319,8 @@ and the terminal show the same views worded identically.
 | Ephemeral's own authority, granted and taken back from the window | ✅ |
 | What this machine can and cannot do, and the security record, on screen | ✅ |
 | The record reconciled against the containers before it is drawn | ✅ |
+| Suspending and picking an application back up, as the terminal can | ✅ |
+| Buttons taken from the lifecycle's own answer rather than inferred | ✅ |
 | The real window run and filmed under WebKitGTK, not only in Chromium | ✅ |
 
 **Done when:** somebody can do everything the CLI does without opening a
@@ -357,6 +359,19 @@ it. A window is already redrawing, so it now reconciles first and draws second �
 which is what a person opening it is trying to find out. The lesson is the older
 one restated: a surface nobody has run is a surface with problems no test finds,
 and that stays true right up until somebody runs it.
+
+**Listing the terminal's commands against the window's found two more gaps.**
+Pause and resume were simply absent — the terminal has had both since Phase 1,
+and "everything the terminal does" is the kind of claim that survives until
+somebody writes the two lists side by side. The other was subtler: the window
+worked out its own buttons from a few booleans on the view, and one of those
+booleans meant "must know what it runs on" rather than "is running", so a built
+application that had never been started was offered Stop and could not be
+archived. The state machine has always been able to answer this exactly —
+`available_events(Actor::User)`, whose own documentation says it exists so that
+"a user is never shown an action that would be refused" — and nothing was
+asking it. The service layer carries that answer now, as `can`, and both clients
+draw from it.
 
 **Two things stayed with the terminal, deliberately.** Granting Ephemeral a
 *scoped* authority (`read:~/Downloads/**`) means choosing a region of the

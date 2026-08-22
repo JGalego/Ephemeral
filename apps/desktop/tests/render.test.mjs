@@ -942,6 +942,79 @@ await check('a refused rollback says why, in the core\'s own words', async () =>
   await stubbed.close();
 });
 
+// Pausing keeps the container and everything in it; stopping does not. The
+// terminal has had both since Phase 1 and the window had only one, which is the
+// sort of gap "everything the terminal does" hides until somebody lists it.
+await check('a running application can be suspended and picked back up', async () => {
+  const stubbed = await browser.newPage();
+
+  await stubbed.addInitScript((app) => {
+    window.__asked = [];
+    let paused = false;
+
+    const detail = () => ({
+      summary: {
+        ...app,
+        state: paused ? 'Paused' : 'Running',
+        state_kind: paused ? 'idle' : 'active',
+        running: true,
+        runnable: false,
+      },
+      explanation: paused ? 'The app is suspended.' : 'It is running.',
+      description: 'Running',
+      runtime: { kind: 'docker', isolation: 'in a container', runs_locally: true },
+      limits: { description: 'half a core', cpu_millis: 500, memory_mib: 512, storage_mib: 512 },
+      permissions: { isolated: true, allowed: [], outstanding: [] },
+      versions: [],
+      retention: 'a week',
+      can: paused ? ['resume', 'stop', 'delete'] : ['pause', 'stop', 'delete'],
+    });
+
+    window.__TAURI__ = {
+      core: {
+        invoke: async (command, args) => {
+          window.__asked.push([command, args]);
+          if (command === 'applications') return [detail().summary];
+          if (command === 'application') return detail();
+          if (command === 'hold') {
+            paused = args.event === 'pause';
+            return paused ? 'Paused' : 'Running';
+          }
+          if (command === 'providers') return ['mock'];
+          if (command === 'sweep') return [];
+          if (command === 'refresh') return null;
+          if (command === 'activity' || command === 'diagnostics' || command === 'authority') {
+            return [];
+          }
+          throw new Error(`no such command: ${command}`);
+        },
+      },
+    };
+  }, summary({ state: 'Running', state_kind: 'active', running: true, runnable: false }));
+
+  await stubbed.goto(origin);
+  await stubbed.click('li.application');
+  await stubbed.waitForSelector('button.hold');
+
+  await stubbed.click('button.hold');
+  await stubbed.waitForFunction(
+    () => document.querySelector('button.hold')?.textContent === 'Resume',
+  );
+
+  await stubbed.click('button.hold');
+  await stubbed.waitForFunction(
+    () => document.querySelector('button.hold')?.textContent === 'Pause',
+  );
+
+  const held = await stubbed.evaluate(() =>
+    window.__asked.filter(([command]) => command === 'hold').map(([, args]) => args.event),
+  );
+
+  assert.deepEqual(held, ['pause', 'resume'], 'both halves reach the engine, by name');
+
+  await stubbed.close();
+});
+
 // An application that crashed while nobody was looking still reads as running
 // until something asks. The terminal has `watch` for that; a window is already
 // redrawing, so it asks before it draws. Filming the real window is what showed
@@ -992,34 +1065,43 @@ await check('the window reconciles before it draws', async () => {
 });
 
 // Everything the terminal can do, the window has to offer — and only what the
-// application can actually do right now. Anything else is absent rather than
-// disabled: a greyed-out row is a puzzle, and the state is already in words.
+// application can actually do right now. Which is which is the lifecycle's
+// answer, carried in `can`: the window used to work it out from booleans and
+// offered Stop for an application that had only been built. Anything it cannot
+// do is absent rather than disabled: a greyed-out row is a puzzle, and the
+// state is already in words.
+//
+// Every `can` below is what `Lifecycle::available_events(Actor::User)` really
+// returns for that state — pinned on the Rust side in `ephemeral-api`.
 await check('the page offers what this application can actually do', async () => {
   const seen = await page.evaluate(async ([base, detail]) => {
     const { actions } = await import('./render.js');
-    const labels = (over, runtime = detail.runtime) =>
+    const labels = (can, over = {}, runtime = detail.runtime) =>
       [
-        ...actions({ ...detail, runtime, summary: { ...base, ...over } }).querySelectorAll(
+        ...actions({ ...detail, can, runtime, summary: { ...base, ...over } }).querySelectorAll(
           'button',
         ),
       ].map((button) => button.textContent);
 
     return {
-      ready: labels({}),
-      running: labels({ running: true, runnable: true, state_kind: 'running' }),
+      ready: labels(['start', 'archive', 'delete']),
+      running: labels(['pause', 'stop', 'delete'], { running: true, state_kind: 'running' }),
+      paused: labels(['resume', 'stop', 'delete'], { running: true, state_kind: 'idle' }),
       // Never generated: it has no runtime at all, which is how the page
       // knows there is nothing built to run.
-      requested: labels({ runnable: false, state_kind: 'working' }, null),
-      archived: labels({ runnable: false, put_away: true, state_kind: 'archived' }),
-      deleted: labels({ runnable: false, put_away: true, state_kind: 'deleted' }),
+      requested: labels(['cancel', 'delete'], { runnable: false, state_kind: 'working' }, null),
+      archived: labels(['restore', 'delete'], { put_away: true, state_kind: 'archived' }),
+      deleted: labels(['restore'], { put_away: true, state_kind: 'deleted' }),
     };
   }, [summary(), { runtime: { kind: 'docker' }, providers: ['mock'] }]);
 
   assert.deepEqual(seen.ready, ['Run', 'Archive', 'Delete']);
-  assert.deepEqual(seen.running, ['Stop', 'Delete'], 'a running application is not archived');
+  assert.deepEqual(seen.running, ['Stop', 'Pause', 'Delete'], 'a running application is not archived');
+  assert.deepEqual(seen.paused, ['Stop', 'Resume', 'Delete'], 'and a paused one can be picked up');
   assert.ok(seen.requested.includes('Generate'), 'nothing built yet, so it offers to build');
-  assert.ok(seen.archived.includes('Restore'));
-  assert.ok(seen.deleted.includes('Purge for good'), 'and the last step is its own button');
+  assert.ok(!seen.requested.includes('Run'), 'and nothing to run until it is');
+  assert.deepEqual(seen.archived, ['Restore', 'Delete']);
+  assert.deepEqual(seen.deleted, ['Restore', 'Purge for good'], 'the last step is its own button');
 });
 
 // Generation takes minutes. The window says so, says where it has got to in the
@@ -1181,6 +1263,8 @@ await check('somebody can generate and run an application without a terminal', a
       permissions: { isolated: true, allowed: [], outstanding: [] },
       versions: [],
       retention: 'a week',
+      // What the lifecycle would really allow at each of these two points.
+      can: over.built ? ['start', 'archive', 'delete'] : ['cancel', 'delete'],
     });
 
     window.__TAURI__ = {

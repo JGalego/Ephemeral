@@ -402,16 +402,20 @@ export function rollbackNotice(done) {
 
 /// What can be done to this application right now, as buttons.
 ///
-/// Driven by the state the service layer reports rather than by what the window
-/// remembers: an application that crashed while nobody was looking should offer
-/// what it can actually do next, and the only place that is known is the
-/// lifecycle. Anything it cannot do is absent rather than disabled — a row of
-/// greyed-out buttons is a puzzle, and the state is already on the page in
-/// words.
+/// Driven by the events the lifecycle says a person may raise, not by this
+/// window's reading of a few booleans. Those two are not the same thing: the
+/// window used to work out its own buttons, and offered Stop for an application
+/// that had only been built. The state machine already answers this exactly
+/// (`available_events`), the service layer carries the answer as `can`, and
+/// every client draws the same set.
+///
+/// Anything it cannot do is absent rather than disabled — a row of greyed-out
+/// buttons is a puzzle, and the state is already on the page in words.
 export function actions(detail) {
   const row = element('div', 'actions');
   const state = detail.summary.state_kind;
   const built = detail.runtime !== null && detail.runtime !== undefined;
+  const can = new Set(detail.can ?? []);
 
   const add = (className, label, dataset = {}) => {
     const button = element('button', className, label);
@@ -420,10 +424,17 @@ export function actions(detail) {
     return button;
   };
 
-  if (detail.summary.running) {
-    add('halt', 'Stop');
-  } else if (detail.summary.runnable) {
+  if (can.has('start')) {
     add('start', 'Run');
+  }
+  if (can.has('stop')) {
+    add('halt', 'Stop');
+  }
+  if (can.has('pause')) {
+    add('hold', 'Pause', { event: 'pause' });
+  }
+  if (can.has('resume')) {
+    add('hold', 'Resume', { event: 'resume' });
   }
 
   // Generating is offered when there is nothing built yet, and when the last
@@ -446,15 +457,18 @@ export function actions(detail) {
     add('generate', built ? 'Generate again' : 'Generate');
   }
 
-  if (detail.summary.put_away) {
+  if (can.has('restore')) {
     add('move', 'Restore', { event: 'restore' });
-  } else if (!detail.summary.running) {
+  }
+  if (can.has('archive')) {
     add('move', 'Archive', { event: 'archive' });
   }
 
-  if (state !== 'deleted') {
+  // Purging is not a lifecycle event: a deleted application has nowhere left to
+  // go, and purging removes the record rather than moving it.
+  if (can.has('delete')) {
     add('move danger', 'Delete', { event: 'delete' });
-  } else {
+  } else if (state === 'deleted') {
     add('purge danger', 'Purge for good');
   }
 
@@ -757,7 +771,7 @@ export function applicationDetail(detail) {
 
   page.appendChild(element('p', 'limits', detail.limits.description));
   page.appendChild(actions(detail));
-  if (detail.summary.runnable && !detail.summary.running) page.appendChild(runPanel(detail));
+  if ((detail.can ?? []).includes('start')) page.appendChild(runPanel(detail));
   page.appendChild(element('div', 'generation-slot'));
   page.appendChild(permissionsSection(detail.permissions));
   page.appendChild(versionsSection(detail.versions ?? []));

@@ -106,7 +106,7 @@ next one starts. See [the roadmap](docs/roadmap.md) for detail, and
 | 1 | Docker runtime, sandbox, run/stop/watch, logs, cleanup | ✅ done |
 | 2 | Provider abstraction, generation agent, build/test/repair loop | ✅ done — and [watched happen](docs/roadmap.md#not-a-claim-this-time-it-was-run), against real Docker and a real model |
 | 3 | Meta-permissions, app permissions, permission UI, audit, sandboxing | ✅ done — [every promise mapped to what enforces it](docs/security/enforcement.md) |
-| 4 | Desktop application and dashboard | ✅ done — generate, run, roll back, decide, and Ephemeral's own authority, without a terminal |
+| 4 | Desktop application and dashboard | ✅ done — generate, run, pause, roll back, decide, and Ephemeral's own authority, without a terminal |
 | 5 | Windows, macOS, Linux, then mobile | 🚧 the desktop three and Android ship installable builds; iOS ships the engine, not yet an app |
 | 6 | Threat model, security testing, supply chain, release automation | 🚧 [threat model](docs/security/threat-model.md) written |
 | 7 | Sharing, publishing, and shared sessions | 🚧 publish/install done |

@@ -158,6 +158,10 @@ const base = {
     },
   ],
   retention: 'keep for 1 week',
+  // What the lifecycle allows a person to do from Ready. The window draws its
+  // buttons from this rather than guessing, so a film without it would show a
+  // page with nothing to press.
+  can: ['start', 'archive', 'delete'],
 };
 
 const browser = await chromium.launch(
@@ -211,6 +215,11 @@ await page.addInitScript(
 
       return {
         ...detail,
+        // Running applications lose Run and Archive and gain Pause and Stop —
+        // the lifecycle's answer, not this stub's opinion.
+        can: summary.running
+          ? ['pause', 'stop', 'delete']
+          : ['start', 'archive', 'delete'],
         summary: {
           ...summary,
           awaiting_decision: outstanding.length,
