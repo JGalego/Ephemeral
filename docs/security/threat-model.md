@@ -259,9 +259,19 @@ get missed.
 
 Each ✅ above corresponds to tests that fail if the property stops holding:
 `crates/ephemeral-core/tests/security.rs` for the permission and audit
-invariants, and the argv tests in `crates/ephemeral-runtime/src/docker/command.rs`
-for every confinement flag. A change that weakens one should be treated as a
-vulnerability rather than a refactor.
+invariants, the argv tests in `crates/ephemeral-runtime/src/docker/command.rs`
+for every confinement flag, and
+`crates/ephemeral-api/tests/enforcement.rs` for the rules as the running product
+applies them. A change that weakens one should be treated as a vulnerability
+rather than a refactor.
+
+**A test against the model is not a test against the product.** Every
+permission invariant here passed for as long as the two-tier model existed —
+while nothing consulted it: the sandbox was built from an application's own
+grants, so revoking Ephemeral's authority changed a ledger and nothing that
+runs. [The enforcement map](enforcement.md) is the answer to that, and it is the
+page to check first: it names, for each promise, the code that would have to be
+wrong for the promise to break.
 
 The gaps are tracked in [the roadmap](../roadmap.md). A gap that stops being
 listed without being closed is the failure mode this document exists to prevent.

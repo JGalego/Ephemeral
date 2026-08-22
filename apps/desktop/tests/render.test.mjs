@@ -76,6 +76,8 @@ const version = (over = {}) => ({
 
 const permission = (over = {}) => ({
   capability: 'filesystem_read',
+  effective: true,
+  blocked_by: null,
   wants: 'read the files in ~/Downloads',
   reason: 'to compare the files you selected',
   if_allowed: 'It can read what is at ~/Downloads.',
@@ -628,6 +630,63 @@ await check('an intent Ephemeral refuses is refused here too', async () => {
   assert.equal(seen.disabled, false, 'the button must come back after a refusal');
 
   await stubbed.close();
+});
+
+// A capability the person allowed that Ephemeral itself may not carry out is
+// held and does nothing. Drawing it as active would put authority on the screen
+// that the sandbox does not give; hiding it would erase a decision they made.
+await check('a permission Ephemeral cannot carry out is shown as doing nothing', async () => {
+  const seen = await page.evaluate(async (data) => {
+    const { permissionsSection } = await import('./render.js');
+    const section = permissionsSection({
+      isolated: true,
+      allowed: [
+        {
+          ...data,
+          effective: false,
+          blocked_by: 'read the files in ~/Downloads',
+        },
+      ],
+      outstanding: [],
+      highest_granted_risk: null,
+    });
+
+    const item = section.querySelector('li.permission');
+    return {
+      heading: section.querySelector('h3.holds')?.textContent,
+      inert: item.classList.contains('inert'),
+      effective: item.dataset.effective,
+      blocked: item.querySelector('.blocked')?.textContent,
+      offersRevoke: item.querySelector('button.revoke') !== null,
+      isolated: section.querySelector('.isolated')?.textContent,
+    };
+  }, permission());
+
+  assert.match(seen.heading, /does nothing yet|do nothing yet/);
+  assert.equal(seen.inert, true);
+  assert.equal(seen.effective, 'false');
+  assert.match(seen.blocked, /Ephemeral itself has not been allowed/);
+  assert.match(seen.blocked, /read the files/);
+  assert.equal(seen.offersRevoke, true, 'the decision is still theirs to take back');
+  assert.match(seen.isolated, /can see nothing of yours/);
+});
+
+// And one that works must not be drawn as dormant, or the marking means
+// nothing.
+await check('a permission that works is not marked as inert', async () => {
+  const seen = await page.evaluate(async (data) => {
+    const { permissionItem } = await import('./render.js');
+    const item = permissionItem({ ...data, effective: true, blocked_by: null }, { held: true });
+    return {
+      inert: item.classList.contains('inert'),
+      effective: item.dataset.effective,
+      blocked: item.querySelector('.blocked'),
+    };
+  }, permission());
+
+  assert.equal(seen.inert, false);
+  assert.equal(seen.effective, 'true');
+  assert.equal(seen.blocked, null);
 });
 
 // Rolling back needs a version to roll back to, and the page said nothing about

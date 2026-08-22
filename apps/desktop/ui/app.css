@@ -264,3 +264,22 @@ li.version .gone { color: var(--quiet); font-size: 0.9rem; }
   color: var(--quiet);
   cursor: pointer;
 }
+
+/* A capability the person allowed that Ephemeral itself may not carry out. It
+   is held and it does nothing, and it must look like neither an active grant
+   nor a request waiting for an answer — so the tick goes, the stripe fades, and
+   the reason it is dormant is written where the consequence would be. */
+li.permission.inert {
+  opacity: 0.75;
+  border-left-style: dashed;
+}
+
+li.permission.inert .wants::before {
+  content: "○ ";
+  color: var(--quiet);
+}
+
+li.permission.inert .blocked {
+  color: var(--medium);
+  font-size: 0.9rem;
+}

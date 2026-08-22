@@ -16,13 +16,13 @@
 
 use std::path::Path;
 
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Context as _, Error, Result, bail};
 use ephemeral_core::{
-    Actor, AppId, AppManifest, Principal,
+    Actor, AppId, AppManifest,
     audit::AuditEvent,
     lifecycle::{LifecycleEvent, LifecycleState, TransitionRequest},
     manifest::RuntimeKind,
-    permission::{AppPermission, Permission},
+    permission::AppPermission,
     retention::RetentionPeriod,
     storage::{AppStore as _, Workspace},
 };
@@ -41,12 +41,22 @@ pub(crate) fn run(home: &Path, reference: &str, arguments: &[String]) -> Result<
     ensure_allowed(&manifest, LifecycleEvent::Start)?;
     let mut spec = specification(&workspace, &manifest)?;
 
+    // Said before it starts, not discovered afterwards. An application whose
+    // grants Ephemeral may not carry out runs with less than the person
+    // allowed it, and the only other clue is that it can see nothing of theirs
+    // — which reads as a sandbox working rather than a permission missing.
+    if let Some(explanation) =
+        ephemeral_api::authority::grants(workspace.ledger(), &manifest.id).explain_inert()
+    {
+        println!("{} {}", output::warn("Careful:"), explanation);
+    }
+
     // Appended to the entrypoint rather than replacing it: an application's
     // entry point is part of what it *is*, recorded in its version, and letting
     // a command line replace it would let somebody run something other than the
     // application they are looking at.
     spec.entrypoint.extend(arguments.iter().cloned());
-    let runtime = usable_runtime()?;
+    let runtime = usable_runtime(&workspace)?;
 
     // Intent first, and only if the state machine allows it. Asking Docker to
     // start something the lifecycle forbids would be an action with no record.
@@ -114,7 +124,7 @@ pub(crate) fn stop(home: &Path, reference: &str) -> Result<()> {
     // doing: "it is not running" beats "Docker is not responding" when both
     // are true.
     ensure_allowed(&manifest, LifecycleEvent::Stop)?;
-    let runtime = usable_runtime()?;
+    let runtime = usable_runtime(&workspace)?;
 
     apply(
         &mut workspace,
@@ -161,6 +171,119 @@ pub(crate) fn stop(home: &Path, reference: &str) -> Result<()> {
     Ok(())
 }
 
+/// Whether revoking something from `subject` reaches this application's
+/// container.
+///
+/// Only what is holding one: a revocation changes what the *next* sandbox gets
+/// for everything else, and stopping an application that is not running would
+/// be an action with no cause.
+///
+/// Revoking from Ephemeral reaches every one of them, which is the two-tier
+/// model's whole point — its authority is what carries every application's
+/// capabilities out, so losing it takes the floor out from under all of them at
+/// once (ADR-0003).
+fn reaches(subject: &ephemeral_core::Principal, manifest: &AppManifest) -> bool {
+    if !ephemeral_api::authority::is_running(manifest) {
+        return false;
+    }
+
+    match subject {
+        ephemeral_core::Principal::Ephemeral => true,
+        other => other.as_app() == Some(&manifest.id),
+    }
+}
+
+/// Stops every running application that a revocation just took something from.
+///
+/// Returns which ones were stopped, so the caller can say so.
+///
+/// A sandbox is built once, at start. Revoking a grant therefore changes what
+/// the *next* container gets and nothing at all about the one already running
+/// with what was taken away — the mount stays mounted until the application
+/// exits on its own. "Revoked" would be a statement about the future while the
+/// present carried on, which is exactly the kind of claim
+/// [`SECURITY.md`](https://github.com/JGalego/Ephemeral/blob/main/SECURITY.md)
+/// must not make.
+///
+/// Stopping is the blunt answer and the only honest one available: a container
+/// cannot have a mount taken away while it runs, so either it keeps what the
+/// person just refused it, or it stops. Revoking Ephemeral's own authority
+/// stops everything holding a container, because that authority is what carries
+/// every application's capabilities out.
+///
+/// Deliberately quiet about applications it cannot stop: if the runtime is
+/// unreachable the revocation still stands in the ledger, and refusing to
+/// revoke because Docker is down would leave the permission in place, which is
+/// the worse of the two failures.
+pub(crate) fn stop_what_lost_a_permission(
+    workspace: &mut Workspace,
+    subject: &ephemeral_core::Principal,
+) -> Result<Vec<AppId>> {
+    let loaded = workspace.load_all()?;
+    let affected: Vec<AppId> = loaded
+        .loaded
+        .iter()
+        .filter(|manifest| reaches(subject, manifest))
+        .map(|manifest| manifest.id.clone())
+        .collect();
+
+    if affected.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let runtime = DockerRuntime::new();
+    if !runtime.availability().usable {
+        // The revocation stands either way. Refusing it because Docker is not
+        // answering would leave the permission in place, which is the worse of
+        // the two failures.
+        return Ok(Vec::new());
+    }
+
+    let mut stopped = Vec::new();
+    for id in affected {
+        let Ok(mut manifest) = workspace.apps().load(&id) else {
+            continue;
+        };
+
+        if runtime.stop(&id).is_err() {
+            continue;
+        }
+        runtime.remove(&id).ok();
+
+        // Recorded as the runtime's doing and explained as the user's, which is
+        // what happened: they revoked, and the container went.
+        for (event, actor) in [
+            (LifecycleEvent::Stop, Actor::User),
+            (LifecycleEvent::Stopped, Actor::Runtime),
+        ] {
+            if apply(
+                workspace,
+                &mut manifest,
+                event,
+                actor,
+                "a permission it was running with was taken back",
+            )
+            .is_err()
+            {
+                break;
+            }
+        }
+
+        workspace.audit_mut().append(
+            Actor::User,
+            AuditEvent::SandboxDestroyed {
+                app: id.clone(),
+                reason: "a permission it was running with was taken back".to_owned(),
+            },
+        );
+        workspace.apps_mut().save(&manifest)?;
+        stopped.push(id);
+    }
+
+    workspace.save()?;
+    Ok(stopped)
+}
+
 /// Suspends a running application without losing its state.
 pub(crate) fn pause(home: &Path, reference: &str) -> Result<()> {
     let mut workspace = crate::commands::open(home)?;
@@ -170,7 +293,7 @@ pub(crate) fn pause(home: &Path, reference: &str) -> Result<()> {
     // doing: "it is not running" beats "Docker is not responding" when both
     // are true.
     ensure_allowed(&manifest, LifecycleEvent::Pause)?;
-    let runtime = usable_runtime()?;
+    let runtime = usable_runtime(&workspace)?;
 
     apply(
         &mut workspace,
@@ -208,7 +331,7 @@ pub(crate) fn resume(home: &Path, reference: &str) -> Result<()> {
     // doing: "it is not running" beats "Docker is not responding" when both
     // are true.
     ensure_allowed(&manifest, LifecycleEvent::Resume)?;
-    let runtime = usable_runtime()?;
+    let runtime = usable_runtime(&workspace)?;
 
     apply(
         &mut workspace,
@@ -303,7 +426,7 @@ pub(crate) fn status(home: &Path, reference: &str) -> Result<()> {
         return Ok(());
     }
 
-    let runtime = usable_runtime()?;
+    let runtime = usable_runtime(&workspace)?;
     let observed = runtime
         .status(&manifest.id)
         .with_context(|| format!("could not ask about {}", manifest.id))?;
@@ -429,7 +552,7 @@ fn implied_events(
 /// eventually has a background service, and a desktop shell can host this same
 /// sweep without any of it changing.
 pub(crate) fn watch(home: &Path, interval_seconds: u64, once: bool) -> Result<()> {
-    let runtime = usable_runtime()?;
+    let runtime = usable_runtime(&crate::commands::open(home)?)?;
 
     if !once {
         println!(
@@ -693,7 +816,7 @@ fn classify(workspace: &Workspace, held: &[ManagedContainer]) -> Vec<Orphan> {
 /// Removes every container no application accounts for.
 pub(crate) fn cleanup(home: &Path, confirmed: bool) -> Result<()> {
     let mut workspace = crate::commands::open(home)?;
-    let runtime = usable_runtime()?;
+    let runtime = usable_runtime(&workspace)?;
 
     let found = orphans(&workspace, &runtime)?;
 
@@ -796,7 +919,15 @@ fn ensure_allowed(manifest: &AppManifest, event: LifecycleEvent) -> Result<()> {
 }
 
 /// The Docker runtime, or a refusal that says what to do about it.
-fn usable_runtime() -> Result<DockerRuntime> {
+fn usable_runtime(workspace: &Workspace) -> Result<DockerRuntime> {
+    // Asked before the daemon is, and in that order deliberately: whether
+    // Ephemeral *may* drive a container runtime is a question about this
+    // machine's owner, and answering "Docker is not installed" to somebody who
+    // never allowed Ephemeral to use it would be answering a question they did
+    // not ask (ADR-0003).
+    ephemeral_api::authority::require(workspace.ledger(), &ephemeral_api::authority::RUNTIME)
+        .map_err(Error::msg)?;
+
     let runtime = DockerRuntime::new();
     let availability = runtime.availability();
 
@@ -868,18 +999,13 @@ fn specification(workspace: &Workspace, manifest: &AppManifest) -> Result<Contai
 
 /// Every app permission currently allowed for this application.
 fn granted_permissions(workspace: &Workspace, app: &AppId) -> Vec<AppPermission> {
-    workspace
-        .ledger()
-        .active_grants(&Principal::app(app.clone()))
-        .into_iter()
-        .filter(|grant| grant.decision.is_allowed())
-        .filter_map(|grant| match &grant.permission {
-            Permission::App(permission) => Some(permission.clone()),
-            // A meta-permission is Ephemeral's own authority and never an
-            // application's. It cannot reach the sandbox even by accident.
-            Permission::Meta(_) => None,
-        })
-        .collect()
+    // Both halves of the model, which is what makes the second half mean
+    // anything: a capability reaches the sandbox only if the person allowed
+    // *this application* to have it and allowed *Ephemeral* to carry it out.
+    // Filtering on the application's grants alone — which is what this did —
+    // left a revoked meta-permission as a note in a ledger nothing read
+    // (ADR-0003).
+    ephemeral_api::authority::grants(workspace.ledger(), app).effective()
 }
 
 /// The user's home directory, which `~` in a permission scope means.
@@ -1033,9 +1159,10 @@ fn report_started(manifest: &AppManifest, spec: &ContainerSpec, container: Optio
 mod tests {
     use super::*;
     use ephemeral_core::{
+        Principal,
         lifecycle::TransitionContext,
         manifest::{AppInterface, RuntimeSpec},
-        permission::PathScope,
+        permission::{PathScope, Permission},
     };
 
     fn workspace(root: &Path) -> Workspace {
@@ -1071,20 +1198,32 @@ mod tests {
 
     /// Granting one reaches the sandbox; the point of the previous test is that
     /// nothing else does.
+    ///
+    /// *Both halves* are granted here, and that is not ceremony: an application
+    /// permission on its own is inert, because Ephemeral must also be allowed
+    /// to carry it out. The test below is the one that says so.
     #[test]
     fn a_granted_permission_reaches_the_sandbox() {
         let home = tempfile::tempdir().unwrap();
         let mut workspace = workspace(home.path());
+        let reading = AppPermission::read(PathScope::parse("~/Downloads/**").unwrap());
 
         workspace
             .ledger_mut()
             .allow(
                 Principal::app(app()),
-                Permission::App(AppPermission::read(
-                    PathScope::parse("~/Downloads/**").unwrap(),
-                )),
+                Permission::App(reading.clone()),
                 Actor::User,
                 "to compare them",
+            )
+            .unwrap();
+        workspace
+            .ledger_mut()
+            .allow(
+                Principal::Ephemeral,
+                Permission::Meta(reading.required_meta()),
+                Actor::User,
+                "Ephemeral may read what it mounts",
             )
             .unwrap();
 
@@ -1093,6 +1232,145 @@ mod tests {
         assert!(!spec.is_isolated());
         assert_eq!(spec.host_mounts().count(), 1);
         assert!(!spec.host_mounts().next().unwrap().writable);
+    }
+
+    /// The rule ADR-0003 states and nothing enforced until now: an application
+    /// permission is necessary and not sufficient. Ephemeral has to be allowed
+    /// to carry it out, so revoking its authority empties the sandbox of every
+    /// application at once rather than leaving a note in a ledger nothing read.
+    #[test]
+    fn a_permission_ephemeral_may_not_carry_out_never_reaches_the_sandbox() {
+        let home = tempfile::tempdir().unwrap();
+        let mut workspace = workspace(home.path());
+        let reading = AppPermission::read(PathScope::parse("~/Downloads/**").unwrap());
+
+        workspace
+            .ledger_mut()
+            .allow(
+                Principal::app(app()),
+                Permission::App(reading.clone()),
+                Actor::User,
+                "to compare them",
+            )
+            .unwrap();
+
+        assert!(
+            specification(&workspace, &built()).unwrap().is_isolated(),
+            "the application was allowed; Ephemeral was not"
+        );
+
+        workspace
+            .ledger_mut()
+            .allow(
+                Principal::Ephemeral,
+                Permission::Meta(reading.required_meta()),
+                Actor::User,
+                "Ephemeral may read what it mounts",
+            )
+            .unwrap();
+        assert_eq!(
+            specification(&workspace, &built())
+                .unwrap()
+                .host_mounts()
+                .count(),
+            1,
+            "and with both halves it works"
+        );
+
+        workspace
+            .ledger_mut()
+            .revoke(
+                &Principal::Ephemeral,
+                &Permission::Meta(reading.required_meta()),
+                Actor::User,
+            )
+            .unwrap();
+        assert!(
+            specification(&workspace, &built()).unwrap().is_isolated(),
+            "taking Ephemeral's authority away has to reach the sandbox too"
+        );
+    }
+
+    /// A sandbox is built once, at start, so a revocation that only changed the
+    /// ledger would be a promise about the next run while the present one
+    /// carried on with what was just taken away. This is which applications a
+    /// revocation has to reach; stopping them is the runtime's part.
+    #[test]
+    fn a_revocation_reaches_exactly_what_is_running_on_it() {
+        let mut running = built();
+        for (event, actor) in [
+            (LifecycleEvent::Plan, Actor::Ephemeral),
+            (LifecycleEvent::PlanCompleted, Actor::Ephemeral),
+            (LifecycleEvent::GenerationCompleted, Actor::Agent),
+            (LifecycleEvent::BuildSucceeded, Actor::Runtime),
+            (LifecycleEvent::ValidationPassed, Actor::Ephemeral),
+            (LifecycleEvent::Start, Actor::User),
+            (LifecycleEvent::Started, Actor::Runtime),
+        ] {
+            running
+                .apply(TransitionRequest::new(event, actor, "up and running"))
+                .expect("the route to running");
+        }
+
+        let idle = built();
+        let other = AppId::parse("word-counter").unwrap();
+
+        assert!(
+            reaches(&Principal::app(app()), &running),
+            "its own permission was taken away while it was using it"
+        );
+        assert!(
+            !reaches(&Principal::app(other.clone()), &running),
+            "another application losing something is not this one's business"
+        );
+        assert!(
+            reaches(&Principal::Ephemeral, &running),
+            "Ephemeral's authority is what carries every application's out"
+        );
+        assert!(
+            !reaches(&Principal::Ephemeral, &idle),
+            "nothing is running, so there is nothing to stop"
+        );
+        assert!(!reaches(&Principal::app(app()), &idle));
+    }
+
+    /// Whether Ephemeral may drive a container runtime is a question about this
+    /// machine's owner, and it is asked before Docker is. Answering "Docker is
+    /// not installed" to somebody who never allowed Ephemeral to use it answers
+    /// a question they did not ask.
+    #[test]
+    fn driving_a_container_runtime_needs_permission_before_it_needs_a_daemon() {
+        let home = tempfile::tempdir().unwrap();
+        let mut workspace = workspace(home.path());
+
+        let error = usable_runtime(&workspace)
+            .expect_err("nothing has been granted")
+            .to_string();
+        assert!(error.contains("has not been allowed"), "{error}");
+        assert!(
+            error.contains("ephemeral grant ephemeral docker"),
+            "the refusal has to name the way forward: {error}"
+        );
+
+        workspace
+            .ledger_mut()
+            .allow(
+                Principal::Ephemeral,
+                Permission::Meta(ephemeral_core::MetaPermission::UseDocker),
+                Actor::User,
+                "to run applications",
+            )
+            .unwrap();
+
+        // Past the permission and into the daemon, which is as far as a machine
+        // without Docker can go — and the point: the answer is now about Docker.
+        if let Err(error) = usable_runtime(&workspace) {
+            let message = error.to_string();
+            assert!(
+                !message.contains("has not been allowed"),
+                "permission was granted, so this must be about the runtime: {message}"
+            );
+        }
     }
 
     /// A meta-permission is Ephemeral's own authority. It must not be readable

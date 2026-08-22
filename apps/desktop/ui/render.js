@@ -102,11 +102,32 @@ export function applicationList(summaries, { showPutAway = false } = {}) {
  * same.
  */
 export function permissionItem(permission, { held = false } = {}) {
-  const item = element('li', `permission risk-${permission.risk}${held ? ' held' : ''}`);
+  // A capability the person allowed and Ephemeral itself may not carry out is
+  // held and does nothing. It is neither hidden — the decision is theirs and
+  // still stands — nor drawn as working, which would put authority on screen
+  // that the sandbox does not give.
+  const inert = held && permission.effective === false;
+  const item = element(
+    'li',
+    `permission risk-${permission.risk}${held ? ' held' : ''}${inert ? ' inert' : ''}`,
+  );
   item.dataset.capability = permission.capability;
   item.dataset.risk = permission.risk;
+  item.dataset.effective = String(permission.effective !== false);
 
   item.appendChild(element('div', 'wants', permission.wants));
+
+  if (inert) {
+    item.appendChild(
+      element(
+        'div',
+        'blocked',
+        permission.blocked_by
+          ? `This does nothing right now: Ephemeral itself has not been allowed to ${permission.blocked_by}.`
+          : 'This does nothing right now.',
+      ),
+    );
+  }
 
   // The reason is the only part of a request a person cannot check, so a
   // missing one says so rather than being quietly omitted — an absent reason
@@ -198,22 +219,28 @@ export function isConsent(permission, answer) {
 export function permissionsSection(permissions) {
   const section = element('section', 'permissions');
 
+  // Isolated is about what it can reach, not about what it was allowed: an
+  // application every one of whose grants is inert reaches nothing, and saying
+  // so is true. What it holds is listed underneath either way, so "it can see
+  // nothing of yours" is never the whole story where there is more to tell.
   if (permissions.isolated) {
     section.appendChild(
       element('p', 'isolated', 'This app can see nothing of yours: no files, no network.'),
     );
-  } else {
+  }
+
+  if (permissions.allowed.length > 0) {
+    const dormant = permissions.allowed.every((permission) => permission.effective === false);
+    const count =
+      permissions.allowed.length === 1
+        ? '1 thing you have allowed'
+        : `${permissions.allowed.length} things you have allowed`;
+
     // Labelled, because an unlabelled list of capabilities next to another
     // unlabelled list of capabilities tells a person nothing about which is
     // which.
     section.appendChild(
-      element(
-        'h3',
-        'holds',
-        permissions.allowed.length === 1
-          ? '1 thing you have allowed'
-          : `${permissions.allowed.length} things you have allowed`,
-      ),
+      element('h3', 'holds', dormant ? `${count}, which do nothing yet` : count),
     );
 
     const allowed = element('ul', 'allowed');

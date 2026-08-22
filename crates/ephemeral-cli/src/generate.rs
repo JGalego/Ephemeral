@@ -16,7 +16,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Context as _, Error, Result, bail};
 use ephemeral_agent::{
     AgentError, AgentProvider, Builder, GeneratedApp, MockProvider, Outcome, RealClock, Run,
     SourceFile, build::NeverCancelled, generate as run_loop,
@@ -82,16 +82,20 @@ pub(crate) fn run(home: &Path, reference: &str, provider_name: &str) -> Result<(
         );
     };
 
+    // Ephemeral's own authority, before anything is spent or spawned. What a
+    // run needs depends on which provider it is: a model on this machine costs
+    // nothing and reaches nowhere, and asking for network access to use one
+    // would be asking for something that is not going to happen (ADR-0003).
+    for required in provider_authority(provider_name) {
+        ephemeral_api::authority::require(workspace.ledger(), &required).map_err(Error::msg)?;
+    }
+
     let provider = provider(provider_name)?;
     provider
         .availability()
         .with_context(|| format!("{provider_name} cannot be used"))?;
 
-    let runtime = DockerRuntime::new();
-    let availability = runtime.availability();
-    if !availability.usable {
-        bail!("{}", availability.explanation);
-    }
+    let runtime = usable_runtime(&workspace)?;
 
     let source_dir = workspace.layout().app(&manifest.id).source();
     std::fs::create_dir_all(&source_dir)
@@ -496,6 +500,37 @@ fn step(
         },
     );
     Ok(())
+}
+
+/// What Ephemeral must be allowed to do before generating with `provider`.
+///
+/// Nothing for the mock, which is a fixture. Nothing beyond the ordinary for
+/// `local`, which talks to a model on this machine over the loopback interface:
+/// requiring network access there would ask somebody to allow the one thing
+/// that provider exists to avoid. A hosted provider needs both halves of what
+/// it actually does — reach the network, and use a credential.
+fn provider_authority(name: &str) -> Vec<ephemeral_core::permission::MetaPermission> {
+    match name {
+        "anthropic" | "openai" => vec![
+            ephemeral_api::authority::HOSTED_PROVIDER,
+            ephemeral_api::authority::CREDENTIAL,
+        ],
+        _ => Vec::new(),
+    }
+}
+
+/// A container runtime Ephemeral is allowed to drive, and that works.
+fn usable_runtime(workspace: &Workspace) -> Result<DockerRuntime> {
+    ephemeral_api::authority::require(workspace.ledger(), &ephemeral_api::authority::RUNTIME)
+        .map_err(Error::msg)?;
+
+    let runtime = DockerRuntime::new();
+    let availability = runtime.availability();
+    if !availability.usable {
+        bail!("{}", availability.explanation);
+    }
+
+    Ok(runtime)
 }
 
 /// The provider to generate with.

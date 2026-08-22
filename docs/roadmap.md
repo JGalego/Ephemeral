@@ -6,9 +6,10 @@ honest record of where that line currently sits.
 
 ## Where we are
 
-**Phase 2 — Generation.** Complete, and demonstrated rather than asserted — see
-[what was actually run](#not-a-claim-this-time-it-was-run). Phase 3 —
-Permissions — is next, and nothing has been built for it yet.
+**Phase 3 — Permissions.** Complete: the two-tier model is now consulted by the
+things that act, and [every promise is mapped to the code that enforces
+it](security/enforcement.md). Phase 2 before it was
+[demonstrated rather than asserted](#not-a-claim-this-time-it-was-run).
 
 ### Done
 
@@ -242,8 +243,57 @@ Enforcement, not just modelling: meta-permissions wired to real operations, app
 permissions enforced at the runtime boundary, the permission UI, the audit log
 in the loop, and the sandbox.
 
+| | |
+|---|---|
+| Ephemeral's own authority asked for before it drives a container runtime | ✅ |
+| …before it reaches a hosted model, and before it uses a credential | ✅ |
+| An application's capability requiring **both** halves — its grant and Ephemeral's ([ADR-0003](architecture/decisions/0003-two-tier-permission-model.md)) | ✅ |
+| Revoking a meta-permission emptying every sandbox at once | ✅ |
+| Revocation reaching what is already running, rather than only the next start | ✅ |
+| Views reporting what an application can *use*, so a page and a sandbox cannot disagree | ✅ |
+| Inert capabilities shown as inert, in the terminal and in the window | ✅ |
+| `ephemeral doctor` reporting what Ephemeral may do and what it is missing | ✅ |
+| [Every promise mapped to the code that enforces it](security/enforcement.md) | ✅ |
+
 **Done when:** every test in `tests/security.rs` is backed by an enforcement
-point rather than by the domain model alone.
+point rather than by the domain model alone — which is
+[this table](security/enforcement.md), and it has no blanks.
+
+**The model was complete and nothing consulted it.** `PermissionLedger::check_app`
+existed, applied both halves of ADR-0003 correctly, and carried a doc comment
+naming itself "the check enforcement points should use". Every enforcement point
+used something else. The sandbox was built by filtering an application's own
+grants, so Ephemeral's authority was a column in a ledger that changed nothing;
+Docker was driven without asking whether Ephemeral may drive Docker; a model
+provider was called without asking whether Ephemeral may reach the network. A
+permission system nothing consults is a description of a permission system, and
+the tests all passed because they asked the model rather than the product.
+
+What that cost is visible in the diff: three existing tests had to change,
+because each of them asserted that a grant reached the sandbox with only half
+the model satisfied. That is what an unenforced rule looks like from the inside.
+
+**Default deny now applies to Ephemeral too**, which is a real cost and worth
+stating: a new installation cannot build, run or generate until somebody allows
+it to. Every refusal names the missing authority and the command that grants it,
+`ephemeral doctor` lists what is missing before anybody hits it, and
+`ephemeral permissions <app>` shows both halves on one page — because "nothing
+happened" with no explanation is how a security model teaches people to turn it
+off.
+
+**Revocation reaches the present, not just the future.** A sandbox is built once,
+at start, so revoking a grant an application is *currently* running with used to
+change what the next container would get and nothing about the one holding the
+mount. Anything running on what was just taken back is stopped, and revoking
+Ephemeral's own authority stops everything holding a container.
+
+**Still not enforced, and written down rather than implied:** a container escape
+defeats all of it; disk ceilings for an application's own storage are declared
+and unenforced, because `--storage-opt` needs a backing filesystem Ephemeral
+cannot assume; a persuasive lie in a permission request is detected by nothing;
+and the window can show that Ephemeral lacks an authority but cannot grant it —
+that is the most powerful consent in the product and it currently belongs to the
+terminal. The [enforcement map](security/enforcement.md) ends with that list.
 
 ### Phase 4 — Desktop
 

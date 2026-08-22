@@ -71,6 +71,12 @@ pub(crate) fn run(home: &Path) {
     verdicts.append(&mut docker);
 
     println!();
+    println!("{}", output::dim("What Ephemeral itself may do"));
+    let mut authority = authority_checks(home);
+    print_all(&authority);
+    verdicts.append(&mut authority);
+
+    println!();
     println!("{}", output::dim("Your applications"));
     let mut state = workspace_checks(home);
     print_all(&state);
@@ -124,6 +130,52 @@ fn storage(home: &Path) -> Verdict {
                 .to_owned(),
         ),
     }
+}
+
+/// What Ephemeral has been allowed to do, and what it is missing.
+///
+/// A diagnostic that reports the machine and not the permissions would answer
+/// "Docker is available" to somebody whose `ephemeral run` is being refused
+/// because Ephemeral was never allowed to use it. Both halves of that question
+/// belong on the same page.
+///
+/// Nothing here is a failure. An empty ledger is what a new installation looks
+/// like, and default deny is the design rather than a fault (ADR-0003) — so
+/// these are notes with the command that resolves them.
+fn authority_checks(home: &Path) -> Vec<Verdict> {
+    let Ok(workspace) = Workspace::open(home) else {
+        // Reported by the storage check; not this one's business.
+        return Vec::new();
+    };
+
+    [
+        (
+            ephemeral_api::authority::RUNTIME,
+            "build and run applications in containers",
+        ),
+        (
+            ephemeral_api::authority::HOSTED_PROVIDER,
+            "generate with a hosted model",
+        ),
+        (
+            ephemeral_api::authority::CREDENTIAL,
+            "use a model provider's credential",
+        ),
+    ]
+    .into_iter()
+    .map(|(permission, what_for)| {
+        match ephemeral_api::authority::require(workspace.ledger(), &permission) {
+            Ok(()) => Verdict::Ok(format!("may {what_for}")),
+            Err(_) => Verdict::Note(
+                format!("may not {what_for}"),
+                ephemeral_api::authority::grant_argument(&permission).map_or_else(
+                    || "Grant it from Ephemeral's own permissions.".to_owned(),
+                    |written| format!("`ephemeral grant ephemeral {written}` allows it."),
+                ),
+            ),
+        }
+    })
+    .collect()
 }
 
 /// Is there a container runtime, and is it usable?

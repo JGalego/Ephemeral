@@ -196,7 +196,17 @@ await page.addInitScript(
 
     const view = (id) => {
       const outstanding = asked.filter((r) => !answered().includes(r.capability));
-      const allowed = asked.filter((r) => window.__FILM__.allowed.includes(r.capability));
+      const allowed = asked
+        .filter((r) => window.__FILM__.allowed.includes(r.capability))
+        // The second thing they allow is shown as inert: Ephemeral itself has
+        // not been allowed to carry it out, and a person needs to see the
+        // difference between a capability that works and one that is waiting on
+        // a permission of Ephemeral's (ADR-0003).
+        .map((r, index) =>
+          index === 1
+            ? { ...r, effective: false, blocked_by: 'connect to the network' }
+            : { ...r, effective: true, blocked_by: null },
+        );
       const summary = apps.find((a) => a.id === id) ?? apps[0];
 
       return {

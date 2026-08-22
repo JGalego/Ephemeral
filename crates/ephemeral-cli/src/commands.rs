@@ -261,6 +261,14 @@ pub(crate) fn permissions(home: &Path, reference: &str) -> Result<()> {
     println!("{}", output::heading(&subject.label()));
     println!();
     print_permissions(&workspace, &subject);
+
+    // Shown alongside an application's, because the question "what can this do"
+    // has two answers and only one of them is on the application's page. It is
+    // Ephemeral's authority that decides whether any of the other is real.
+    if subject.as_app().is_some() {
+        print_ephemerals_authority(&workspace);
+    }
+
     Ok(())
 }
 
@@ -289,6 +297,79 @@ fn print_permissions(workspace: &Workspace, subject: &Principal) {
         );
         if !grant.reason.is_empty() {
             println!("        {}", output::dim(&grant.reason));
+        }
+    }
+
+    // A grant Ephemeral itself may not carry out is a decision that stands and
+    // does nothing, and somebody looking at this list has no other way to tell:
+    // it reads exactly like one that works (ADR-0003).
+    if let Some(app) = subject.as_app()
+        && let Some(explanation) =
+            ephemeral_api::authority::grants(workspace.ledger(), app).explain_inert()
+    {
+        println!();
+        println!("  {} {}", output::warn("Inert:"), explanation);
+    }
+}
+
+/// Ephemeral's own authority, and what it is missing.
+///
+/// Its own section, and not folded in with an application's: they are two
+/// permission systems and showing them as one list is the confusion the whole
+/// model exists to prevent. This is the answer to "why did nothing happen" —
+/// which, before any of it was enforced, was a question nobody had to ask,
+/// because the ledger's answer made no difference to what ran.
+fn print_ephemerals_authority(workspace: &Workspace) {
+    println!();
+    println!("{}", output::dim("Ephemeral itself is allowed to"));
+
+    let held = workspace.ledger().active_grants(&Principal::Ephemeral);
+    if held.is_empty() {
+        println!(
+            "  {}",
+            output::dim(
+                "Nothing yet. Until you allow it, nothing that needs a container runtime or a \
+                 hosted model can run."
+            )
+        );
+    } else {
+        for grant in held {
+            println!(
+                "  {} {}",
+                output::good("allow"),
+                grant.permission.describe()
+            );
+        }
+    }
+
+    let missing: Vec<String> = [
+        (
+            ephemeral_api::authority::RUNTIME,
+            "build and run applications",
+        ),
+        (
+            ephemeral_api::authority::HOSTED_PROVIDER,
+            "generate with a hosted model",
+        ),
+        (
+            ephemeral_api::authority::CREDENTIAL,
+            "use a model provider's credential",
+        ),
+    ]
+    .into_iter()
+    .filter(|(permission, _)| {
+        ephemeral_api::authority::require(workspace.ledger(), permission).is_err()
+    })
+    .filter_map(|(permission, what_for)| {
+        ephemeral_api::authority::grant_argument(&permission)
+            .map(|written| format!("`ephemeral grant ephemeral {written}` to {what_for}"))
+    })
+    .collect();
+
+    if !missing.is_empty() {
+        println!();
+        for line in missing {
+            println!("  {}", output::dim(&line));
         }
     }
 }
@@ -381,6 +462,21 @@ pub(crate) fn revoke(home: &Path, reference: &str, permission: &str) -> Result<(
         subject.label(),
         permission.describe()
     );
+
+    // A sandbox is built once, when an application starts. Everything above
+    // changes what the *next* container gets and nothing about the one already
+    // running with what was just taken away — so "revoked" would be a claim
+    // about the future while the present carried on regardless. Anything
+    // holding a container that this revocation touches is stopped.
+    let stopped = crate::runtime::stop_what_lost_a_permission(&mut workspace, &subject)?;
+    for id in &stopped {
+        println!(
+            "{}",
+            output::dim(&format!(
+                "{id} was running with what you just took back, so it was stopped."
+            ))
+        );
+    }
     if revoked > 1 {
         println!(
             "{}",
@@ -813,6 +909,81 @@ pub(crate) fn rollback(home: &Path, reference: &str, version: &str) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Deleting withdraws everything in the same operation that deletes, and
+    /// from whatever state the application is in. Two separate steps would
+    /// leave a window in which a deleted application still holds capabilities,
+    /// and the state it happened to be in would decide how long that window is.
+    #[test]
+    fn deleting_withdraws_every_permission_in_the_same_breath() {
+        use ephemeral_core::{
+            manifest::RuntimeSpec,
+            permission::{AppPermission, PathScope, Permission},
+            storage::{AppStore as _, Workspace},
+        };
+
+        let home = tempfile::tempdir().expect("a temporary directory");
+        let id = AppId::parse("csv-comparator").expect("a valid id");
+        let reading = AppPermission::read(PathScope::parse("~/Downloads/**").expect("a scope"));
+
+        {
+            let mut workspace = Workspace::open(home.path()).expect("a workspace");
+            let mut manifest = AppManifest::requested(id.clone(), "CSV comparator");
+            manifest.runtime = Some(RuntimeSpec::docker_job(
+                "python:3.12-slim",
+                vec!["python".to_owned()],
+            ));
+            workspace.apps_mut().create(&manifest).expect("created");
+
+            for (subject, permission) in [
+                (Principal::app(id.clone()), Permission::App(reading.clone())),
+                (
+                    Principal::Ephemeral,
+                    Permission::Meta(reading.required_meta()),
+                ),
+            ] {
+                workspace
+                    .ledger_mut()
+                    .allow(subject, permission, Actor::User, "for a test")
+                    .expect("a person may grant");
+            }
+            workspace.save().expect("saved");
+
+            assert_eq!(
+                ephemeral_api::authority::grants(workspace.ledger(), &id)
+                    .effective()
+                    .len(),
+                1,
+                "it holds something to lose"
+            );
+        }
+
+        delete(home.path(), "csv-comparator").expect("a person may delete at any time");
+
+        let workspace = Workspace::open(home.path()).expect("a workspace");
+        assert!(
+            ephemeral_api::authority::grants(workspace.ledger(), &id)
+                .effective()
+                .is_empty(),
+            "a deleted application holds nothing, immediately"
+        );
+        assert!(
+            workspace
+                .ledger()
+                .active_grants(&Principal::app(id.clone()))
+                .is_empty(),
+            "and not merely at the point something asks"
+        );
+        assert_eq!(
+            workspace
+                .apps()
+                .load(&id)
+                .expect("the record survives for recovery")
+                .lifecycle
+                .state(),
+            LifecycleState::Deleted
+        );
+    }
 
     #[test]
     fn retention_policies_parse_and_typos_are_refused() {

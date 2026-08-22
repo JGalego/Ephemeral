@@ -48,9 +48,11 @@
 
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
+pub mod authority;
 pub mod operation;
 pub mod view;
 
+pub use authority::{Grants, Held};
 pub use operation::{Rollback, create, derive_name, rollback, withdraw_widened};
 pub use view::{
     ApplicationDetail, ApplicationSummary, AuditEntryView, LimitsView, PermissionView,
@@ -300,6 +302,25 @@ mod tests {
                     Permission::App(permission.clone()),
                     Actor::User,
                     "because I said so",
+                )
+                .expect("the user may grant");
+        }
+
+        assert_eq!(
+            ApplicationSummary::of(&manifest, &ledger).granted,
+            0,
+            "an application whose grants Ephemeral may not carry out holds nothing it can use"
+        );
+
+        // The other half of the model. Both are needed before a capability is
+        // anything more than a record of a decision (ADR-0003).
+        for permission in [&reading, &anywhere] {
+            ledger
+                .allow(
+                    Principal::Ephemeral,
+                    Permission::Meta(permission.required_meta()),
+                    Actor::User,
+                    "Ephemeral may carry these out",
                 )
                 .expect("the user may grant");
         }

@@ -18,6 +18,7 @@
 | [manifest.md](manifest.md) | The versioned application manifest |
 | [sandbox.md](sandbox.md) | What confines a running application, and what it will not do |
 | [security/threat-model.md](security/threat-model.md) | What Ephemeral defends against, and — more usefully — what it does not |
+| [security/enforcement.md](security/enforcement.md) | Every security promise, and the code that would have to be wrong for it to break |
 | [sharing.md](sharing.md) | Design: giving an app to somebody else, publishing it, and shared instances |
 | [mobile.md](mobile.md) | Embedding the engine on iOS and Android: what it does on a device, and what it deliberately will not |
 

@@ -12,7 +12,7 @@
 use serde::{Deserialize, Serialize};
 
 use ephemeral_core::{
-    AppManifest, LifecycleState, Principal, Timestamp,
+    AppManifest, LifecycleState, Timestamp,
     audit::AuditEntry,
     permission::{AppPermission, PermissionLedger, RiskLevel},
 };
@@ -75,22 +75,21 @@ impl ApplicationSummary {
     #[must_use]
     pub fn of(manifest: &AppManifest, ledger: &PermissionLedger) -> Self {
         let state = manifest.lifecycle.state();
-        let subject = Principal::app(manifest.id.clone());
 
+        // What this application can actually do, which is both halves of the
+        // model: its own grants, and Ephemeral being permitted to carry them
+        // out. Counting its grants alone would put a number on the list that
+        // the sandbox disagrees with — an application shown as holding two
+        // things while holding none.
+        //
         // Meta-permissions are Ephemeral's own authority and never an
-        // application's, so they are no part of what an application holds.
-        // The ledger already refuses to grant one against an app principal, so
-        // this filter is not what enforces the separation — it mirrors
-        // `PermissionsView` so that the count on the list and the list on the
-        // page can never disagree about what an application holds.
-        let held: Vec<RiskLevel> = ledger
-            .active_grants(&subject)
+        // application's; the ledger refuses to record one against an app
+        // principal at all, and they are filtered out here as well so the count
+        // on the list and the list on the page cannot drift apart.
+        let held: Vec<RiskLevel> = crate::authority::grants(ledger, &manifest.id)
+            .effective()
             .iter()
-            .filter(|grant| grant.decision.is_allowed())
-            .filter_map(|grant| match &grant.permission {
-                ephemeral_core::permission::Permission::App(permission) => Some(permission.risk()),
-                ephemeral_core::permission::Permission::Meta(_) => None,
-            })
+            .map(AppPermission::risk)
             .collect();
 
         let highest_granted_risk = held.iter().max().map(|risk| risk.as_str().to_owned());
@@ -257,10 +256,29 @@ pub struct PermissionView {
     /// Whether it can be taken back. Always true, and stated rather than
     /// assumed.
     pub revocable: bool,
+
+    /// Whether this capability can actually be used right now.
+    ///
+    /// `false` for something the person allowed that Ephemeral itself is not
+    /// permitted to carry out. The grant is real and theirs; it simply does
+    /// nothing until both halves exist ([ADR-0003]). A client that drew an inert
+    /// capability as an active one would be reporting authority an application
+    /// does not have — and the ledger, which is what the sandbox is built from,
+    /// would disagree with the screen.
+    ///
+    /// [ADR-0003]: https://github.com/JGalego/Ephemeral/blob/main/docs/architecture/decisions/0003-two-tier-permission-model.md
+    pub effective: bool,
+
+    /// What Ephemeral is missing, when that is why this does nothing.
+    pub blocked_by: Option<String>,
 }
 
 impl PermissionView {
     /// A capability an application has asked for.
+    ///
+    /// Something not yet decided is described as effective: the question is
+    /// what allowing it would mean, and "this would do nothing" belongs to a
+    /// grant that exists, not to a request.
     #[must_use]
     pub fn requested(
         permission: &AppPermission,
@@ -275,6 +293,25 @@ impl PermissionView {
             risk: permission.risk().as_str().to_owned(),
             needs_explicit_confirmation: permission.risk().requires_explicit_confirmation(),
             revocable: true,
+            effective: true,
+            blocked_by: None,
+        }
+    }
+
+    /// A capability an application holds, judged by both halves of the model.
+    #[must_use]
+    pub fn held(
+        held: &crate::authority::Held,
+        manifest: &AppManifest,
+        ledger: &PermissionLedger,
+    ) -> Self {
+        Self {
+            effective: held.effective,
+            blocked_by: held
+                .blocked_by
+                .as_ref()
+                .map(ephemeral_core::permission::MetaPermission::describe),
+            ..Self::requested(&held.permission, manifest, ledger)
         }
     }
 }
@@ -302,35 +339,42 @@ impl PermissionsView {
     /// Builds the permissions view.
     #[must_use]
     pub fn of(manifest: &AppManifest, ledger: &PermissionLedger) -> Self {
-        let subject = Principal::app(manifest.id.clone());
+        // Judged by both halves of the model, so the page and the sandbox agree
+        // about what this application can do. A meta-permission is Ephemeral's
+        // own authority and never an application's, and is filtered out on the
+        // way in rather than trusted not to appear.
+        let held = crate::authority::grants(ledger, &manifest.id);
 
-        let allowed: Vec<AppPermission> = ledger
-            .active_grants(&subject)
-            .iter()
-            .filter(|grant| grant.decision.is_allowed())
-            .filter_map(|grant| match &grant.permission {
-                ephemeral_core::permission::Permission::App(permission) => Some(permission.clone()),
-                // A meta-permission is Ephemeral's own authority and never an
-                // application's, so it has no place on an application's page.
-                ephemeral_core::permission::Permission::Meta(_) => None,
-            })
-            .collect();
-
-        let highest_granted_risk = allowed
+        // The worst thing it can actually do, which is not always the worst
+        // thing it has been allowed: a dangerous capability Ephemeral may not
+        // carry out is not currently dangerous, and colouring it as though it
+        // were teaches somebody to ignore the colour.
+        let highest_granted_risk = held
+            .effective()
             .iter()
             .map(AppPermission::risk)
             .max()
             .map(|risk| risk.as_str().to_owned());
 
         Self {
-            isolated: allowed.is_empty(),
-            allowed: allowed
+            // What "isolated" claims is that it can reach nothing of yours,
+            // which is true of an application whose every grant is inert.
+            isolated: held.effective().is_empty(),
+            allowed: held
+                .held
                 .iter()
-                .map(|permission| PermissionView::requested(permission, manifest, ledger))
+                .map(|one| PermissionView::held(one, manifest, ledger))
                 .collect(),
             outstanding: crate::outstanding_requests(manifest, ledger),
             highest_granted_risk,
         }
+    }
+
+    /// What to tell somebody whose application holds capabilities that do
+    /// nothing, or `None` when everything it holds works.
+    #[must_use]
+    pub fn explain_inert(manifest: &AppManifest, ledger: &PermissionLedger) -> Option<String> {
+        crate::authority::grants(ledger, &manifest.id).explain_inert()
     }
 }
 
@@ -414,6 +458,7 @@ pub fn risk_order() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ephemeral_core::Principal;
     use ephemeral_core::{
         Actor, AppId,
         permission::{PathScope, Permission},
@@ -447,10 +492,46 @@ mod tests {
     fn a_granted_capability_appears_with_its_risk() {
         let manifest = manifest();
         let mut ledger = PermissionLedger::new();
+        let reading = AppPermission::read(scope());
+
+        for (subject, permission) in [
+            (
+                Principal::app(manifest.id.clone()),
+                Permission::App(reading.clone()),
+            ),
+            (
+                Principal::Ephemeral,
+                Permission::Meta(reading.required_meta()),
+            ),
+        ] {
+            ledger
+                .allow(subject, permission, Actor::User, "to compare them")
+                .expect("the user may grant");
+        }
+
+        let view = PermissionsView::of(&manifest, &ledger);
+
+        assert!(!view.isolated);
+        assert_eq!(view.allowed.len(), 1);
+        assert!(view.allowed[0].effective);
+        assert!(view.allowed[0].blocked_by.is_none());
+        assert!(view.highest_granted_risk.is_some());
+    }
+
+    /// A capability the person allowed and Ephemeral may not carry out is shown
+    /// as what it is: held, and doing nothing. Drawing it as active would put
+    /// authority on the screen that the sandbox does not give, and dropping it
+    /// would hide a decision the person made.
+    #[test]
+    fn a_capability_ephemeral_cannot_carry_out_is_shown_as_inert() {
+        let manifest = manifest();
+        let mut ledger = PermissionLedger::new();
+        let reading = AppPermission::read(scope());
+
         ledger
             .allow(
                 Principal::app(manifest.id.clone()),
-                Permission::App(AppPermission::read(scope())),
+                Permission::App(reading.clone()),
                 Actor::User,
                 "to compare them",
             )
@@ -458,9 +539,31 @@ mod tests {
 
         let view = PermissionsView::of(&manifest, &ledger);
 
-        assert!(!view.isolated);
-        assert_eq!(view.allowed.len(), 1);
-        assert!(view.highest_granted_risk.is_some());
+        assert_eq!(view.allowed.len(), 1, "the decision is still theirs");
+        assert!(!view.allowed[0].effective);
+        assert!(
+            view.allowed[0]
+                .blocked_by
+                .as_ref()
+                .is_some_and(|missing| missing.contains("read")),
+            "{:?}",
+            view.allowed[0].blocked_by
+        );
+        assert!(
+            view.isolated,
+            "it can reach nothing of yours, which is what isolated claims"
+        );
+        assert_eq!(
+            view.highest_granted_risk, None,
+            "a capability that cannot be used is not currently dangerous"
+        );
+
+        let explanation =
+            PermissionsView::explain_inert(&manifest, &ledger).expect("something to explain");
+        assert!(
+            explanation.contains("ephemeral grant ephemeral"),
+            "{explanation}"
+        );
     }
 
     /// Ephemeral's own authority is not an application's, and must not appear
