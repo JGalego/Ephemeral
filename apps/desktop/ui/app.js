@@ -79,6 +79,12 @@ function clearOutcome() {
  * what showed it: the recording simply walked out of the page mid-sentence.
  */
 async function reload() {
+  // Before drawing anything: an application that crashed while nobody was
+  // looking still reads as running until something asks, and this is what asks.
+  // Quiet on failure — a machine with no container runtime has nothing to
+  // reconcile against, and saying so on every redraw would be noise.
+  await ask('sweep').catch(() => []);
+
   const summaries = await ask('applications');
   show(applicationList(summaries));
   document.getElementById('problem').hidden = true;
@@ -103,6 +109,8 @@ async function refresh() {
 /** Goes to one application's page. */
 async function open(id) {
   try {
+    await ask('refresh', { id }).catch(() => null);
+
     const detail = await ask('application', { id });
     detail.providers = await ask('providers').catch(() => ['mock']);
     const panel = document.getElementById('detail');

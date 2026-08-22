@@ -318,6 +318,8 @@ and the terminal show the same views worded identically.
 | Archiving, restoring, deleting and purging from the window | ✅ |
 | Ephemeral's own authority, granted and taken back from the window | ✅ |
 | What this machine can and cannot do, and the security record, on screen | ✅ |
+| The record reconciled against the containers before it is drawn | ✅ |
+| The real window run and filmed under WebKitGTK, not only in Chromium | ✅ |
 
 **Done when:** somebody can do everything the CLI does without opening a
 terminal.
@@ -343,6 +345,18 @@ it runs — planning, writing the app, building, testing — because those state
 are saved to disk as they happen. A progress bar would have been a number
 nothing measures. Leaving the page does not stop it, and coming back finds
 either a running application or a finished one.
+
+**Filming the real window found the one bug the tests could not.** Everything
+above was checked in headless Chromium, which draws the page perfectly and knows
+nothing about the machine underneath it. Run the actual binary against a virtual
+X server ([`tests/film-window.sh`](../apps/desktop/tests/film-window.sh)) and
+the first frame said "Running" about a container that had exited long before.
+Nothing was wrong with the rendering: the record itself was stale, and the
+terminal only avoids this because `ephemeral watch` exists and somebody types
+it. A window is already redrawing, so it now reconciles first and draws second —
+which is what a person opening it is trying to find out. The lesson is the older
+one restated: a surface nobody has run is a surface with problems no test finds,
+and that stays true right up until somebody runs it.
 
 **Two things stayed with the terminal, deliberately.** Granting Ephemeral a
 *scoped* authority (`read:~/Downloads/**`) means choosing a region of the
@@ -490,11 +504,14 @@ model server either, so what has never been exercised here is the same for
 `local` as for the hosted providers: the request actually going out and a real
 model's reply coming back.
 
-**Nobody has looked at the desktop window.** It compiles, its commands are
-typed against the same service layer the CLI uses, and its rendering is tested
-in a headless browser — but no human has seen it, and a UI that has never been
-looked at has problems no test finds. Opening it is the first thing worth doing
-on a machine with a display.
+**The desktop window has been looked at now, on one platform.** It was run
+against a virtual X server and filmed — the real binary, WebKitGTK, the window
+frame and all — and that immediately found something no test had: it said
+"Running" about a container that had exited long before, because nothing
+reconciled the record before drawing it. Fixed, and the fix is tested. Two gaps
+remain and neither closes from here: nobody has opened it on macOS or Windows,
+which render through WebView2 and WKWebView rather than WebKitGTK, and a
+recording is not a person — nothing here has been *used*, only watched.
 
 **Signing and notarisation** need credentials this repository must never hold.
 The release workflow produces checksums, which say a file is intact and

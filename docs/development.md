@@ -153,6 +153,10 @@ frames.** Everything below was found that way, with the whole suite passing:
 - the window telling you it "is not running inside Ephemeral" — while running
   inside Ephemeral, because `withGlobalTauri` was unset and nothing had ever
   connected the tested rendering to the tested commands
+- the list saying "Running" about a container that had exited long before, found
+  by `film-window.sh` and by nothing else: the rendering was right and the record
+  was stale, which is a class of bug the Chromium film cannot see because it has
+  no machine underneath it
 
 Each has a test now, and every one of those tests was written after looking.
 When you fix something a film found, add the assertion and say in the comment

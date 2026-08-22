@@ -425,6 +425,36 @@ fn purge(id: String) -> Result<ephemeral_api::Moved, Failure> {
     ephemeral_api::purge(&mut workspace, &app)
 }
 
+/// Brings every application's record back in line with its container.
+///
+/// The terminal has `watch` for this, and a window has something better: it is
+/// already redrawing. Without it the list is a record that lies by omission —
+/// an application that crashed while nobody was looking still reads as running,
+/// which is exactly what a person opening the window is trying to find out.
+///
+/// Quiet about being unable to look. If Ephemeral may not drive a container
+/// runtime, or there is none, there is nothing to reconcile against and nothing
+/// worth interrupting somebody to say: the states on screen are simply the last
+/// ones recorded.
+#[tauri::command]
+fn sweep() -> Vec<String> {
+    let Ok(mut workspace) = open() else {
+        return Vec::new();
+    };
+    let Ok(runtime) = ephemeral_engine::sandbox::usable_runtime(&workspace) else {
+        return Vec::new();
+    };
+
+    ephemeral_engine::container::sweep(&mut workspace, &runtime)
+        .map(|acted| {
+            acted
+                .into_iter()
+                .map(|action| format!("{}: {}", action.app, action.what))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// What Ephemeral itself may do, and what it may not.
 #[tauri::command]
 fn authority() -> Result<Vec<ephemeral_api::authority::AuthorityView>, Failure> {
@@ -608,6 +638,7 @@ pub fn run() {
             decide_authority,
             generate,
             generation,
+            sweep,
             acknowledge,
             providers,
             diagnostics,

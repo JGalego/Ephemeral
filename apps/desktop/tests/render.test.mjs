@@ -942,6 +942,55 @@ await check('a refused rollback says why, in the core\'s own words', async () =>
   await stubbed.close();
 });
 
+// An application that crashed while nobody was looking still reads as running
+// until something asks. The terminal has `watch` for that; a window is already
+// redrawing, so it asks before it draws. Filming the real window is what showed
+// this: it said "Running" about a container that had exited long before.
+await check('the window reconciles before it draws', async () => {
+  const stubbed = await browser.newPage();
+
+  await stubbed.addInitScript((app) => {
+    window.__asked = [];
+    let swept = false;
+
+    window.__TAURI__ = {
+      core: {
+        invoke: async (command, args) => {
+          window.__asked.push(command);
+          if (command === 'sweep') {
+            swept = true;
+            return [];
+          }
+          if (command === 'applications') {
+            // What the record says depends on whether anything has looked.
+            return [swept ? { ...app, state: 'Ready', running: false } : app];
+          }
+          if (command === 'authority' || command === 'diagnostics' || command === 'activity') {
+            return [];
+          }
+          throw new Error(`no such command: ${command}`);
+        },
+      },
+    };
+  }, summary({ state: 'Running', running: true, state_kind: 'running' }));
+
+  await stubbed.goto(origin);
+  await stubbed.waitForSelector('li.application');
+
+  const seen = await stubbed.evaluate(() => ({
+    order: window.__asked,
+    shown: document.querySelector('li.application .state').textContent,
+  }));
+
+  assert.ok(
+    seen.order.indexOf('sweep') < seen.order.indexOf('applications'),
+    `the record is reconciled before it is drawn: ${seen.order.join(', ')}`,
+  );
+  assert.equal(seen.shown, 'Ready', 'so what is on screen is what is true');
+
+  await stubbed.close();
+});
+
 // Everything the terminal can do, the window has to offer — and only what the
 // application can actually do right now. Anything else is absent rather than
 // disabled: a greyed-out row is a puzzle, and the state is already in words.

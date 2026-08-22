@@ -141,10 +141,12 @@ genuine working CSV comparator with no model at all.
 
 **What you cannot do yet.**
 
-- **Trust the desktop window yet.** Everything the terminal does can be done in
-  it now, its rendering is tested in a headless browser, and its frames are read
-  by a person before each change lands — but nobody has run the real window on a
-  machine with a display, and Chromium is not WebKit.
+- **Trust the desktop window on your platform.** Everything the terminal does
+  can be done in it now, its rendering is tested in a headless browser, and the
+  real window has been run and filmed under WebKitGTK on a virtual display
+  ([`tests/film-window.sh`](apps/desktop/tests/film-window.sh)) — which is how
+  the last bug in it was found. Nobody has yet opened it on macOS or Windows,
+  and those use a different WebView again.
 - **Give an application a scoped list of hosts it may reach.** Docker cannot
   filter egress by destination, so an application granted one refuses to start
   rather than quietly receiving the whole internet. See
