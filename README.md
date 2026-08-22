@@ -15,7 +15,7 @@ you're done.
 [![CI](https://github.com/JGalego/Ephemeral/actions/workflows/ci.yml/badge.svg)](https://github.com/JGalego/Ephemeral/actions/workflows/ci.yml)
 [![Licence](https://img.shields.io/badge/licence-Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-dea584.svg?logo=rust&logoColor=white)](rust-toolchain.toml)
-[![Status](https://img.shields.io/badge/status-phase%203%20·%20permissions%20enforced-a3e635.svg)](docs/roadmap.md)
+[![Status](https://img.shields.io/badge/status-phase%204%20·%20desktop-a3e635.svg)](docs/roadmap.md)
 [![Platforms](https://img.shields.io/badge/platforms-macOS%20·%20Windows%20·%20Linux%20·%20iOS%20·%20Android-8ab4f8.svg)](ARCHITECTURE.md)
 
 </div>
@@ -73,9 +73,9 @@ not a reason to trust it.
 
 ## Status
 
-**Phases 0–3 are done.** An application can be described, written, built, tested
-and run without anybody touching its code, and what it may do is enforced rather
-than described.
+**Phases 0–4 are done.** An application can be described, written, built, tested
+and run without anybody touching its code; what it may do is enforced rather
+than described; and all of it works from a window as well as a terminal.
 
 Generation was not called finished until somebody watched it happen: a sentence
 into a real `docker build`, an image out, the application running in the sandbox
@@ -92,6 +92,10 @@ it. [Every promise is mapped to the code that enforces
 it](docs/security/enforcement.md), which is a claim you can check rather than
 take.
 
+The window is not a second Ephemeral. Generating and running live in one crate
+both clients call, so an application started from a window is confined exactly
+as one started from a terminal, and both report it in the same words.
+
 Ephemeral is built in phases, and each phase must demonstrably work before the
 next one starts. See [the roadmap](docs/roadmap.md) for detail, and
 [docs/sandbox.md](docs/sandbox.md) for exactly what the sandbox holds.
@@ -102,7 +106,7 @@ next one starts. See [the roadmap](docs/roadmap.md) for detail, and
 | 1 | Docker runtime, sandbox, run/stop/watch, logs, cleanup | ✅ done |
 | 2 | Provider abstraction, generation agent, build/test/repair loop | ✅ done — and [watched happen](docs/roadmap.md#not-a-claim-this-time-it-was-run), against real Docker and a real model |
 | 3 | Meta-permissions, app permissions, permission UI, audit, sandboxing | ✅ done — [every promise mapped to what enforces it](docs/security/enforcement.md) |
-| 4 | Desktop application and dashboard | 🚧 ask, list, inspect, decide and roll back; generating and running are still terminal-only |
+| 4 | Desktop application and dashboard | ✅ done — generate, run, roll back, decide, and Ephemeral's own authority, without a terminal |
 | 5 | Windows, macOS, Linux, then mobile | 🚧 the desktop three and Android ship installable builds; iOS ships the engine, not yet an app |
 | 6 | Threat model, security testing, supply chain, release automation | 🚧 [threat model](docs/security/threat-model.md) written |
 | 7 | Sharing, publishing, and shared sessions | 🚧 publish/install done |
@@ -137,9 +141,10 @@ genuine working CSV comparator with no model at all.
 
 **What you cannot do yet.**
 
-- **Trust the desktop window yet.** It exists, compiles, and its rendering is
-  tested in a headless browser — but nobody has ever looked at it, and a UI
-  nobody has seen has problems no test finds.
+- **Trust the desktop window yet.** Everything the terminal does can be done in
+  it now, its rendering is tested in a headless browser, and its frames are read
+  by a person before each change lands — but nobody has run the real window on a
+  machine with a display, and Chromium is not WebKit.
 - **Give an application a scoped list of hosts it may reach.** Docker cannot
   filter egress by destination, so an application granted one refuses to start
   rather than quietly receiving the whole internet. See

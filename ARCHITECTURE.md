@@ -80,7 +80,11 @@ crates/
                                  that copied it
   ephemeral-provider-local/      that same format, refused unless the endpoint
                                  is on this machine (ADR-0019)
-  ephemeral-api/       the versioned service layer the UI and CLI consume
+  ephemeral-api/       the versioned service layer the UI and CLI consume:
+                       views, and the operations that need no machine
+  ephemeral-engine/    the operations that need this machine — generating with a
+                       model provider, and running in a container runtime. Both
+                       clients call it; neither sequences it itself.
   ephemeral-cli/       command-line client of the core API
   ephemeral-ffi/       the C ABI a phone links against
   ephemeral-android/   the JNI bridge Android loads

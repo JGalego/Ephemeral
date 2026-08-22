@@ -241,6 +241,75 @@ pub fn named(ledger: &PermissionLedger, capability: &str, allow: bool) -> Option
         .find(|permission| grant_argument(permission).as_deref() == Some(capability))
 }
 
+/// Records a person's decision about something Ephemeral itself may do.
+///
+/// # Errors
+///
+/// If the capability is not one a client may name, or the decision cannot be
+/// recorded or saved.
+pub fn decide(
+    workspace: &mut ephemeral_core::storage::Workspace,
+    capability: &str,
+    allow: bool,
+) -> Result<(), Failure> {
+    let permission = named(workspace.ledger(), capability, allow).ok_or_else(|| {
+        if allow {
+            format!(
+                "{capability} is not something a client may grant Ephemeral. \
+                 Anything scoped to a path is granted from the terminal, where the path is \
+                 written out: `ephemeral grant ephemeral read:<path>`."
+            )
+        } else {
+            format!(
+                "Ephemeral has not been allowed to {capability}, so there is nothing to take back."
+            )
+        }
+    })?;
+
+    let decided = Permission::Meta(permission);
+    let subject = ephemeral_core::Principal::Ephemeral;
+
+    if allow {
+        workspace
+            .ledger_mut()
+            .allow(
+                subject.clone(),
+                decided.clone(),
+                ephemeral_core::Actor::User,
+                "allowed from the desktop window",
+            )
+            .map_err(|error| format!("that decision could not be recorded: {error}"))?;
+
+        workspace.audit_mut().append(
+            ephemeral_core::Actor::User,
+            ephemeral_core::audit::AuditEvent::PermissionDecided {
+                principal: subject,
+                permission: decided,
+                decision: ephemeral_core::permission::Decision::Allow,
+            },
+        );
+    } else {
+        let revoked = workspace
+            .ledger_mut()
+            .revoke(&subject, &decided, ephemeral_core::Actor::User)
+            .map_err(|error| format!("that could not be taken back: {error}"))?;
+
+        if revoked > 0 {
+            workspace.audit_mut().append(
+                ephemeral_core::Actor::User,
+                ephemeral_core::audit::AuditEvent::PermissionRevoked {
+                    principal: subject,
+                    permission: decided,
+                },
+            );
+        }
+    }
+
+    workspace
+        .save()
+        .map_err(|error| format!("that decision could not be saved: {error}"))
+}
+
 /// One capability an application holds, and whether it can actually be used.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Held {
@@ -567,6 +636,95 @@ mod tests {
         assert_eq!(
             highest_effective_risk(&ledger, &app()),
             Some(reaching.risk())
+        );
+    }
+
+    /// The screen a person meets on a new machine: nothing granted, and the
+    /// three things that need granting named with what each is for.
+    #[test]
+    fn the_overview_names_what_is_missing_as_well_as_what_is_held() {
+        let ledger = PermissionLedger::new();
+        let shown = overview(&ledger);
+
+        assert_eq!(shown.len(), OFFERED.len());
+        assert!(shown.iter().all(|one| !one.granted));
+        assert!(shown.iter().all(|one| one.grantable));
+        assert!(
+            shown.iter().all(|one| one.needs_explicit_confirmation),
+            "Ephemeral's own authority outlives every application; none of it is one click"
+        );
+    }
+
+    /// Something held that a client cannot compose is still shown, and can
+    /// still be taken back — the decision is the person's either way.
+    #[test]
+    fn a_scoped_authority_is_shown_and_revocable_without_being_grantable() {
+        let mut ledger = PermissionLedger::new();
+        let reading = MetaPermission::read(PathScope::parse("~/Downloads/**").expect("a scope"));
+        allow(
+            &mut ledger,
+            Principal::Ephemeral,
+            Permission::Meta(reading.clone()),
+        );
+
+        let shown = overview(&ledger);
+        let scoped = shown
+            .iter()
+            .find(|one| one.capability.starts_with("read:"))
+            .expect("what is held is shown");
+
+        assert!(scoped.granted);
+        assert!(
+            !scoped.grantable,
+            "a path is not something a window may compose"
+        );
+        assert_eq!(named(&ledger, &scoped.capability, false), Some(reading));
+        assert_eq!(
+            named(&ledger, &scoped.capability, true),
+            None,
+            "and it cannot be granted back from a client either"
+        );
+    }
+
+    /// A client may name only what it was offered. Anything else is refused
+    /// rather than parsed, because parsing is how a window ends up granting
+    /// Ephemeral something nobody chose.
+    #[test]
+    fn a_client_cannot_invent_an_authority() {
+        let home = tempfile::tempdir().expect("a temporary directory");
+        let mut workspace =
+            ephemeral_core::storage::Workspace::open(home.path()).expect("a workspace");
+
+        for invented in ["read:/", "execute", "self-update", "docker; rm -rf /"] {
+            let refused =
+                decide(&mut workspace, invented, true).expect_err("a client may not name that");
+            assert!(
+                refused.contains("not something a client may grant"),
+                "{refused}"
+            );
+        }
+
+        assert!(
+            require(workspace.ledger(), &RUNTIME).is_err(),
+            "and nothing was granted along the way"
+        );
+    }
+
+    /// The one a client may grant, granted and taken back, with the ledger
+    /// agreeing at each step.
+    #[test]
+    fn a_client_can_grant_and_take_back_what_it_was_offered() {
+        let home = tempfile::tempdir().expect("a temporary directory");
+        let mut workspace =
+            ephemeral_core::storage::Workspace::open(home.path()).expect("a workspace");
+
+        decide(&mut workspace, "docker", true).expect("a person may grant");
+        assert!(require(workspace.ledger(), &RUNTIME).is_ok());
+
+        decide(&mut workspace, "docker", false).expect("a person may take it back");
+        assert!(
+            require(workspace.ledger(), &RUNTIME).is_err(),
+            "taking it back has to reach the thing that asks"
         );
     }
 

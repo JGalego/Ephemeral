@@ -942,6 +942,341 @@ await check('a refused rollback says why, in the core\'s own words', async () =>
   await stubbed.close();
 });
 
+// Everything the terminal can do, the window has to offer — and only what the
+// application can actually do right now. Anything else is absent rather than
+// disabled: a greyed-out row is a puzzle, and the state is already in words.
+await check('the page offers what this application can actually do', async () => {
+  const seen = await page.evaluate(async ([base, detail]) => {
+    const { actions } = await import('./render.js');
+    const labels = (over, runtime = detail.runtime) =>
+      [
+        ...actions({ ...detail, runtime, summary: { ...base, ...over } }).querySelectorAll(
+          'button',
+        ),
+      ].map((button) => button.textContent);
+
+    return {
+      ready: labels({}),
+      running: labels({ running: true, runnable: true, state_kind: 'running' }),
+      // Never generated: it has no runtime at all, which is how the page
+      // knows there is nothing built to run.
+      requested: labels({ runnable: false, state_kind: 'working' }, null),
+      archived: labels({ runnable: false, put_away: true, state_kind: 'archived' }),
+      deleted: labels({ runnable: false, put_away: true, state_kind: 'deleted' }),
+    };
+  }, [summary(), { runtime: { kind: 'docker' }, providers: ['mock'] }]);
+
+  assert.deepEqual(seen.ready, ['Run', 'Archive', 'Delete']);
+  assert.deepEqual(seen.running, ['Stop', 'Delete'], 'a running application is not archived');
+  assert.ok(seen.requested.includes('Generate'), 'nothing built yet, so it offers to build');
+  assert.ok(seen.archived.includes('Restore'));
+  assert.ok(seen.deleted.includes('Purge for good'), 'and the last step is its own button');
+});
+
+// Generation takes minutes. The window says so, says where it has got to in the
+// lifecycle's own words, and does not invent a progress bar for something
+// nothing measures.
+await check('a generation run says where it has got to, in words that are true', async () => {
+  const seen = await page.evaluate(async () => {
+    const { generationPanel } = await import('./render.js');
+
+    const running = generationPanel({ running: true }, 'Ephemeral is writing the app.');
+    const built = generationPanel({
+      running: false,
+      built: {
+        headline: 'Built. csv-comparator',
+        how_it_went: 'Built first time, 2400 tokens in, 800 out',
+        version: '8a5426d900da',
+        requests: [{ wants: 'read the files in ~/Downloads', risk: 'medium' }],
+        widened: null,
+        grants_withdrawn: 0,
+        unchanged: null,
+        warnings: [],
+      },
+    });
+    const failed = generationPanel({ running: false, failed: 'anthropic failed: no API key.' });
+
+    return {
+      running: running.textContent,
+      runningClass: running.className,
+      built: built.textContent,
+      failed: failed.textContent,
+      dismissable: built.querySelector('button.acknowledge') !== null,
+      noBar: running.querySelector('progress') === null,
+    };
+  });
+
+  assert.match(seen.running, /writing the app/);
+  assert.match(seen.running, /takes minutes/);
+  assert.match(seen.runningClass, /running/);
+  assert.equal(seen.noBar, true, 'nothing measures this, so nothing pretends to');
+  assert.match(seen.built, /Built\. csv-comparator/);
+  assert.match(seen.built, /will ask for 1 thing\. It holds none of it yet/);
+  assert.match(seen.failed, /no API key/);
+  assert.equal(seen.dismissable, true);
+});
+
+// Output is written by generated code. It is placed as text, never as markup —
+// the same rule the names and reasons follow, for the same reason.
+await check('what an application printed cannot become markup', async () => {
+  const seen = await page.evaluate(async () => {
+    const { logsSection } = await import('./render.js');
+    const section = logsSection({
+      history: [{ at: '2026-08-22T10:00:00Z', state: 'Ready', from: 'Validating', what: 'it built' }],
+      output: '<img src=x onerror="window.__owned = true">',
+    });
+
+    return {
+      html: section.querySelector('pre.output').innerHTML,
+      text: section.querySelector('pre.output').textContent,
+      images: section.querySelectorAll('img').length,
+      history: section.querySelector('ul.history').textContent,
+    };
+  });
+
+  assert.equal(seen.images, 0, 'output is text, whatever it contains');
+  assert.doesNotMatch(seen.html, /<img/);
+  assert.match(seen.text, /onerror/);
+  assert.match(seen.history, /it built/);
+});
+
+// The absence of output and the emptiness of it are different facts, and a
+// person debugging a crash needs to know which one they are looking at.
+await check('no container to ask reads differently from nothing printed', async () => {
+  const seen = await page.evaluate(async () => {
+    const { logsSection } = await import('./render.js');
+    return {
+      gone: logsSection({ history: [], output: null }).textContent,
+      quiet: logsSection({ history: [], output: '   ' }).textContent,
+    };
+  });
+
+  assert.match(seen.gone, /no container to ask/);
+  assert.match(seen.quiet, /has not printed anything/);
+});
+
+// Ephemeral's own authority is the most powerful consent in the product: it
+// outlives every application and covers all of them at once. It is never one
+// click, and a window may not compose one out of a text field.
+await check("Ephemeral's own authority is asked for separately, and typed", async () => {
+  const seen = await page.evaluate(async () => {
+    const { authoritySection } = await import('./render.js');
+    const section = authoritySection([
+      {
+        capability: 'docker',
+        wants: 'use Docker to run your apps in containers',
+        if_allowed: 'It can build and run applications.',
+        granted: false,
+        risk: 'high',
+        needs_explicit_confirmation: true,
+        grantable: true,
+      },
+      {
+        capability: 'read:~/Downloads/**',
+        wants: 'read the files in ~/Downloads',
+        if_allowed: 'It can read what is there.',
+        granted: true,
+        risk: 'medium',
+        needs_explicit_confirmation: true,
+        grantable: false,
+      },
+    ]);
+
+    const items = [...section.querySelectorAll('li.authority')];
+    return {
+      heading: section.querySelector('h2.name').textContent,
+      note: section.querySelector('p.note').textContent,
+      offered: {
+        typed: items[0].querySelector('input.confirm') !== null,
+        button: items[0].querySelector('button.grant-authority')?.textContent,
+        plainAllow: items[0].querySelector('button.allow') === null,
+      },
+      scoped: {
+        revocable: items[1].querySelector('button.revoke-authority') !== null,
+        grantable: items[1].querySelector('button.grant-authority') === null,
+        advice: items[1].querySelector('.note')?.textContent,
+      },
+    };
+  });
+
+  assert.match(seen.heading, /What Ephemeral itself may do/);
+  assert.match(seen.note, /never inherited in either direction/);
+  assert.equal(seen.offered.typed, true, 'this authority is never one click');
+  assert.equal(seen.offered.button, 'Confirm');
+  assert.equal(seen.offered.plainAllow, true);
+  assert.equal(seen.scoped.revocable, true, 'what is held can always be taken back');
+  assert.equal(seen.scoped.grantable, true, 'a window may not compose a path, so it is not offered');
+  assert.match(
+    seen.scoped.advice,
+    /Granting this again means naming the path/,
+    'and somebody about to take it back is told that before they do',
+  );
+});
+
+// The whole point of Phase 4: a person can generate and run without a terminal.
+// Driven through the real frontend, against stubbed commands shaped exactly as
+// the Rust side returns them.
+await check('somebody can generate and run an application without a terminal', async () => {
+  const stubbed = await browser.newPage();
+
+  await stubbed.addInitScript((app) => {
+    window.__asked = [];
+    let generated = false;
+
+    const detail = (over = {}) => ({
+      summary: { ...app, ...over },
+      explanation: over.explanation ?? 'Ephemeral is writing the app.',
+      description: 'Working',
+      runtime: over.built ? { kind: 'docker', isolation: 'in a container', runs_locally: true } : null,
+      limits: { description: 'half a core', cpu_millis: 500, memory_mib: 512, storage_mib: 512 },
+      permissions: { isolated: true, allowed: [], outstanding: [] },
+      versions: [],
+      retention: 'a week',
+    });
+
+    window.__TAURI__ = {
+      core: {
+        invoke: async (command, args) => {
+          window.__asked.push([command, args]);
+          if (command === 'applications') return [app];
+          if (command === 'providers') return ['mock', 'local'];
+          if (command === 'activity' || command === 'diagnostics' || command === 'authority') return [];
+          if (command === 'logs') return { history: [], output: null };
+          if (command === 'application') {
+            return generated
+              ? detail({ built: true, runnable: true, state: 'Ready', state_kind: 'idle' })
+              : detail({ runnable: false, state: 'Writing the app', state_kind: 'working' });
+          }
+          if (command === 'generate') {
+            generated = true;
+            return null;
+          }
+          if (command === 'generation') {
+            return generated
+              ? {
+                  running: false,
+                  built: {
+                    headline: 'Built. csv-comparator',
+                    how_it_went: 'Built first time',
+                    version: 'abc123',
+                    requests: [],
+                    widened: null,
+                    grants_withdrawn: 0,
+                    unchanged: null,
+                    warnings: [],
+                  },
+                  failed: null,
+                }
+              : null;
+          }
+          if (command === 'start') {
+            return {
+              state: 'Running',
+              container: 'abc123456789',
+              confinement: ['Can read /srv/listings, which it sees as /mnt/srv-listings'],
+              refused: [],
+              inert: null,
+            };
+          }
+          throw new Error(`no such command: ${command}`);
+        },
+      },
+    };
+  }, summary({ runnable: false, state: 'Requested', state_kind: 'working' }));
+
+  await stubbed.goto(origin);
+  await stubbed.click('li.application');
+  await stubbed.waitForSelector('button.generate');
+
+  await stubbed.selectOption('select.provider', 'mock');
+  await stubbed.click('button.generate');
+  await stubbed.waitForSelector('.generation.built');
+
+  const generation = await stubbed.evaluate(() =>
+    window.__asked.find(([command]) => command === 'generate'),
+  );
+
+  // Built, so the page now offers to run it — with somewhere to put arguments.
+  await stubbed.waitForSelector('form.run input.arguments');
+  await stubbed.fill('form.run input.arguments', '/mnt/srv-listings/left.csv /mnt/srv-listings/right.csv');
+  await stubbed.click('button.start');
+  await stubbed.waitForSelector('#notice:not([hidden])');
+
+  const seen = await stubbed.evaluate(() => ({
+    start: window.__asked.find(([command]) => command === 'start'),
+    notice: document.getElementById('notice').textContent,
+    problem: document.getElementById('problem').hidden,
+  }));
+
+  assert.equal(generation[1].provider, 'mock', 'the provider it was told to use');
+  assert.deepEqual(
+    seen.start[1].arguments,
+    ['/mnt/srv-listings/left.csv', '/mnt/srv-listings/right.csv'],
+    'the arguments are the application\'s own, passed as typed',
+  );
+  assert.match(seen.notice, /Started/);
+  assert.match(seen.notice, /sees as \/mnt\/srv-listings/, 'and what it can reach is said');
+  assert.equal(seen.problem, true);
+
+  await stubbed.close();
+});
+
+// Granting Ephemeral its own authority is the most consequential click in the
+// window, so a stray one must not do it.
+await check("Ephemeral's authority is not granted by a stray click", async () => {
+  const stubbed = await browser.newPage();
+
+  await stubbed.addInitScript(() => {
+    window.__decisions = [];
+    window.__TAURI__ = {
+      core: {
+        invoke: async (command, args) => {
+          if (command === 'applications') return [];
+          if (command === 'diagnostics' || command === 'activity') return [];
+          if (command === 'authority') {
+            return [
+              {
+                capability: 'docker',
+                wants: 'use Docker to run your apps in containers',
+                if_allowed: 'It can build and run applications.',
+                granted: false,
+                risk: 'high',
+                needs_explicit_confirmation: true,
+                grantable: true,
+              },
+            ];
+          }
+          if (command === 'decide_authority') {
+            window.__decisions.push(args);
+            return null;
+          }
+          throw new Error(`no such command: ${command}`);
+        },
+      },
+    };
+  });
+
+  await stubbed.goto(origin);
+  await stubbed.waitForSelector('li.authority button.grant-authority');
+
+  // The wrong word grants nothing.
+  await stubbed.fill('li.authority input.confirm', 'yes');
+  await stubbed.click('li.authority button.grant-authority');
+  await stubbed.waitForSelector('#problem:not([hidden])');
+  const afterWrongWord = await stubbed.evaluate(() => window.__decisions.length);
+
+  await stubbed.fill('li.authority input.confirm', 'allow');
+  await stubbed.click('li.authority button.grant-authority');
+  await stubbed.waitForFunction(() => window.__decisions.length > 0);
+
+  const decisions = await stubbed.evaluate(() => window.__decisions);
+
+  assert.equal(afterWrongWord, 0, 'typing the wrong word decides nothing');
+  assert.deepEqual(decisions, [{ capability: 'docker', allow: true }]);
+
+  await stubbed.close();
+});
+
 await browser.close();
 server.close();
 

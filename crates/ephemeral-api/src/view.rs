@@ -412,6 +412,50 @@ pub struct VersionView {
     pub source_kept: Option<bool>,
 }
 
+/// One thing that happened to an application, as a client shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HistoryView {
+    /// When.
+    pub at: Timestamp,
+
+    /// Where it moved to, in the user's language.
+    pub state: String,
+
+    /// Where it came from.
+    pub from: String,
+
+    /// What happened, in the lifecycle's own words.
+    pub what: String,
+
+    /// What went wrong, when something did.
+    pub error: Option<String>,
+}
+
+/// Everything that has happened to one application, oldest first.
+///
+/// The lifecycle's own history rather than the audit log: the audit log records
+/// what was *done to* Ephemeral's records, and this records what an application
+/// has *been*. A client showing one in place of the other would answer a
+/// different question from the one somebody asked.
+#[must_use]
+pub fn history(manifest: &AppManifest) -> Vec<HistoryView> {
+    manifest
+        .lifecycle
+        .history()
+        .iter()
+        .map(|entry| HistoryView {
+            at: entry.at,
+            state: entry.to.headline().to_owned(),
+            from: entry.from.headline().to_owned(),
+            what: entry.explain(),
+            error: entry
+                .error
+                .as_ref()
+                .map(|error| format!("{}: {}", error.code, error.message)),
+        })
+        .collect()
+}
+
 /// One entry from the security record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuditEntryView {

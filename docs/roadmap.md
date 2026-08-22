@@ -6,10 +6,14 @@ honest record of where that line currently sits.
 
 ## Where we are
 
-**Phase 3 — Permissions.** Complete: the two-tier model is now consulted by the
-things that act, and [every promise is mapped to the code that enforces
-it](security/enforcement.md). Phase 2 before it was
+**Phase 4 — Desktop.** Complete: everything the terminal does can be done in the
+window, through one implementation both of them call. Phase 3 before it made the
+[permission model something the product consults](security/enforcement.md)
+rather than describes, and Phase 2 was
 [demonstrated rather than asserted](#not-a-claim-this-time-it-was-run).
+
+Phase 5 — Cross-platform — is next, and most of it exists: what is left there is
+signing, an iOS shell, and a run on a physical device.
 
 ### Done
 
@@ -308,17 +312,47 @@ and the terminal show the same views worded identically.
 | Deciding permissions from the window, under the same rules as the terminal | ✅ |
 | Asking for an application from the window, without opening a terminal | ✅ |
 | Returning an application to an earlier version from the window | ✅ |
-| Running and generating from the window | |
+| Running and generating from the window | ✅ |
+| `ephemeral-engine` — generating and running, as one implementation both clients call | ✅ |
+| Reading what an application has been and what it printed, without a terminal | ✅ |
+| Archiving, restoring, deleting and purging from the window | ✅ |
+| Ephemeral's own authority, granted and taken back from the window | ✅ |
+| What this machine can and cannot do, and the security record, on screen | ✅ |
 
 **Done when:** somebody can do everything the CLI does without opening a
 terminal.
 
-The window could show applications and answer their questions long before it
-could start one, which meant the first thing anybody did with a graphical
-application was open a terminal. It has a composer now. What is still missing
-is generating and running from it: generating takes minutes and needs progress
-the window has nowhere to put yet, and running needs the Docker daemon — both
-are real work rather than a wiring job.
+**What was actually in the way was not the window.** Generating and running
+lived inside the CLI crate, so a window could not call them: it could either
+have its own copy of "plan, write, build, repair, record" — the second, subtly
+different Ephemeral that the service layer exists to prevent — or it could do
+nothing. `ephemeral-api` was not the place to put them either, because it holds
+no I/O on purpose: it compiles for a phone, where there is no daemon and no
+subprocess.
+
+So the split is three ways now. The core is the domain; `ephemeral-api` is what
+every client can do; `ephemeral-engine` is what a client with a machine
+underneath it can do. Three thousand lines moved, and the CLI kept what a CLI is
+for — resolving what somebody typed, and drawing the answer. Its behaviour is
+unchanged, checked by running it rather than by assuming: create, generate
+against real Docker, grant both halves, run, read the output.
+
+**Progress is the application's own lifecycle, not a bar.** Generation takes
+minutes, so the window starts it on a thread and re-reads the application while
+it runs — planning, writing the app, building, testing — because those states
+are saved to disk as they happen. A progress bar would have been a number
+nothing measures. Leaving the page does not stop it, and coming back finds
+either a running application or a finished one.
+
+**Two things stayed with the terminal, deliberately.** Granting Ephemeral a
+*scoped* authority (`read:~/Downloads/**`) means choosing a region of the
+filesystem, and a window that composed a path from a text field would be a
+window that can grant Ephemeral something nobody typed — so it offers the three
+unscoped ones, shows everything held, and can take any of it back. And
+publishing and installing need a folder picker, which needs a Tauri plugin and
+therefore a build step the window does not have; that is
+[Phase 7](#phase-7--sharing) work, and it is listed there rather than pretended
+about here.
 
 ### Phase 5 — Cross-platform
 

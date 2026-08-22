@@ -260,6 +260,53 @@ await page.addInitScript(
                 'Generate again to rebuild.',
             };
           }
+          if (command === 'providers') return ['mock', 'local', 'anthropic', 'openai'];
+          if (command === 'logs') {
+            return {
+              history: [
+                { at: '2026-08-20T09:00:00Z', state: 'Ready', from: 'Validating', what: 'the runtime tested the app and it worked' },
+                { at: '2026-08-20T09:05:00Z', state: 'Running', from: 'Starting', what: 'the runtime started the app' },
+              ],
+              output: 'added:   flat-c\nremoved: flat-b\nchanged: flat-a',
+            };
+          }
+          if (command === 'generation') return null;
+          if (command === 'authority') {
+            return [
+              {
+                capability: 'docker',
+                wants: 'use Docker to run your apps in containers',
+                if_allowed: 'It can build and run applications in containers on this device.',
+                granted: true,
+                risk: 'high',
+                needs_explicit_confirmation: true,
+                grantable: true,
+              },
+              {
+                capability: 'network',
+                wants: 'reach the network',
+                if_allowed: 'It can call a model provider to generate applications.',
+                granted: false,
+                risk: 'high',
+                needs_explicit_confirmation: true,
+                grantable: true,
+              },
+            ];
+          }
+          if (command === 'diagnostics') {
+            return [
+              { what: 'Docker 29.3.1 is available. Applications will run in containers.', ok: true, advice: null },
+              { what: 'Ephemeral may build and run applications in containers', ok: true, advice: null },
+              { what: 'Ephemeral may not generate with a hosted model', ok: null, advice: '`ephemeral grant ephemeral network` allows it.' },
+              { what: 'the security record is intact (14 entries)', ok: true, advice: null },
+            ];
+          }
+          if (command === 'activity') {
+            return [
+              { summary: 'you allowed apartment-comparator to read the files in ~/Downloads/apartments', actor: 'you', app: null, at: '2026-08-20T09:02:00Z' },
+              { summary: 'the runtime started apartment-comparator in a Docker sandbox with 1 folder(s)', actor: 'the runtime', app: null, at: '2026-08-20T09:05:00Z' },
+            ];
+          }
           if (command === 'api_version') return 2;
           throw new Error(`no such command: ${command}`);
         },
@@ -323,9 +370,19 @@ await scene('what-going-back-costs', 1600);
 await page.click('button.confirm-rollback');
 await scene('what-the-rollback-took-back', 2000);
 
+// What an application has been, and what it printed — the terminal's `logs`,
+// without a terminal.
+await page.evaluate(() => document.querySelector('section.logs')?.scrollIntoView());
+await scene('what-it-did-and-said', 1500);
+
 // Back out: with everything answered, nothing should still be asking.
 await page.click('button.back');
 await scene('nothing-left-waiting', 1800);
+
+// What Ephemeral itself may do, which is the answer to "why did nothing
+// happen" and belongs nowhere near an application's own permissions.
+await page.evaluate(() => document.getElementById('machine')?.scrollIntoView());
+await scene('what-ephemeral-itself-may-do', 1500);
 
 await context.close();
 

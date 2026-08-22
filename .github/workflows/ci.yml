@@ -135,6 +135,9 @@ jobs:
       - run: cargo test -p ephemeral-provider-anthropic
       - run: cargo test -p ephemeral-provider-openai
       - run: cargo test -p ephemeral-provider-local
+      # Generating and running now live in one crate both clients call, so the
+      # job that proves generation never needs a live model has to cover it.
+      - run: cargo test -p ephemeral-engine
       # Generating is an HTTPS request; iOS cannot spawn a process. A provider
       # whose only transport is `curl` silently decides that Ephemeral cannot
       # generate on a phone, so the crate must build with no subprocess at all
@@ -217,6 +220,31 @@ jobs:
       - run: node tests/render.test.mjs
         working-directory: apps/desktop
 
+  # The window's Rust half is a separate workspace — Tauri needs system
+  # libraries the rest of Ephemeral must not require — so nothing else here
+  # compiles it. A command that does not build is a button that does nothing,
+  # and the rendering tests above cannot see that: they run against the page,
+  # with the commands stubbed.
+  window:
+    name: Desktop commands compile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - name: The libraries a window needs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev
+      - run: cargo clippy --all-targets -- -D warnings
+        working-directory: apps/desktop/src-tauri
+      - run: cargo test
+        working-directory: apps/desktop/src-tauri
+
   supply-chain:
     name: Supply chain
     runs-on: ubuntu-latest
@@ -257,6 +285,7 @@ jobs:
       - domain-purity
       - generation
       - desktop
+      - window
       - supply-chain
       - lockfile
     steps:

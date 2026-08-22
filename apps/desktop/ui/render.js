@@ -400,6 +400,338 @@ export function rollbackNotice(done) {
   return notice;
 }
 
+/// What can be done to this application right now, as buttons.
+///
+/// Driven by the state the service layer reports rather than by what the window
+/// remembers: an application that crashed while nobody was looking should offer
+/// what it can actually do next, and the only place that is known is the
+/// lifecycle. Anything it cannot do is absent rather than disabled — a row of
+/// greyed-out buttons is a puzzle, and the state is already on the page in
+/// words.
+export function actions(detail) {
+  const row = element('div', 'actions');
+  const state = detail.summary.state_kind;
+  const built = detail.runtime !== null && detail.runtime !== undefined;
+
+  const add = (className, label, dataset = {}) => {
+    const button = element('button', className, label);
+    for (const [key, value] of Object.entries(dataset)) button.dataset[key] = value;
+    row.appendChild(button);
+    return button;
+  };
+
+  if (detail.summary.running) {
+    add('halt', 'Stop');
+  } else if (detail.summary.runnable) {
+    add('start', 'Run');
+  }
+
+  // Generating is offered when there is nothing built yet, and when the last
+  // attempt ended somewhere it can be picked up from. A ready application is
+  // running code somebody approved: replacing it is not a button.
+  if (!built || ['attention', 'failed'].includes(state)) {
+    // The provider is chosen next to the button that uses it, and `mock` is
+    // first because it is the one that works with nothing installed and no
+    // account anywhere. Which providers exist is the engine's answer, not this
+    // window's.
+    const picker = element('select', 'provider');
+    for (const name of detail.providers ?? ['mock']) {
+      const option = element('option', null, name);
+      option.value = name;
+      picker.appendChild(option);
+    }
+    picker.setAttribute('aria-label', 'Which model to build it with');
+    row.appendChild(picker);
+
+    add('generate', built ? 'Generate again' : 'Generate');
+  }
+
+  if (detail.summary.put_away) {
+    add('move', 'Restore', { event: 'restore' });
+  } else if (!detail.summary.running) {
+    add('move', 'Archive', { event: 'archive' });
+  }
+
+  if (state !== 'deleted') {
+    add('move danger', 'Delete', { event: 'delete' });
+  } else {
+    add('purge danger', 'Purge for good');
+  }
+
+  return row;
+}
+
+/// Where somebody says how to run an application, and what to give it.
+///
+/// The arguments are the application's own. The placeholder is built from a
+/// mount it actually has, because the paths it answers to are the ones inside
+/// its sandbox and nothing else on this page would say so.
+export function runPanel(detail) {
+  const form = element('form', 'run');
+  form.dataset.id = detail.summary.id;
+
+  const label = element('label', 'ask', 'Anything to pass it?');
+  label.setAttribute('for', 'arguments');
+
+  const field = element('input', 'arguments');
+  field.type = 'text';
+  field.id = 'arguments';
+  field.placeholder = '/data/left.csv /data/right.csv';
+  field.setAttribute('aria-label', 'Arguments for the application');
+
+  const note = element(
+    'p',
+    'note',
+    'Paths here are the ones the application sees: a folder you allowed appears under /mnt, ' +
+      'and its own storage is /data.',
+  );
+
+  form.append(label, field, note);
+  return form;
+}
+
+/// A generation run, while it is happening and once it is not.
+///
+/// Progress is the application's own lifecycle — planning, writing, building,
+/// testing — because that is what is really true and it is already recorded as
+/// it happens. A window that invented a progress bar would be drawing a number
+/// nothing produced.
+export function generationPanel(state, explanation) {
+  const panel = element('div', 'generation');
+
+  if (state?.running) {
+    panel.classList.add('running');
+    panel.appendChild(element('p', 'what', explanation ?? 'Working…'));
+    panel.appendChild(
+      element(
+        'p',
+        'note',
+        'This takes minutes. You can leave this page; it keeps going, and the application ' +
+          'says where it got to.',
+      ),
+    );
+    return panel;
+  }
+
+  if (state?.failed) {
+    panel.classList.add('failed');
+    panel.appendChild(element('p', 'what', state.failed));
+    panel.appendChild(dismissal());
+    return panel;
+  }
+
+  if (!state?.built) return panel;
+
+  const built = state.built;
+  panel.classList.add('built');
+  panel.appendChild(element('p', 'what', built.headline));
+  panel.appendChild(element('p', 'note', built.how_it_went));
+  if (built.version) panel.appendChild(element('p', 'note', `version ${built.version}`));
+
+  for (const warning of built.warnings ?? []) {
+    panel.appendChild(element('p', 'caution', warning));
+  }
+
+  if (built.requests.length > 0) {
+    panel.appendChild(
+      element(
+        'p',
+        'note',
+        built.requests.length === 1
+          ? 'It will ask for 1 thing. It holds none of it yet.'
+          : `It will ask for ${built.requests.length} things. It holds none of them yet.`,
+      ),
+    );
+  }
+
+  if (built.widened) {
+    panel.appendChild(element('p', 'caution', built.widened));
+    if (built.grants_withdrawn > 0) {
+      panel.appendChild(
+        element(
+          'p',
+          'caution',
+          `${built.grants_withdrawn} permission(s) you had allowed were withdrawn, because they ` +
+            'no longer cover what it now asks for.',
+        ),
+      );
+    }
+  } else if (built.unchanged) {
+    panel.appendChild(element('p', 'note', built.unchanged));
+  }
+
+  panel.appendChild(dismissal());
+  return panel;
+}
+
+/// The control that puts a finished run's report away.
+function dismissal() {
+  const controls = element('div', 'decide');
+  controls.appendChild(element('button', 'acknowledge', 'Dismiss'));
+  return controls;
+}
+
+/// What an application has been, and what it last printed.
+///
+/// The output is shown as it came out — `textContent` into a `pre`, never
+/// markup — because it is written by generated code and is exactly the sort of
+/// thing that would carry an injection if anything here interpreted it.
+export function logsSection(logs) {
+  const section = element('section', 'logs');
+
+  section.appendChild(element('h3', 'history', 'What has happened'));
+  const list = element('ul', 'history');
+  for (const entry of logs.history ?? []) {
+    const item = element('li', 'moment');
+    item.appendChild(element('div', 'state', entry.state));
+    item.appendChild(element('div', 'what', entry.what));
+    if (entry.error) item.appendChild(element('div', 'no-reason', entry.error));
+    list.appendChild(item);
+  }
+  if ((logs.history ?? []).length === 0) {
+    list.appendChild(element('li', 'empty', 'Nothing yet.'));
+  }
+  section.appendChild(list);
+
+  section.appendChild(element('h3', 'holds', 'What it printed'));
+  if (logs.output === null || logs.output === undefined) {
+    section.appendChild(
+      element(
+        'p',
+        'empty',
+        'Nothing to show: there is no container to ask. Its output is kept only while one exists.',
+      ),
+    );
+  } else if (logs.output.trim() === '') {
+    section.appendChild(element('p', 'empty', 'It has not printed anything.'));
+  } else {
+    section.appendChild(element('pre', 'output', logs.output));
+  }
+
+  return section;
+}
+
+/// What Ephemeral itself may do.
+///
+/// Its own section, and never folded in with an application's: they are two
+/// permission systems, and showing them as one list is the confusion the whole
+/// model exists to prevent. This is the answer to "why did nothing happen",
+/// which on a new installation is usually a permission Ephemeral was never
+/// given rather than anything broken.
+export function authoritySection(items) {
+  const section = element('section', 'authority');
+  section.appendChild(element('h2', 'name', 'What Ephemeral itself may do'));
+  section.appendChild(
+    element(
+      'p',
+      'note',
+      'Separate from what any application may do, and never inherited in either direction. ' +
+        'An application can only do something Ephemeral is also allowed to carry out.',
+    ),
+  );
+
+  const list = element('ul', 'authorities');
+  for (const item of items) list.appendChild(authorityItem(item));
+  section.appendChild(list);
+
+  return section;
+}
+
+/// One thing Ephemeral may or may not do.
+export function authorityItem(item) {
+  const entry = element('li', `authority risk-${item.risk}${item.granted ? ' held' : ''}`);
+  entry.dataset.capability = item.capability;
+  entry.dataset.granted = String(item.granted);
+
+  entry.appendChild(element('div', 'wants', item.wants));
+  entry.appendChild(element('div', 'if-allowed', item.if_allowed));
+
+  const controls = element('div', 'decide');
+
+  if (item.granted) {
+    const revoke = element('button', 'revoke-authority', 'Take this back');
+    revoke.dataset.capability = item.capability;
+    controls.appendChild(revoke);
+
+    // Said next to the control that would lose it: a scoped authority is one
+    // this window cannot hand back, because it cannot choose a path. Somebody
+    // about to take it back should know that before they do.
+    if (!item.grantable) {
+      controls.appendChild(
+        element(
+          'div',
+          'note',
+          'Granting this again means naming the path, which is done from the terminal: ' +
+            `ephemeral grant ephemeral ${item.capability}`,
+        ),
+      );
+    }
+  } else if (item.grantable) {
+    // Typed, always. This authority outlives every application and covers all
+    // of them at once, so asking for it as casually as for one folder would
+    // teach the wrong reflex.
+    const field = element('input', 'confirm');
+    field.type = 'text';
+    field.placeholder = 'type allow';
+    field.setAttribute('aria-label', `Type allow to let Ephemeral ${item.wants}`);
+    controls.appendChild(field);
+
+    const confirm = element('button', 'grant-authority', 'Confirm');
+    confirm.dataset.capability = item.capability;
+    controls.appendChild(confirm);
+  } else {
+    controls.appendChild(
+      element(
+        'div',
+        'note',
+        'Granted from the terminal, where the path is written out: ' +
+          `ephemeral grant ephemeral ${item.capability}`,
+      ),
+    );
+  }
+
+  entry.appendChild(controls);
+  return entry;
+}
+
+/// What this machine can and cannot do, with the remedy for anything it cannot.
+export function diagnosticsSection(checks) {
+  const section = element('section', 'diagnostics');
+  section.appendChild(element('h2', 'name', 'This machine'));
+
+  const list = element('ul', 'checks');
+  for (const check of checks) {
+    const item = element(
+      'li',
+      `check ${check.ok === true ? 'ok' : check.ok === false ? 'bad' : 'note'}`,
+    );
+    item.appendChild(element('div', 'what', check.what));
+    if (check.advice) item.appendChild(element('div', 'advice', check.advice));
+    list.appendChild(item);
+  }
+  section.appendChild(list);
+
+  return section;
+}
+
+/// The security record, newest first.
+export function activitySection(entries) {
+  const section = element('section', 'activity');
+  section.appendChild(element('h2', 'name', 'Security record'));
+
+  const list = element('ul', 'entries');
+  for (const entry of entries) {
+    const item = element('li', 'entry');
+    item.appendChild(element('div', 'what', entry.summary));
+    item.appendChild(element('div', 'who', entry.actor));
+    list.appendChild(item);
+  }
+  if (entries.length === 0) list.appendChild(element('li', 'empty', 'Nothing recorded yet.'));
+  section.appendChild(list);
+
+  return section;
+}
+
 /** An application's page. */
 export function applicationDetail(detail) {
   const page = element('section', 'detail');
@@ -424,8 +756,12 @@ export function applicationDetail(detail) {
   }
 
   page.appendChild(element('p', 'limits', detail.limits.description));
+  page.appendChild(actions(detail));
+  if (detail.summary.runnable && !detail.summary.running) page.appendChild(runPanel(detail));
+  page.appendChild(element('div', 'generation-slot'));
   page.appendChild(permissionsSection(detail.permissions));
   page.appendChild(versionsSection(detail.versions ?? []));
+  page.appendChild(element('div', 'logs-slot'));
 
   return page;
 }

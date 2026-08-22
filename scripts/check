@@ -41,6 +41,9 @@ cargo test -p ephemeral-runtime --no-default-features
 
 # CI never makes a live model call (ADR-0008). Generation is exercised entirely
 # through the deterministic mock provider.
+step "Generating and running, in the crate both clients call"
+cargo test -p ephemeral-engine
+
 step "The whole journey, sentence to running application"
 cargo test -p ephemeral-agent --test journey
 cargo test -p ephemeral-agent --test reference_app -- --nocapture
@@ -117,6 +120,17 @@ fi
 if command -v node >/dev/null 2>&1 && [ -d apps/desktop/node_modules ]; then
   step "Desktop rendering"
   (cd apps/desktop && node tests/render.test.mjs)
+
+  # The window's Rust half is its own workspace, and needs system libraries the
+  # rest of Ephemeral deliberately does not. Built when they are there, skipped
+  # with a word when they are not — a command that does not compile is a button
+  # that does nothing, and the rendering tests cannot see that.
+  if pkg-config --exists gtk+-3.0 2>/dev/null; then
+    step "Desktop commands"
+    (cd apps/desktop/src-tauri && cargo clippy --all-targets -- -D warnings && cargo test)
+  else
+    printf '\n(skipping the desktop commands: no GTK development libraries here)\n'
+  fi
 else
   printf '\n(skipping desktop rendering: run `cd apps/desktop && npm install playwright` first)\n'
 fi

@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use ephemeral_core::{
     Actor, AppId, PermissionDelta, Principal,
     audit::AuditEvent,
+    lifecycle::{LifecycleEvent, TransitionRequest},
     manifest::{AppManifest, Metadata},
     permission::Permission,
     retention::RetentionPolicy,
@@ -97,6 +98,150 @@ pub fn create(
         .map_err(|error| format!("could not save: {error}"))?;
 
     Ok(manifest)
+}
+
+/// What putting an application away, or bringing it back, did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Moved {
+    /// Which application.
+    pub app: String,
+
+    /// Where it is now, in the user's language.
+    pub state: String,
+
+    /// What that means.
+    pub description: String,
+
+    /// How many grants went with it, when the move withdraws any.
+    pub grants_withdrawn: usize,
+
+    /// What happened, in a sentence.
+    pub headline: String,
+}
+
+/// Moves an application through its life: archived, restored, deleted.
+///
+/// Every one of these is the same shape — a lifecycle event a person raised,
+/// recorded with a reason — so they are one operation rather than three that
+/// drift. What differs is what goes with the move: deleting withdraws every
+/// permission in the same breath, because a deleted application that still
+/// holds capabilities for as long as it takes something to notice is a window
+/// nobody should have to think about.
+///
+/// # Errors
+///
+/// If there is no such application, if the state machine refuses the move, or
+/// if the result cannot be saved.
+pub fn move_to(
+    workspace: &mut Workspace,
+    app: &AppId,
+    event: LifecycleEvent,
+    reason: &str,
+) -> Result<Moved, Failure> {
+    let mut manifest = workspace
+        .apps()
+        .load(app)
+        .map_err(|_| format!("there is no application called {app}."))?;
+
+    let before = manifest.lifecycle.state();
+    manifest
+        .apply(TransitionRequest::new(event, Actor::User, reason))
+        .map_err(|error| format!("cannot {event} {app}: {error}"))?;
+
+    // Capability goes immediately; data survives the recovery period, which is
+    // what makes a deletion recoverable without making it toothless.
+    let grants_withdrawn = if event == LifecycleEvent::Delete {
+        let withdrawn = workspace
+            .ledger_mut()
+            .revoke_all(&Principal::app(app.clone()));
+        workspace.audit_mut().append(
+            Actor::User,
+            AuditEvent::AppDeleted {
+                app: app.clone(),
+                grants_revoked: withdrawn,
+            },
+        );
+        withdrawn
+    } else {
+        workspace.audit_mut().append(
+            Actor::User,
+            AuditEvent::LifecycleTransition {
+                app: app.clone(),
+                from: before,
+                to: manifest.lifecycle.state(),
+                event,
+                reason: reason.to_owned(),
+            },
+        );
+        0
+    };
+
+    workspace
+        .apps_mut()
+        .save(&manifest)
+        .map_err(|error| format!("could not save {app}: {error}"))?;
+    workspace
+        .save()
+        .map_err(|error| format!("could not save: {error}"))?;
+
+    let state = manifest.lifecycle.state();
+
+    Ok(Moved {
+        app: app.to_string(),
+        state: state.headline().to_owned(),
+        description: state.description().to_owned(),
+        grants_withdrawn,
+        headline: match event {
+            LifecycleEvent::Archive => format!(
+                "Archived. {app} is now {}.",
+                state.headline().to_lowercase()
+            ),
+            LifecycleEvent::Restore => format!(
+                "Restored. {app} is now {}.",
+                state.headline().to_lowercase()
+            ),
+            LifecycleEvent::Delete => format!("Deleted. {app}"),
+            other => format!(
+                "{app} is now {} after {other}.",
+                state.headline().to_lowercase()
+            ),
+        },
+    })
+}
+
+/// Destroys an application and everything it holds.
+///
+/// There is no way back from this, which is why it is its own operation rather
+/// than another lifecycle event: a client has to ask first, and asking is the
+/// only protection there is.
+///
+/// # Errors
+///
+/// If the application's files cannot be removed, or the record cannot be saved.
+pub fn purge(workspace: &mut Workspace, app: &AppId) -> Result<Moved, Failure> {
+    let grants_withdrawn = workspace
+        .ledger_mut()
+        .revoke_all(&Principal::app(app.clone()));
+
+    workspace
+        .apps()
+        .purge(app)
+        .map_err(|error| format!("could not purge {app}: {error}"))?;
+
+    workspace
+        .audit_mut()
+        .append(Actor::User, AuditEvent::AppPurged { app: app.clone() });
+    workspace
+        .save()
+        .map_err(|error| format!("could not save: {error}"))?;
+
+    Ok(Moved {
+        app: app.to_string(),
+        state: "Purged".to_owned(),
+        description: "Everything it held is gone: source, data, logs, artifacts.".to_owned(),
+        grants_withdrawn,
+        headline: format!("Purged. {app} and everything it held are gone."),
+    })
 }
 
 /// What a rollback did, and what a person needs told about it.

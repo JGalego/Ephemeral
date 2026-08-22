@@ -283,3 +283,104 @@ li.permission.inert .blocked {
   color: var(--medium);
   font-size: 0.9rem;
 }
+
+/* What can be done to an application, next to what it is. Anything it cannot
+   do right now is absent rather than disabled: a row of greyed-out buttons is a
+   puzzle, and the state is already on the page in words. */
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  margin: 1rem 0;
+}
+
+.actions button, .actions select {
+  font: inherit;
+  padding: 0.25rem 0.8rem;
+  border: 1px solid var(--edge);
+  border-radius: 5px;
+  background: white;
+  cursor: pointer;
+}
+
+.actions button.danger { color: var(--high); }
+.actions .consequence {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--medium);
+  font-size: 0.9rem;
+}
+
+form.run {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 1rem;
+}
+
+form.run input.arguments {
+  font: inherit;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--edge);
+  border-radius: 6px;
+}
+
+form.run label.ask { font-weight: 600; font-size: 0.95rem; }
+form.run p.note, .generation p.note { margin: 0; font-size: 0.85rem; color: var(--quiet); }
+
+/* A generation run. Minutes long, so it says so, and says where it has got to
+   in the lifecycle's own words rather than inventing a progress bar. */
+.generation {
+  border-left: 3px solid var(--edge);
+  padding: 0.5rem 0 0.5rem 0.75rem;
+  margin-bottom: 1rem;
+}
+.generation.running { border-left-color: var(--medium); }
+.generation.built { border-left-color: var(--low); }
+.generation.failed { border-left-color: var(--high); }
+.generation .what { margin: 0 0 0.3rem; font-weight: 600; }
+.generation .caution { margin: 0.3rem 0; color: var(--medium); font-size: 0.9rem; }
+
+/* Output is written by generated code, so it is placed as text and never as
+   markup, and kept in its own scrollable box rather than pushing the page. */
+pre.output {
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  background: #f6f6f6;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: 0.85rem;
+  max-height: 22rem;
+}
+
+ul.history li.moment { margin-bottom: 0.5rem; }
+ul.history .state { font-weight: 600; font-size: 0.9rem; }
+ul.history .what { color: var(--quiet); font-size: 0.9rem; }
+
+/* Ephemeral's own authority, and this machine. Deliberately a separate block
+   from any application: they are two permission systems, and showing them as
+   one list is the confusion the model exists to prevent. */
+#machine { margin-top: 2.5rem; border-top: 1px solid var(--edge); padding-top: 1.5rem; }
+#machine[hidden] { display: none; }
+#machine h2.name { font-size: 1.05rem; margin: 0 0 0.4rem; }
+#machine p.note { margin: 0 0 0.75rem; color: var(--quiet); font-size: 0.9rem; }
+
+li.authority {
+  border-left: 3px solid currentColor;
+  padding: 0.5rem 0 0.5rem 0.75rem;
+  margin-bottom: 0.9rem;
+}
+li.authority.held { background: #f6f6f6; border-radius: 0 5px 5px 0; }
+li.authority.held .wants::before { content: "✓ "; color: var(--low); }
+li.authority .if-allowed { font-size: 0.9rem; }
+li.authority .decide .note { color: var(--quiet); font-size: 0.85rem; }
+
+li.check { margin-bottom: 0.5rem; font-size: 0.9rem; }
+li.check .advice { color: var(--quiet); }
+li.check.ok .what::before { content: "✓ "; color: var(--low); }
+li.check.note .what::before { content: "! "; color: var(--medium); }
+li.check.bad .what::before { content: "✗ "; color: var(--high); }
+
+ul.entries li.entry { margin-bottom: 0.35rem; font-size: 0.9rem; }
+ul.entries .who { color: var(--quiet); font-size: 0.8rem; }

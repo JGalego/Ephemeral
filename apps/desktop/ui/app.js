@@ -6,14 +6,22 @@
 // transition would be a second, subtly different Ephemeral.
 
 import {
+  activitySection,
   applicationList,
   applicationDetail,
+  authoritySection,
   composer,
+  diagnosticsSection,
+  generationPanel,
   isConsent,
+  logsSection,
   problem,
   rollbackConfirm,
   rollbackNotice,
 } from './render.js';
+
+/** The pending re-read of a page whose application is being generated. */
+let watching = null;
 
 /** Calls a command, or explains why it could not. */
 async function ask(command, args = {}) {
@@ -81,6 +89,7 @@ async function refresh() {
   try {
     clearOutcome();
     await reload();
+    await showMachine();
     document.getElementById('applications').hidden = false;
     document.getElementById('compose').hidden = false;
     document.getElementById('detail').hidden = true;
@@ -95,13 +104,16 @@ async function refresh() {
 async function open(id) {
   try {
     const detail = await ask('application', { id });
+    detail.providers = await ask('providers').catch(() => ['mock']);
     const panel = document.getElementById('detail');
     panel.replaceChildren(applicationDetail(detail));
     panel.hidden = false;
+    await Promise.all([showGeneration(id, detail), showLogs(id)]);
     // Replace the list rather than stacking beneath it. The first recording of
     // this window showed both at once, which reads as two pages at the same
     // time.
     document.getElementById('applications').hidden = true;
+    document.getElementById('machine').hidden = true;
     // The composer goes with it. Leaving "what do you want?" above the page
     // somebody is reading offers a new application instead of the one in front
     // of them.
@@ -164,6 +176,101 @@ async function rollback(id, digest) {
   }
 }
 
+
+/** Draws whatever a generation run is doing, if one is. */
+async function showGeneration(id, detail) {
+  const slot = document.querySelector('.generation-slot');
+  if (!slot) return;
+
+  const state = await ask('generation', { id }).catch(() => null);
+  slot.replaceChildren(generationPanel(state, detail?.explanation));
+
+  // Polled while it runs, because generation takes minutes and the progress
+  // that matters — planning, writing, building, testing — is the application's
+  // own lifecycle, which is saved as it happens.
+  if (state?.running) {
+    clearTimeout(watching);
+    watching = setTimeout(() => {
+      const page = document.querySelector('.detail');
+      if (page?.dataset.id === id) open(id);
+    }, 2000);
+  }
+}
+
+/** What an application has been, and what it printed. */
+async function showLogs(id) {
+  const slot = document.querySelector('.logs-slot');
+  if (!slot) return;
+
+  const logs = await ask('logs', { id, lines: 50 }).catch(() => null);
+  if (logs) slot.replaceChildren(logsSection(logs));
+}
+
+/** What Ephemeral itself may do, and what this machine can do. */
+async function showMachine() {
+  const panel = document.getElementById('machine');
+  if (!panel) return;
+
+  try {
+    const [authority, checks, activity] = await Promise.all([
+      ask('authority'),
+      ask('diagnostics'),
+      ask('activity', { limit: 12 }),
+    ]);
+
+    panel.replaceChildren(
+      authoritySection(authority),
+      diagnosticsSection(checks),
+      activitySection(activity),
+    );
+    panel.hidden = false;
+  } catch (error) {
+    reportProblem(String(error.message ?? error));
+  }
+}
+
+/** Starts an application, and says what it can reach. */
+async function start(id, argumentLine) {
+  try {
+    // Split the way a shell would, and no further: what the arguments mean is
+    // the application's business. A window that interpreted them would invent
+    // behaviour the terminal does not have.
+    const args = argumentLine.trim() === '' ? [] : argumentLine.trim().split(/\s+/);
+    const run = await ask('start', { id, arguments: args });
+
+    await open(id);
+    await reload();
+    reportOutcome(runNotice(run));
+  } catch (error) {
+    reportProblem(String(error.message ?? error));
+  }
+}
+
+/** What starting an application said, as a notice. */
+function runNotice(run) {
+  const notice = document.createElement('div');
+  notice.className = 'notice-body';
+
+  const line = (className, text) => {
+    const node = document.createElement('p');
+    node.className = className;
+    node.textContent = text;
+    notice.appendChild(node);
+  };
+
+  line('headline', `Started. It is ${run.state.toLowerCase()}.`);
+  if (run.inert) line('caution', run.inert);
+  for (const refusal of run.refused) line('caution', refusal);
+  for (const said of run.confinement) line('note', said);
+
+  const dismiss = document.createElement('button');
+  dismiss.className = 'dismiss';
+  dismiss.textContent = 'Dismiss';
+  notice.appendChild(dismiss);
+
+  return notice;
+}
+
 /** Records what somebody asked for, then shows them the result.
  *
  * The intent is sent exactly as typed. Trimming, emptiness and naming are all
@@ -188,6 +295,112 @@ async function submitIntent(form) {
     reportProblem(String(error.message ?? error));
   } finally {
     button.disabled = false;
+  }
+}
+
+
+/** Records a decision about something Ephemeral itself may do. */
+async function decideAuthority(capability, allow) {
+  try {
+    await ask('decide_authority', { capability, allow });
+    await showMachine();
+    await reload();
+    document.getElementById('problem').hidden = true;
+  } catch (error) {
+    reportProblem(String(error.message ?? error));
+  }
+}
+
+/** Runs a command that needs no answer, then re-reads the page. */
+async function simply(command, args, id) {
+  try {
+    await ask(command, args);
+    await open(id);
+    await reload();
+  } catch (error) {
+    reportProblem(String(error.message ?? error));
+  }
+}
+
+/** Puts an application away, brings it back, or throws it away. */
+async function moveApp(id, event) {
+  try {
+    const moved = await ask('move_app', { id, event });
+    await reload();
+    await open(id);
+    reportOutcome(movedNotice(moved));
+  } catch (error) {
+    reportProblem(String(error.message ?? error));
+  }
+}
+
+/** Destroying an application is asked twice, and the second time says so. */
+function confirmDestruction(button, id) {
+  const controls = button.closest('.actions');
+  const warning = document.createElement('p');
+  warning.className = 'consequence';
+  warning.textContent =
+    'Purging destroys everything it holds — source, data, logs, artifacts. There is no way back.';
+
+  const confirm = document.createElement('button');
+  confirm.className = 'confirm-purge danger';
+  confirm.dataset.id = id;
+  confirm.textContent = 'Purge for good';
+
+  button.replaceWith(warning, confirm);
+}
+
+/** Destroys an application and everything it holds. */
+async function purge(id) {
+  try {
+    const gone = await ask('purge', { id });
+    await refresh();
+    reportOutcome(movedNotice(gone));
+  } catch (error) {
+    reportProblem(String(error.message ?? error));
+  }
+}
+
+/** What a move said, as a notice. */
+function movedNotice(moved) {
+  const notice = document.createElement('div');
+  notice.className = 'notice-body';
+
+  const headline = document.createElement('p');
+  headline.className = 'headline';
+  headline.textContent = moved.headline;
+  notice.appendChild(headline);
+
+  if (moved.grants_withdrawn > 0) {
+    const caution = document.createElement('p');
+    caution.className = 'caution';
+    caution.textContent = `${moved.grants_withdrawn} permission(s) went with it.`;
+    notice.appendChild(caution);
+  }
+
+  const note = document.createElement('p');
+  note.className = 'note';
+  note.textContent = moved.description;
+  notice.appendChild(note);
+
+  const dismiss = document.createElement('button');
+  dismiss.className = 'dismiss';
+  dismiss.textContent = 'Dismiss';
+  notice.appendChild(dismiss);
+
+  return notice;
+}
+
+/** Starts a generation run and watches it. */
+async function beginGenerating(id) {
+  try {
+    const offered = await ask('providers');
+    const provider = document.querySelector('select.provider')?.value ?? offered[0];
+
+    await ask('generate', { id, provider });
+    await open(id);
+  } catch (error) {
+    reportProblem(String(error.message ?? error));
   }
 }
 
@@ -250,6 +463,58 @@ document.addEventListener('click', (event) => {
   if (confirmed) {
     confirmed.disabled = true;
     rollback(confirmed.closest('.detail').dataset.id, confirmed.dataset.digest);
+    return;
+  }
+
+  const authority = event.target.closest('button.grant-authority, button.revoke-authority');
+  if (authority) {
+    const entry = authority.closest('li.authority');
+    const granting = authority.classList.contains('grant-authority');
+    const typed = entry.querySelector('input.confirm')?.value ?? '';
+
+    // The same rule the terminal holds, judged here rather than inferred from
+    // which control was clicked: Ephemeral's own authority is never granted by
+    // a stray click.
+    if (granting && !isConsent({ needs_explicit_confirmation: true }, typed)) {
+      reportProblem('Type `allow` to let Ephemeral do this. Nothing has been decided.');
+      return;
+    }
+
+    decideAuthority(authority.dataset.capability, granting);
+    return;
+  }
+
+  const act = event.target.closest('button.start, button.halt, button.generate, button.move, button.purge');
+  if (act) {
+    const page = act.closest('.detail');
+    const id = page.dataset.id;
+
+    if (act.classList.contains('start')) {
+      start(id, page.querySelector('input.arguments')?.value ?? '');
+    } else if (act.classList.contains('halt')) {
+      simply('halt', { id }, id);
+    } else if (act.classList.contains('generate')) {
+      beginGenerating(id);
+    } else if (act.classList.contains('purge')) {
+      confirmDestruction(act, id);
+    } else {
+      moveApp(id, act.dataset.event);
+    }
+    return;
+  }
+
+  const confirmedPurge = event.target.closest('button.confirm-purge');
+  if (confirmedPurge) {
+    purge(confirmedPurge.dataset.id);
+    return;
+  }
+
+  const acknowledged = event.target.closest('button.acknowledge');
+  if (acknowledged) {
+    const page = acknowledged.closest('.detail');
+    ask('acknowledge', { id: page.dataset.id })
+      .then(() => open(page.dataset.id))
+      .catch((error) => reportProblem(String(error.message ?? error)));
     return;
   }
 

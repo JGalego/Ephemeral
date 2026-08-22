@@ -53,10 +53,12 @@ pub mod operation;
 pub mod view;
 
 pub use authority::{Grants, Held};
-pub use operation::{Rollback, create, derive_name, rollback, withdraw_widened};
+pub use operation::{
+    Moved, Rollback, create, derive_name, move_to, purge, rollback, withdraw_widened,
+};
 pub use view::{
-    ApplicationDetail, ApplicationSummary, AuditEntryView, LimitsView, PermissionView,
-    PermissionsView, RuntimeView, VersionView,
+    ApplicationDetail, ApplicationSummary, AuditEntryView, HistoryView, LimitsView, PermissionView,
+    PermissionsView, RuntimeView, VersionView, history,
 };
 
 use ephemeral_core::{

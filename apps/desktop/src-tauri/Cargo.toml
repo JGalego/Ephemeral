@@ -16,6 +16,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 ephemeral-core = { path = "../../../crates/ephemeral-core" }
+ephemeral-engine = { path = "../../../crates/ephemeral-engine" }
 ephemeral-api = { path = "../../../crates/ephemeral-api" }
 
 tauri = { version = "2", features = [] }

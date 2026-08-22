@@ -43,3 +43,94 @@ pub use container::{
 };
 pub use generation::{Generated, PROVIDERS, Requested, generate, provider_authority};
 pub use sandbox::{Confinement, specification};
+
+/// One thing checked about this machine, and what to do if it is wrong.
+///
+/// A diagnostic that only reports symptoms wastes somebody's time, so every
+/// check carries its remedy. Shared by the terminal's `doctor` and the window,
+/// because a machine that is fine in one and broken in the other would be worse
+/// than either answer alone.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Check {
+    /// What was checked, phrased as the finding.
+    pub what: String,
+
+    /// `Some(true)` fine, `Some(false)` broken, `None` worth knowing about.
+    ///
+    /// Three states rather than two, because an absent container runtime is
+    /// neither: everything except running an application works without one, and
+    /// reporting that as a failure teaches people to ignore the output.
+    pub ok: Option<bool>,
+
+    /// What would fix it, when something needs fixing.
+    pub advice: Option<String>,
+}
+
+/// What this machine can and cannot do right now.
+///
+/// Deliberately not a pass/fail: it answers "why did nothing happen", which on
+/// a new installation is usually a permission Ephemeral has not been given
+/// rather than anything broken.
+#[must_use]
+pub fn diagnostics(workspace: &ephemeral_core::storage::Workspace) -> Vec<Check> {
+    use ephemeral_runtime::Runtime as _;
+
+    let mut checks = Vec::new();
+
+    let availability = ephemeral_runtime::docker::DockerRuntime::new().availability();
+    checks.push(Check {
+        what: availability.explanation.clone(),
+        ok: availability.usable.then_some(true),
+        advice: (!availability.usable).then(|| {
+            "Everything except building and running an application works without one.".to_owned()
+        }),
+    });
+
+    for (permission, what_for) in [
+        (
+            ephemeral_api::authority::RUNTIME,
+            "build and run applications in containers",
+        ),
+        (
+            ephemeral_api::authority::HOSTED_PROVIDER,
+            "generate with a hosted model",
+        ),
+        (
+            ephemeral_api::authority::CREDENTIAL,
+            "use a model provider's credential",
+        ),
+    ] {
+        let granted = ephemeral_api::authority::require(workspace.ledger(), &permission).is_ok();
+        checks.push(Check {
+            what: format!(
+                "Ephemeral {} {what_for}",
+                if granted { "may" } else { "may not" }
+            ),
+            ok: granted.then_some(true),
+            advice: (!granted).then(|| {
+                ephemeral_api::authority::grant_argument(&permission).map_or_else(
+                    || "You can allow it in Ephemeral's own permissions.".to_owned(),
+                    |written| format!("`ephemeral grant ephemeral {written}` allows it."),
+                )
+            }),
+        });
+    }
+
+    match workspace.audit().verify() {
+        Ok(()) => checks.push(Check {
+            what: format!(
+                "the security record is intact ({} entries)",
+                workspace.audit().len()
+            ),
+            ok: Some(true),
+            advice: None,
+        }),
+        Err(error) => checks.push(Check {
+            what: format!("the security record has been altered: {error}"),
+            ok: Some(false),
+            advice: Some("Treat this as a security event rather than a bug.".to_owned()),
+        }),
+    }
+
+    checks
+}
