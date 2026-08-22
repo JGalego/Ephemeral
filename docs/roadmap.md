@@ -383,6 +383,13 @@ therefore a build step the window does not have; that is
 [Phase 7](#phase-7--sharing) work, and it is listed there rather than pretended
 about here.
 
+Two smaller ones, for completeness. `ephemeral states` prints the whole state
+machine as a reference; the window shows an application's own history and what
+its current state means, which is the half a person on that page is asking
+about. And `ephemeral grant` can give an application a capability it never
+requested, while the window only ever answers what was asked — that is the
+consent model working as intended, not a missing button.
+
 ### Phase 5 — Cross-platform
 
 | | |
