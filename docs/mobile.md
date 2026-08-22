@@ -228,3 +228,18 @@ The Swift and Kotlin applications themselves. The engine is compiled against
 from C on every commit and built for five device architectures, so what is left
 is a user interface rather than a contract — but it is genuinely left, and this
 page describes a library rather than an app that exists.
+
+## What a permission decision means on a phone
+
+Both halves of the permission model reach the device
+([ADR-0003](architecture/decisions/0003-two-tier-permission-model.md)): an
+application may do something only if the person allowed *it* and allowed
+*Ephemeral* to carry it out. Nothing on a phone mirrors the operating system's
+own permissions into the ledger yet — that is the platform adapter, and it does
+not exist — so allowing an application something here records the decision and
+grants no authority. The page says so outright rather than by omission: the
+capability comes back with `"effective": false` and what Ephemeral is missing.
+
+That costs nothing today, because a phone generates and does not run. It is what
+the adapter has to fix before one does, and the C ABI test asserts the current
+behaviour so that fixing it is a visible change rather than a quiet one.

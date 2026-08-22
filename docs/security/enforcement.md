@@ -94,8 +94,19 @@ recorded as a gap rather than presented as a control.
 reason an application gives is the model's claim, presented as a claim. Nothing
 verifies it, and no enforcement point can.
 
-**The window cannot grant Ephemeral's own authority.** It shows what an
-application holds, and says when a capability does nothing because Ephemeral
-lacks the matching authority — but granting that authority is the most powerful
-consent in the product, and it is currently available only from the terminal
-(`ephemeral grant ephemeral …`). That is a missing screen, not a missing rule.
+**On a phone, a decision is recorded and inert.** Both halves of the model reach
+the C ABI, and nothing on a device mirrors the operating system's own
+permissions into the ledger yet — the platform adapter ADR-0003 describes does
+not exist. So allowing an application something on a phone records the decision
+and grants no authority, which the page says outright (`"effective": false`)
+rather than by omission. It costs nothing today, because a phone generates and
+does not run; it is what the adapter has to fix before one does.
+
+**The window cannot grant Ephemeral's *scoped* authority.** It grants and takes back the three
+unscoped authorities — a container runtime, the network, a credential — with the
+word `allow` typed out, and shows everything else Ephemeral holds with a control
+to take it back. What it will not do is compose a path: granting
+`read:~/Downloads/**` means choosing a region of the filesystem, and a window
+that built one out of a text field would be a window that can grant Ephemeral
+something nobody typed. Those are granted from the terminal, where the path is
+the argument.

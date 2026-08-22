@@ -176,8 +176,22 @@ int main(int argc, char **argv) {
 
   check(ephemeral_decide(handle, id, "filesystem_read", true) == EPHEMERAL_OK,
         "deciding something actually requested is recorded");
-  check(contains(ephemeral_application(handle, id), "\"granted\":1"),
-        "and the application now holds it");
+
+  /* Both halves of the permission model reach a phone as well (ADR-0003): the
+     person allowed the application, and Ephemeral itself has not been allowed
+     to carry it out — because nothing on a device mirrors the operating
+     system's own permissions into the ledger yet. So the decision stands and
+     does nothing, which is what the page has to say. Asserting "granted: 1"
+     here would be asserting authority the sandbox would not give. */
+  /* `contains` takes ownership, so the page is asked for once per question
+     rather than freed twice — which is the sort of thing this test exists to
+     catch in the ABI itself. */
+  check(contains(ephemeral_application(handle, id), "\"granted\":0"),
+        "and it can use nothing yet, because Ephemeral may not carry it out");
+  check(contains(ephemeral_application(handle, id), "\"effective\":false"),
+        "which the page says outright rather than by omission");
+  check(contains(ephemeral_application(handle, id), "filesystem_read"),
+        "while the decision itself is still recorded as theirs");
 
   /* A host that gets this wrong should get a code, not undefined behaviour. */
   check(ephemeral_decide(NULL, id, "filesystem_read", true) == EPHEMERAL_BAD_HANDLE,
