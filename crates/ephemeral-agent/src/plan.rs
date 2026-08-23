@@ -181,6 +181,18 @@ pub struct GeneratedApp {
     /// The command that starts it, already split into arguments.
     pub entrypoint: Vec<String>,
 
+    /// What the application takes, so something can draw a form for it.
+    ///
+    /// Declared here rather than in the plan because the plan is written before
+    /// the code is: by this point the model has actually written the argument
+    /// parser, so it is describing what it built rather than what it intended.
+    ///
+    /// Empty is legitimate. An application that takes nothing, or one whose
+    /// provider declared nothing, gets no form — which is a different thing
+    /// from a form with no fields.
+    #[serde(default)]
+    pub inputs: Vec<ephemeral_core::manifest::Input>,
+
     /// The command that verifies it, already split into arguments.
     ///
     /// Required, not optional. "Ephemeral tests it" is a promise the product
@@ -419,6 +431,7 @@ mod tests {
             dockerfile: "FROM python:3.12-slim\nCOPY . /app\n".to_owned(),
             entrypoint: vec!["python".to_owned(), "main.py".to_owned()],
             test_command: vec!["python".to_owned(), "-m".to_owned(), "pytest".to_owned()],
+            inputs: Vec::new(),
         }
     }
 

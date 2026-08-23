@@ -203,13 +203,24 @@ pub fn arguments(
                     });
                 }
 
-                named.push(flag.clone());
-                // A flag carries no value: it means something by being there.
-                // Passing "true" after it would make it a positional argument
-                // the application never asked for.
-                if input.kind != InputKind::Flag {
-                    named.push(value.to_owned());
+                if input.kind == InputKind::Flag {
+                    // A flag is on by being there and off by being absent, so
+                    // its *value* decides whether to write it at all.
+                    //
+                    // Found by running this against a real model: gpt-5
+                    // declared `--no-headers` with `"default": "false"`, which
+                    // is a perfectly reasonable way to say "off by default" and
+                    // which the first version of this turned into a flag that
+                    // was always on. A checkbox nobody ticked would have
+                    // silently told the application there were no headers.
+                    if switched_on(value) {
+                        named.push(flag.clone());
+                    }
+                    continue;
                 }
+
+                named.push(flag.clone());
+                named.push(value.to_owned());
             }
         }
     }
@@ -309,6 +320,36 @@ mod tests {
 
         let off = arguments(&inputs, &answers(&[("no_header", "")])).expect("off");
         assert!(off.is_empty(), "off is absence, not a value");
+
+        let unticked = arguments(&inputs, &answers(&[("no_header", "false")])).expect("off");
+        assert!(unticked.is_empty(), "and an explicit no is still off");
+    }
+
+    /// A flag whose default is `"false"`, exactly as a real model declared one.
+    ///
+    /// This is the shape that found the bug. gpt-5, asked for a CSV comparator,
+    /// declared `--no-headers` with `"default": "false"` — a perfectly
+    /// reasonable way to write "off unless asked". The first version of this
+    /// treated any non-empty default as a value to use, so the flag was always
+    /// on, and a checkbox nobody ticked would have told the application there
+    /// were no headers.
+    #[test]
+    fn a_flag_defaulting_to_false_is_off() {
+        let mut input = named("no_headers", "--no-headers", InputKind::Flag);
+        input.default = Some("false".to_owned());
+
+        assert!(
+            arguments(std::slice::from_ref(&input), &answers(&[]))
+                .expect("it builds")
+                .is_empty(),
+            "a default of false means the flag is not passed"
+        );
+
+        assert_eq!(
+            arguments(&[input], &answers(&[("no_headers", "true")])).expect("it builds"),
+            ["--no-headers"],
+            "and ticking it still turns it on"
+        );
     }
 
     /// An empty answer for something required is a question to ask, not a

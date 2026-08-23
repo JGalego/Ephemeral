@@ -129,6 +129,19 @@ impl MockProvider {
     /// Deliberately dependency-free. An application whose build needs the
     /// network could not be built in a container with no network, and the whole
     /// point of the default sandbox is that there isn\'t one.
+    /// One positional file input, as the fixture declares them.
+    fn takes(name: &str, label: &str, at: u8) -> ephemeral_core::manifest::Input {
+        ephemeral_core::manifest::Input {
+            name: name.to_owned(),
+            label: label.to_owned(),
+            kind: ephemeral_core::manifest::InputKind::File,
+            passing: ephemeral_core::manifest::Passing::Positional { at },
+            required: true,
+            default: None,
+            help: None,
+        }
+    }
+
     fn working_source() -> Vec<SourceFile> {
         vec![
             SourceFile::new(
@@ -360,6 +373,14 @@ impl AgentProvider for MockProvider {
                     "FROM {IMAGE}\nWORKDIR /app\nCOPY . /app\nCMD [\"python\", \"compare.py\"]\n"
                 ),
                 entrypoint: vec!["python".to_owned(), "compare.py".to_owned()],
+                // The mock declares its shape too, so every automated exercise
+                // of generation covers the path a client draws a form from.
+                // The fixture takes two files positionally, which is exactly
+                // what `compare.py LEFT.csv RIGHT.csv` says it takes.
+                inputs: vec![
+                    Self::takes("left", "The first file", 0),
+                    Self::takes("right", "The second file", 1),
+                ],
                 test_command: vec![
                     "python".to_owned(),
                     "-m".to_owned(),

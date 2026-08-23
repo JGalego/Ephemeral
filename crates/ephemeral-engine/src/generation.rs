@@ -291,7 +291,9 @@ fn apply_success(
         entrypoint: outcome.app.entrypoint.clone(),
         interface: outcome.app.plan.interface,
         port: None,
-        inputs: Vec::new(),
+        // What the application says it takes, so a client can draw a form
+        // rather than asking somebody to type a command line.
+        inputs: outcome.app.inputs.clone(),
     });
 
     // Requests, never grants. The manifest records what the application wants;

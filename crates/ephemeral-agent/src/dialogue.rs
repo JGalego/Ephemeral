@@ -26,6 +26,8 @@
 
 use serde_json::{Value, json};
 
+use ephemeral_core::manifest::{Input, InputKind, Passing};
+
 use crate::{
     AgentError,
     plan::{GeneratedApp, Plan, RepairAttempt, SourceFile},
@@ -94,10 +96,22 @@ pub fn generate_prompt(plan: &Plan) -> String {
          Reply with JSON of exactly this shape:\n\
          {{\"files\": [{{\"path\": string, \"contents\": string}}], \
          \"dockerfile\": string, \"entrypoint\": [string], \
-         \"test_command\": [string]}}\n\n\
+         \"test_command\": [string], \
+         \"inputs\": [{{\"name\": string, \"label\": string, \"kind\": \
+         \"text\"|\"number\"|\"file\"|\"folder\"|\"choice\"|\"flag\", \
+         \"flag\": string OR \"positional\": number, \
+         \"options\": [string] for choice only, \"required\": bool, \
+         \"default\": string, \"help\": string}}]}}\n\n\
          `entrypoint` and `test_command` are argument vectors, already \
          split — they are never passed to a shell. The Dockerfile must \
-         build with no network access.",
+         build with no network access.\n\n\
+         `inputs` describes every argument the application accepts, so that \
+         somebody with no terminal can be shown a form instead of a command \
+         line. Give each one a `label` a person would recognise rather than \
+         the variable name. Use `positional` for arguments passed in order, \
+         counting from zero, and `flag` for named ones, written exactly as \
+         the application parses it. Declaring an input asks for no permission \
+         and grants none.",
         plan.summary, plan.interface, plan.image
     )
 }
@@ -250,6 +264,7 @@ pub fn app_from(provider: &str, value: &Value, plan: &Plan) -> Result<GeneratedA
         "dockerfile": value.get("dockerfile").cloned().unwrap_or(Value::Null),
         "entrypoint": value.get("entrypoint").cloned().unwrap_or(Value::Null),
         "test_command": value.get("test_command").cloned().unwrap_or(Value::Null),
+        "inputs": serde_json::to_value(inputs_from(value)).unwrap_or(Value::Null),
     }))
     .map_err(|error| AgentError::Unreadable {
         provider: provider.to_owned(),
@@ -260,6 +275,97 @@ pub fn app_from(provider: &str, value: &Value, plan: &Plan) -> Result<GeneratedA
     app.plan = plan.clone();
     app.validate()?;
     Ok(app)
+}
+
+/// Reads the input declarations out of a reply.
+///
+/// The wire shape is deliberately flatter than [`Input`]'s own. A model asked
+/// for `{"passing": {"passing": "named", "flag": "--key"}}` gets it wrong often
+/// enough to matter, and the cost of being clever with serde here is paid by
+/// every generation. So the reply says `"flag": "--key"` or `"positional": 0`
+/// and this turns it into the domain's shape.
+///
+/// A declaration that cannot be read is **dropped, not fatal**. An application
+/// whose form is half-described is still an application somebody can run from
+/// a terminal; refusing the whole generation over a malformed label would throw
+/// away working code because the form was wrong.
+fn inputs_from(value: &Value) -> Vec<Input> {
+    value
+        .get("inputs")
+        .and_then(Value::as_array)
+        .map(|declared| declared.iter().filter_map(one_input).collect())
+        .unwrap_or_default()
+}
+
+fn one_input(value: &Value) -> Option<Input> {
+    let name = value.get("name")?.as_str()?.trim();
+    if name.is_empty() {
+        return None;
+    }
+
+    // How it is passed decides more than anything else here, so an input that
+    // says neither — or both — is not something to guess about.
+    let flag = value.get("flag").and_then(Value::as_str);
+    let positional = value.get("positional").and_then(Value::as_u64);
+    let passing = match (flag, positional) {
+        (Some(flag), None) if flag.starts_with('-') => Passing::Named {
+            flag: flag.to_owned(),
+        },
+        (None, Some(at)) => Passing::Positional {
+            at: u8::try_from(at).ok()?,
+        },
+        _ => return None,
+    };
+
+    let kind = match value.get("kind").and_then(Value::as_str)? {
+        "text" => InputKind::Text,
+        "number" => InputKind::Number,
+        "file" => InputKind::File,
+        "folder" => InputKind::Folder,
+        "flag" => InputKind::Flag,
+        "choice" => {
+            let options: Vec<String> = value
+                .get("options")?
+                .as_array()?
+                .iter()
+                .filter_map(|option| option.as_str().map(ToOwned::to_owned))
+                .collect();
+
+            // A choice with nothing to choose is not a choice. Offering an
+            // empty picker would be offering a control that cannot be used.
+            if options.is_empty() {
+                return None;
+            }
+            InputKind::Choice { options }
+        }
+        _ => return None,
+    };
+
+    Some(Input {
+        label: value
+            .get("label")
+            .and_then(Value::as_str)
+            .filter(|label| !label.trim().is_empty())
+            .unwrap_or(name)
+            .to_owned(),
+        name: name.to_owned(),
+        kind,
+        passing,
+        required: value
+            .get("required")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        default: value
+            .get("default")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned),
+        help: value
+            .get("help")
+            .and_then(Value::as_str)
+            .filter(|help| !help.trim().is_empty())
+            .map(ToOwned::to_owned),
+    })
 }
 
 /// Builds a repair from a parsed reply.
@@ -603,5 +709,119 @@ x = 1\"}";
             app_from(TEST_PROVIDER, &untested, &plan).unwrap_err(),
             AgentError::Refused(_)
         ));
+    }
+    /// A declaration as a model would actually write it, turned into the shape
+    /// the domain uses.
+    ///
+    /// The wire shape is flatter on purpose: `"flag": "--key"` rather than a
+    /// nested tagged object, because the nested one is got wrong often enough
+    /// that the cost is paid by every generation.
+    #[test]
+    fn a_declaration_a_model_would_write_is_understood() {
+        let reply = json!({
+            "inputs": [
+                { "name": "old", "label": "The earlier file", "kind": "file",
+                  "positional": 0, "required": true },
+                { "name": "key", "label": "Match rows by", "kind": "text",
+                  "flag": "--key", "default": "id", "help": "Which column identifies a row" },
+                { "name": "no_header", "label": "No header row", "kind": "flag",
+                  "flag": "--no-header" },
+                { "name": "output", "label": "Format", "kind": "choice",
+                  "flag": "--output", "options": ["plain", "json"] }
+            ]
+        });
+
+        let inputs = inputs_from(&reply);
+
+        assert_eq!(inputs.len(), 4);
+        assert_eq!(inputs[0].passing, Passing::Positional { at: 0 });
+        assert!(inputs[0].required);
+        assert_eq!(inputs[1].default.as_deref(), Some("id"));
+        assert_eq!(inputs[2].kind, InputKind::Flag);
+        assert_eq!(
+            inputs[3].kind,
+            InputKind::Choice {
+                options: vec!["plain".to_owned(), "json".to_owned()]
+            }
+        );
+    }
+
+    /// A malformed declaration loses the field, not the application.
+    ///
+    /// An application whose form is half-described is still one somebody can
+    /// run from a terminal. Refusing the whole generation because a label was
+    /// wrong would throw away working code over a user interface.
+    #[test]
+    fn a_declaration_that_cannot_be_read_is_dropped_rather_than_fatal() {
+        let reply = json!({
+            "inputs": [
+                { "name": "good", "kind": "text", "flag": "--good" },
+                { "kind": "text", "flag": "--nameless" },
+                { "name": "neither", "kind": "text" },
+                { "name": "both", "kind": "text", "flag": "--both", "positional": 0 },
+                { "name": "notaflag", "kind": "text", "flag": "output" },
+                { "name": "empty_choice", "kind": "choice", "flag": "--c", "options": [] },
+                { "name": "unknown_kind", "kind": "colour", "flag": "--c" }
+            ]
+        });
+
+        let inputs = inputs_from(&reply);
+
+        assert_eq!(
+            inputs
+                .iter()
+                .map(|input| input.name.as_str())
+                .collect::<Vec<_>>(),
+            ["good"],
+            "everything ambiguous is dropped rather than guessed at"
+        );
+    }
+
+    /// An application that declares nothing produces no form, and that is not
+    /// an error — it is most applications, and every one written before
+    /// declarations existed.
+    #[test]
+    fn no_declaration_is_not_a_failure() {
+        assert!(inputs_from(&json!({})).is_empty());
+        assert!(inputs_from(&json!({ "inputs": null })).is_empty());
+        assert!(inputs_from(&json!({ "inputs": "not an array" })).is_empty());
+    }
+
+    /// The label falls back to the name rather than being blank. A form field
+    /// with no label is a box nobody can fill in.
+    #[test]
+    fn an_input_with_no_label_is_labelled_by_its_name() {
+        let reply = json!({ "inputs": [{ "name": "delimiter", "kind": "text", "flag": "-d" }] });
+
+        assert_eq!(inputs_from(&reply)[0].label, "delimiter");
+    }
+
+    /// A declaration reaches the application through the same path everything
+    /// else does, and comes out the far side as a form.
+    #[test]
+    fn a_declaration_survives_being_parsed_into_an_application() {
+        let reply = json!({
+            "files": [{ "path": "main.py", "contents": "print('hi')" }],
+            "dockerfile": "FROM python:3.12-slim\n",
+            "entrypoint": ["python", "/app/main.py"],
+            "test_command": ["true"],
+            "inputs": [{ "name": "old", "kind": "file", "positional": 0, "required": true }]
+        });
+
+        let plan = plan_from(
+            TEST_PROVIDER,
+            &json!({
+                "summary": "x",
+                "interface": "job",
+                "image": "alpine",
+                "requests": [],
+            }),
+        )
+        .expect("a valid plan");
+
+        let app = app_from(TEST_PROVIDER, &reply, &plan).expect("it parses");
+
+        assert_eq!(app.inputs.len(), 1);
+        assert_eq!(app.inputs[0].name, "old");
     }
 }
