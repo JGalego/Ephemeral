@@ -156,6 +156,33 @@ internal object Engine {
         }
     }
 
+    /**
+     * Every provider this build can be pointed at.
+     *
+     * The one native call that may happen on the calling thread: it takes no
+     * session, touches no workspace, and answers from a fixed list — so the
+     * single-thread rule the rest of this object exists to keep does not apply
+     * to it, and making a dialog wait a round trip to open would be silly.
+     */
+    fun providers(): List<Provider> {
+        val listed = JSONArray(Native.providers() ?: "[]")
+        return (0 until listed.length()).mapNotNull { index ->
+            listed.optJSONObject(index)?.let(Provider::from)
+        }
+    }
+
+    /** Records a choice of service and hands it to the engine. */
+    fun choose(context: Context, choice: Choice) {
+        val application = context.applicationContext
+        Choice.save(application, choice)
+        worker.execute {
+            runCatching {
+                openIfNeeded(application)
+                Native.setProvider(session, choice.asJson())
+            }
+        }
+    }
+
     /** Re-reads the stored credential and hands it to the engine. */
     fun refreshCredential(context: Context) {
         val application = context.applicationContext
@@ -212,6 +239,10 @@ internal object Engine {
         }
         session = opened
 
+        // Both halves of "which model", restored together. A session that came
+        // back with the credential but not the choice would quietly send it to
+        // whichever service is the default — which is somebody else's.
+        Choice.read(context)?.let { Native.setProvider(session, it.asJson()) }
         Credential.read(context)?.let { Native.setCredential(session, it) }
     }
 

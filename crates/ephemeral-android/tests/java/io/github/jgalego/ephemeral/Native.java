@@ -24,6 +24,12 @@ final class Native {
 
     static native int setCredential(long session, String apiKey);
 
+    static native int setProvider(long session, String configuration);
+
+    static native String provider(long session);
+
+    static native String providers();
+
     static native String lastError(long session);
 
     static native String create(long session, String intent);

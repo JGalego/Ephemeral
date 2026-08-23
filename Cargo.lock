@@ -319,6 +319,7 @@ dependencies = [
  "ephemeral-api",
  "ephemeral-core",
  "ephemeral-provider-anthropic",
+ "ephemeral-provider-openai",
  "serde",
  "serde_json",
  "tempfile",

@@ -146,7 +146,7 @@ fn opening_failed(reason: String) -> jlong {
 extern "C" fn send(
     context: *mut c_void,
     endpoint: *const c_char,
-    api_key: *const c_char,
+    headers_json: *const c_char,
     request_json: *const c_char,
 ) -> *mut c_char {
     guarded(ptr::null_mut(), || {
@@ -162,11 +162,11 @@ extern "C" fn send(
         let borrowed = unsafe {
             (
                 CStr::from_ptr(endpoint).to_str(),
-                CStr::from_ptr(api_key).to_str(),
+                CStr::from_ptr(headers_json).to_str(),
                 CStr::from_ptr(request_json).to_str(),
             )
         };
-        let (Ok(endpoint), Ok(api_key), Ok(body)) = borrowed else {
+        let (Ok(endpoint), Ok(headers), Ok(body)) = borrowed else {
             return ptr::null_mut();
         };
 
@@ -174,7 +174,7 @@ extern "C" fn send(
             return ptr::null_mut();
         };
 
-        let Some(reply) = ask_host(&mut guard, &host.transport, endpoint, api_key, body) else {
+        let Some(reply) = ask_host(&mut guard, &host.transport, endpoint, headers, body) else {
             return ptr::null_mut();
         };
 
@@ -187,11 +187,11 @@ fn ask_host(
     env: &mut JNIEnv<'_>,
     transport: &GlobalRef,
     endpoint: &str,
-    api_key: &str,
+    headers: &str,
     body: &str,
 ) -> Option<String> {
     let endpoint = env.new_string(endpoint).ok()?;
-    let api_key = env.new_string(api_key).ok()?;
+    let headers = env.new_string(headers).ok()?;
     let body = env.new_string(body).ok()?;
 
     let outcome = env.call_method(
@@ -200,7 +200,7 @@ fn ask_host(
         "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
         &[
             JValue::Object(&endpoint),
-            JValue::Object(&api_key),
+            JValue::Object(&headers),
             JValue::Object(&body),
         ],
     );
@@ -334,6 +334,63 @@ pub extern "system" fn Java_io_github_jgalego_ephemeral_Native_setCredential<'lo
         };
         // SAFETY: live handle, NUL-terminated credential borrowed for the call.
         unsafe { ephemeral_ffi::ephemeral_set_credential(open.ephemeral, api_key.as_ptr()) }
+    })
+}
+
+/// Chooses which service generates, and how it is configured.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_jgalego_ephemeral_Native_setProvider<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    session: jlong,
+    configuration: JString<'local>,
+) -> jint {
+    guarded(EPHEMERAL_ERROR, || {
+        let Some(open) = opened(session) else {
+            return EPHEMERAL_BAD_HANDLE;
+        };
+        let Some(configuration) = text(&mut env, &configuration) else {
+            return EPHEMERAL_ERROR;
+        };
+        let Ok(configuration) = CString::new(configuration) else {
+            return EPHEMERAL_ERROR;
+        };
+        // SAFETY: live handle, NUL-terminated JSON borrowed for the call.
+        unsafe { ephemeral_ffi::ephemeral_set_provider(open.ephemeral, configuration.as_ptr()) }
+    })
+}
+
+/// What is currently chosen, as JSON. Carries no credential.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_jgalego_ephemeral_Native_provider<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    session: jlong,
+) -> jstring {
+    guarded(ptr::null_mut(), || {
+        let Some(open) = opened(session) else {
+            return ptr::null_mut();
+        };
+        // SAFETY: live handle.
+        let produced = unsafe { ephemeral_ffi::ephemeral_provider(open.ephemeral) };
+        handed_back(&mut env, produced)
+    })
+}
+
+/// Every provider this build can be pointed at, as JSON.
+///
+/// Takes no session on purpose: a person may want to choose before there is a
+/// workspace, and the answer does not depend on one.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_jgalego_ephemeral_Native_providers<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+) -> jstring {
+    guarded(ptr::null_mut(), || {
+        handed_back(&mut env, ephemeral_ffi::ephemeral_providers())
     })
 }
 

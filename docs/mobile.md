@@ -67,18 +67,34 @@ carry a second TLS stack. It is also what makes generating on iOS possible at
 all: the desktop transport spawns `curl`, and an iOS application may not spawn a
 process.
 
-Your send function receives an endpoint, a credential and a JSON body. POST the
-body to the endpoint with three headers:
+Your send function receives an endpoint, a header set and a JSON body. POST the
+body to the endpoint with **exactly** those headers and nothing else:
 
+```json
+[{"name": "x-api-key",         "value": "…"},
+ {"name": "anthropic-version", "value": "2023-06-01"},
+ {"name": "content-type",      "value": "application/json"}]
 ```
-x-api-key: <the credential>
-anthropic-version: 2023-06-01
-content-type: application/json
-```
+
+Which headers a service wants is the provider's knowledge. This used to be a
+bare `api_key` that you wrapped in Anthropic's three yourself, which meant the
+shape of this callback decided that a phone talks to Anthropic — see
+[ADR-0020](architecture/decisions/0020-the-host-chooses-the-provider.md).
 
 Return the response body as a newly allocated NUL-terminated string, or `NULL`
 on any failure. Ephemeral copies it immediately and then hands it to your free
 function, so the allocation is yours from beginning to end.
+
+## Which service
+
+`ephemeral_set_provider` takes `{"provider":…}` with optional `base_url`,
+`model` and `ceiling`; `ephemeral_providers` lists what this build has, what
+each needs and what each defaults to. Build your picker from that call rather
+than from a list in your own source: your application ships on its own schedule,
+and a hardcoded list of providers is wrong the moment one is added.
+
+A name that is not in the catalogue is refused rather than defaulted past.
+Generating with a company somebody did not choose is worse than not generating.
 
 ## The credential
 
@@ -86,6 +102,10 @@ Pass it in with `ephemeral_set_credential`, from Keychain on iOS or Keystore on
 Android. **The library does not read an environment variable and will not look
 for one** — `ANTHROPIC_API_KEY` is a desktop convention, and a phone has no
 equivalent.
+
+It is separate from the provider choice on purpose: the choice is ordinary
+preferences and can be read back with `ephemeral_provider`, and no credential
+appears in that answer because none was ever part of it.
 
 It lives in memory for the duration of a call. Do not write it to a file, a
 preference, or a log.
@@ -110,17 +130,23 @@ final class EphemeralEngine {
     init(home: URL, credential: String) throws {
         // Two C function pointers. Neither may capture context, so everything
         // they need travels through the `context` argument instead.
-        let send: EphemeralHttpSend = { context, endpoint, apiKey, body in
-            guard let endpoint, let apiKey, let body,
+        let send: EphemeralHttpSend = { context, endpoint, headersJson, body in
+            guard let endpoint, let headersJson, let body,
                   let url = URL(string: String(cString: endpoint))
             else { return nil }
 
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
-            request.setValue(String(cString: apiKey), forHTTPHeaderField: "x-api-key")
-            request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-            request.setValue("application/json", forHTTPHeaderField: "content-type")
             request.httpBody = Data(String(cString: body).utf8)
+
+            // Exactly what the provider composed, and nothing added here.
+            let headers = try? JSONSerialization.jsonObject(
+                with: Data(String(cString: headersJson).utf8)
+            )
+            for header in headers as? [[String: String]] ?? [] {
+                guard let name = header["name"], let value = header["value"] else { continue }
+                request.setValue(value, forHTTPHeaderField: name)
+            }
 
             // Ephemeral's own call is synchronous, so this waits. Call
             // `generate` off the main thread — it is a model request and takes

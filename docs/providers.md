@@ -13,7 +13,7 @@ It is **where what you asked for goes**.
 |---|---|---|
 | `mock` | nowhere | nothing |
 | `local` | a model server on this machine | a model server on this machine |
-| `anthropic` | Anthropic | `ANTHROPIC_API_KEY` |
+| `anthropic` | Anthropic, or whatever `ANTHROPIC_BASE_URL` points at | `ANTHROPIC_API_KEY` |
 | `openai` | OpenAI, or whatever `OPENAI_BASE_URL` points at | `OPENAI_API_KEY` |
 
 `mock` is the default, because it is the one that works with nothing installed
@@ -83,10 +83,13 @@ is validated identically, because privacy is not integrity.
 | | |
 |---|---|
 | `ANTHROPIC_API_KEY` | required |
+| `ANTHROPIC_BASE_URL` | default `https://api.anthropic.com` |
+| `ANTHROPIC_MODEL` | default `claude-sonnet-5` |
 
-Speaks Anthropic's Messages API. The model is `claude-sonnet-5` and is not
-configurable from the environment yet — unlike the other two, which have to be,
-because a base URL somebody else chose implies a model somebody else named.
+Speaks Anthropic's Messages API — Anthropic's own endpoint by default, and any
+gateway or proxy that speaks it otherwise. The model was fixed here for a while,
+on the reasoning that Anthropic's endpoint implies Anthropic's model names. That
+stopped being true the moment the endpoint could be pointed elsewhere.
 
 ## `openai` — OpenAI, and everything that copied it
 
@@ -137,6 +140,30 @@ what a model returns is validated identically no matter who served it.
 Whatever it points at, this provider sends your intent off the machine. That is
 the whole of the difference between it and `local`, which uses the same wire
 format ([ADR-0019](architecture/decisions/0019-openai-compatible-and-a-local-model.md)).
+
+## On a phone
+
+Every provider but `local` is reachable from Android and iOS, chosen in the app
+under **Model**: a service, a base URL, a model name, and a key from the
+platform's secure store. Groq on a handset is the same three settings it is
+here.
+
+`local` is absent, and not by oversight. It exists to keep an intent on the
+machine that generated it, and it refuses any endpoint that is not loopback —
+which on a phone means a model server running on that phone. Anything else
+somebody means by "local" is another machine, and that is `openai` with a base
+URL, which is what it honestly is.
+
+A phone plans and writes an application. It cannot build, run or repair one:
+that needs a container runtime, which is why a phone is a control plane and not
+a second desktop
+([ADR-0007](architecture/decisions/0007-mobile-control-plane.md)).
+
+For a long time a phone could reach Anthropic and nothing else — not through
+configuration, but because the C ABI took a bare API key and left the host to
+wrap it in Anthropic's headers. See
+[ADR-0020](architecture/decisions/0020-the-host-chooses-the-provider.md) for why
+that was wrong and what replaced it.
 
 ## What is not tested here
 

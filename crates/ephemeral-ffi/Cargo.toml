@@ -23,6 +23,7 @@ ephemeral-api.workspace = true
 # which iOS forbids outright. A mobile host supplies its own HTTPS transport
 # through the callback seam in this crate (ADR-0007).
 ephemeral-provider-anthropic = { path = "../ephemeral-provider-anthropic", version = "0.1.0", default-features = false }
+ephemeral-provider-openai = { path = "../ephemeral-provider-openai", version = "0.1.0", default-features = false }
 
 serde.workspace = true
 serde_json.workspace = true

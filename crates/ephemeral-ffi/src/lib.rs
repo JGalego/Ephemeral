@@ -51,8 +51,11 @@ use ephemeral_core::{
     lifecycle::TransitionRequest,
     storage::{AppStore as _, Workspace},
 };
-use ephemeral_provider_anthropic::AnthropicProvider;
 use serde_json::Value;
+
+mod model;
+
+pub use model::{Choice, DEFAULT_PROVIDER, Described, catalogue};
 
 /// Everything went as asked.
 pub const EPHEMERAL_OK: c_int = 0;
@@ -71,10 +74,17 @@ pub const EPHEMERAL_BAD_HANDLE: c_int = -2;
 ///
 /// Every argument is a NUL-terminated UTF-8 string that is only valid for the
 /// duration of the call.
+///
+/// `headers_json` is the complete header set the provider composed, in order,
+/// as `[{"name":"…","value":"…"}, …]`. The host sets exactly these and adds
+/// nothing: the credential is one of them, and so is whatever else the service
+/// requires. It used to be a single `api_key` the host wrapped in Anthropic's
+/// headers, which quietly made the ABI belong to one vendor — a phone could not
+/// be pointed anywhere else no matter what anybody configured.
 pub type EphemeralHttpSend = extern "C" fn(
     context: *mut c_void,
     endpoint: *const c_char,
-    api_key: *const c_char,
+    headers_json: *const c_char,
     request_json: *const c_char,
 ) -> *mut c_char;
 
@@ -107,33 +117,39 @@ unsafe impl Sync for HostTransport {}
 
 impl Transport for HostTransport {
     fn send(&self, request: &HttpRequest<'_>) -> Result<Value, ephemeral_agent::AgentError> {
-        // The C callback takes a credential and lets the host add the rest of
-        // the headers, which `ephemeral.h` documents. That is still true while
-        // this builds an Anthropic provider and nothing else. Wiring a second
-        // provider in here means passing the whole header set across the
-        // boundary, which is a change to a published ABI and therefore a
-        // decision rather than a detail.
-        let endpoint = request.endpoint;
-        let api_key = request
+        // The whole header set, exactly as the provider composed it. Nothing
+        // here inspects it and nothing on the other side adds to it: which
+        // headers a service wants is the provider's knowledge, and a transport
+        // that knew any of them would be a transport that belongs to one
+        // vendor. That is precisely what this was, and it is why a phone could
+        // only ever reach Anthropic.
+        let headers: Vec<Header<'_>> = request
             .headers
             .iter()
-            .find(|(name, _)| name.eq_ignore_ascii_case("x-api-key"))
-            .map_or("", |(_, value)| value.as_str());
-        let request = request.body;
+            .map(|(name, value)| Header { name, value })
+            .collect();
 
         let failure = |reason: String| ephemeral_agent::AgentError::Failed {
-            provider: ephemeral_provider_anthropic::NAME.to_owned(),
+            provider: "host".to_owned(),
             reason,
         };
 
-        let endpoint = CString::new(endpoint)
+        let written = serde_json::to_string(&headers)
+            .map_err(|error| failure(format!("the headers could not be written: {error}")))?;
+
+        let endpoint = CString::new(request.endpoint)
             .map_err(|_| failure("the endpoint is not a C string".to_owned()))?;
-        let key = CString::new(api_key)
-            .map_err(|_| failure("the credential is not a C string".to_owned()))?;
-        let body = CString::new(request.to_string())
+        let headers =
+            CString::new(written).map_err(|_| failure("a header is not a C string".to_owned()))?;
+        let body = CString::new(request.body.to_string())
             .map_err(|_| failure("the request body is not a C string".to_owned()))?;
 
-        let reply = (self.send)(self.context, endpoint.as_ptr(), key.as_ptr(), body.as_ptr());
+        let reply = (self.send)(
+            self.context,
+            endpoint.as_ptr(),
+            headers.as_ptr(),
+            body.as_ptr(),
+        );
 
         if reply.is_null() {
             return Err(failure(
@@ -152,11 +168,22 @@ impl Transport for HostTransport {
         (self.free)(self.context, reply);
 
         serde_json::from_str(&copied).map_err(|error| ephemeral_agent::AgentError::Unreadable {
-            provider: ephemeral_provider_anthropic::NAME.to_owned(),
+            provider: "host".to_owned(),
             reason: format!("the API's reply was not JSON: {error}"),
             raw: copied,
         })
     }
+}
+
+/// One header, as it crosses the boundary.
+///
+/// Named fields rather than a two-element array, because a host reading
+/// `header["name"]` cannot get it the wrong way round and a host reading
+/// `header[0]` can.
+#[derive(serde::Serialize)]
+struct Header<'a> {
+    name: &'a str,
+    value: &'a str,
 }
 
 /// One open Ephemeral, as the host sees it.
@@ -165,7 +192,22 @@ impl Transport for HostTransport {
 /// of everything inside can change without breaking a build somebody shipped.
 pub struct Ephemeral {
     home: PathBuf,
-    provider: AnthropicProvider,
+
+    /// How to reach the host's HTTPS stack. Held as its parts rather than as a
+    /// built transport, because a provider owns its transport and a provider is
+    /// now built fresh for every call.
+    context: *mut c_void,
+    send: EphemeralHttpSend,
+    free: EphemeralHttpFree,
+
+    /// Which service, and how it is configured.
+    choice: Mutex<model::Choice>,
+
+    /// The credential, from the platform's secure store. Never read from an
+    /// environment variable here: that is a desktop convention, and a phone has
+    /// no environment to read.
+    credential: Mutex<Option<String>>,
+
     /// Why the last call failed, for a host that wants to show it.
     last_error: Mutex<Option<String>>,
 }
@@ -186,7 +228,44 @@ impl Ephemeral {
             *slot = Some(reason.to_owned());
         }
     }
+
+    /// The provider to use for this call.
+    ///
+    /// Built per call rather than held, which is what makes changing the
+    /// provider or the credential a matter of writing down a different choice.
+    /// The version of this that held one built provider had to swap it out
+    /// through a placeholder transport whenever a credential arrived, and could
+    /// not change anything else about it at all.
+    fn provider(&self) -> Result<Box<dyn AgentProvider>, String> {
+        let transport = HostTransport {
+            context: self.context,
+            send: self.send,
+            free: self.free,
+        };
+
+        let choice = self
+            .choice
+            .lock()
+            .map_err(|_| "the provider choice could not be read".to_owned())?
+            .clone();
+        let credential = self
+            .credential
+            .lock()
+            .map_err(|_| "the credential could not be read".to_owned())?
+            .clone();
+
+        choice.build(credential.as_deref(), Box::new(transport))
+    }
 }
+
+// SAFETY-adjacent, as for `HostTransport`: the only raw pointer here is the
+// host's opaque context, which is never dereferenced on this side.
+#[allow(unsafe_code)]
+// SAFETY: `context` is opaque and never dereferenced; everything else is Send.
+unsafe impl Send for Ephemeral {}
+#[allow(unsafe_code)]
+// SAFETY: as above, and every field a call touches is behind a `Mutex`.
+unsafe impl Sync for Ephemeral {}
 
 /// Opens Ephemeral at `home`, sending through the host's transport.
 ///
@@ -209,15 +288,13 @@ pub unsafe extern "C" fn ephemeral_open(
         return std::ptr::null_mut();
     };
 
-    let transport = HostTransport {
+    Box::into_raw(Box::new(Ephemeral {
+        home: PathBuf::from(home),
         context,
         send,
         free,
-    };
-
-    Box::into_raw(Box::new(Ephemeral {
-        home: PathBuf::from(home),
-        provider: AnthropicProvider::with_transport(Box::new(transport)),
+        choice: Mutex::new(model::Choice::default()),
+        credential: Mutex::new(None),
         last_error: Mutex::new(None),
     }))
 }
@@ -242,27 +319,102 @@ pub unsafe extern "C" fn ephemeral_set_credential(
         return EPHEMERAL_ERROR;
     };
 
-    // Replaced wholesale rather than mutated, because the provider owns its
-    // transport and the credential is the only part a host changes.
-    let replaced = std::mem::replace(
-        &mut ephemeral.provider,
-        AnthropicProvider::with_transport(Box::new(NoTransport)),
-    );
-    ephemeral.provider = replaced.with_credential(key);
+    let Ok(mut slot) = ephemeral.credential.lock() else {
+        ephemeral.remember("the credential could not be stored");
+        return EPHEMERAL_ERROR;
+    };
+    // An empty string means "there is none", so a host clearing a field does
+    // not leave a credential that is present and blank.
+    *slot = Some(key).filter(|key| !key.trim().is_empty());
 
     EPHEMERAL_OK
 }
 
-/// A placeholder used only while swapping a credential in.
-struct NoTransport;
+/// Chooses which service generates, and how it is configured.
+///
+/// `configuration_json` is `{"provider":"…"}` with optional `base_url`,
+/// `model` and `ceiling`. [`ephemeral_providers`] lists what can be chosen and
+/// what each one defaults to.
+///
+/// The credential is separate and stays where it was: it comes from the
+/// platform's secure store through [`ephemeral_set_credential`], and this is
+/// the part a host can keep in ordinary preferences.
+///
+/// # Safety
+///
+/// `handle` must come from [`ephemeral_open`]; `configuration_json` must be a
+/// NUL-terminated UTF-8 string.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ephemeral_set_provider(
+    handle: *mut Ephemeral,
+    configuration_json: *const c_char,
+) -> c_int {
+    let Some(ephemeral) = (unsafe { handle.as_mut() }) else {
+        return EPHEMERAL_BAD_HANDLE;
+    };
+    let Some(json) = (unsafe { string_from(configuration_json) }) else {
+        ephemeral.remember("the provider configuration was not readable text");
+        return EPHEMERAL_ERROR;
+    };
 
-impl Transport for NoTransport {
-    fn send(&self, _request: &HttpRequest<'_>) -> Result<Value, ephemeral_agent::AgentError> {
-        Err(ephemeral_agent::AgentError::Failed {
-            provider: ephemeral_provider_anthropic::NAME.to_owned(),
-            reason: "no transport".to_owned(),
-        })
-    }
+    let chosen = match model::Choice::parse(&json) {
+        Ok(chosen) => chosen,
+        Err(reason) => {
+            ephemeral.remember(&reason);
+            return EPHEMERAL_ERROR;
+        }
+    };
+
+    let Ok(mut slot) = ephemeral.choice.lock() else {
+        ephemeral.remember("the provider choice could not be stored");
+        return EPHEMERAL_ERROR;
+    };
+    *slot = chosen;
+
+    EPHEMERAL_OK
+}
+
+/// What is currently chosen, as the same JSON [`ephemeral_set_provider`] takes.
+///
+/// Carries no credential, by construction rather than by redaction — the
+/// credential is not part of the choice.
+///
+/// Returns null on failure. Free with [`ephemeral_string_free`].
+///
+/// # Safety
+///
+/// `handle` must come from [`ephemeral_open`].
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ephemeral_provider(handle: *mut Ephemeral) -> *mut c_char {
+    let Some(ephemeral) = (unsafe { handle.as_ref() }) else {
+        return std::ptr::null_mut();
+    };
+
+    guard(ephemeral, || {
+        let choice = ephemeral
+            .choice
+            .lock()
+            .map_err(|_| "the provider choice could not be read".to_owned())?;
+
+        json(&*choice)
+    })
+}
+
+/// Every provider this build can be pointed at, with what each one needs.
+///
+/// A host builds its picker from this rather than from a list of its own: an
+/// application ships on its own schedule, and a hardcoded list of providers is
+/// a list that is wrong the moment one is added.
+///
+/// Needs no handle — it is the same answer before anything is open.
+///
+/// Returns null on failure. Free with [`ephemeral_string_free`].
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub extern "C" fn ephemeral_providers() -> *mut c_char {
+    serde_json::to_string(&model::catalogue()).map_or(std::ptr::null_mut(), |text| owned(&text))
 }
 
 /// Closes Ephemeral and releases the handle.
@@ -513,13 +665,15 @@ fn generate(ephemeral: &Ephemeral, id: &str) -> Result<*mut c_char, String> {
         .load(&app)
         .map_err(|_| format!("there is no application called {id}"))?;
 
-    ephemeral
-        .provider
-        .availability()
-        .map_err(|error| error.to_string())?;
+    // One provider for the whole of this generation. Built here rather than
+    // held, so a host that changed its mind between calls gets what it chose —
+    // and so that the plan and the code it turns into cannot come from two
+    // different services.
+    let provider = ephemeral.provider()?;
 
-    let plan = ephemeral
-        .provider
+    provider.availability().map_err(|error| error.to_string())?;
+
+    let plan = provider
         .plan(&manifest.description)
         .map_err(|error| error.to_string())?;
 
@@ -538,8 +692,7 @@ fn generate(ephemeral: &Ephemeral, id: &str) -> Result<*mut c_char, String> {
         ))
         .map_err(|error| format!("could not record the plan: {error}"))?;
 
-    let generated = ephemeral
-        .provider
+    let generated = provider
         .generate(&plan.result)
         .map_err(|error| error.to_string())?;
 
@@ -718,19 +871,59 @@ mod tests {
     thread_local! {
         static REPLIES: std::cell::RefCell<Vec<String>> =
             const { std::cell::RefCell::new(Vec::new()) };
+
+        /// Where the host was asked to send, and with what headers. Recorded
+        /// rather than ignored, because "which service did this actually
+        /// reach" is now a question with more than one possible answer, and it
+        /// is the question the whole provider seam exists to let a person
+        /// decide.
+        static SENT: std::cell::RefCell<Vec<(String, String)>> =
+            const { std::cell::RefCell::new(Vec::new()) };
     }
 
     /// Queues what the fake host will reply, in the order it will be asked.
     fn queue(replies: Vec<String>) {
         REPLIES.with(|slot| *slot.borrow_mut() = replies.into_iter().rev().collect());
+        SENT.with(|slot| slot.borrow_mut().clear());
+    }
+
+    /// The first request the host was asked to make: where, and with which
+    /// headers.
+    fn first_request() -> (String, Value) {
+        let (endpoint, headers) =
+            SENT.with(|slot| slot.borrow().first().cloned().expect("a request was sent"));
+        (
+            endpoint,
+            serde_json::from_str(&headers).expect("JSON headers"),
+        )
+    }
+
+    /// One header's value, matched case-insensitively as HTTP does.
+    fn header(headers: &Value, wanted: &str) -> Option<String> {
+        headers.as_array()?.iter().find_map(|header| {
+            let name = header["name"].as_str()?;
+            name.eq_ignore_ascii_case(wanted)
+                .then(|| header["value"].as_str().unwrap_or_default().to_owned())
+        })
     }
 
     extern "C" fn send(
         _context: *mut c_void,
-        _endpoint: *const c_char,
-        _api_key: *const c_char,
+        endpoint: *const c_char,
+        headers: *const c_char,
         _request: *const c_char,
     ) -> *mut c_char {
+        let read = |pointer: *const c_char| {
+            if pointer.is_null() {
+                String::new()
+            } else {
+                unsafe { CStr::from_ptr(pointer) }
+                    .to_string_lossy()
+                    .into_owned()
+            }
+        };
+        SENT.with(|slot| slot.borrow_mut().push((read(endpoint), read(headers))));
+
         let next = REPLIES.with(|slot| slot.borrow_mut().pop());
         next.map_or(std::ptr::null_mut(), |text| {
             CString::new(text).unwrap().into_raw()
@@ -743,11 +936,20 @@ mod tests {
         }
     }
 
-    /// A model reply, framed the way the API frames one.
+    /// A model reply, framed the way Anthropic's API frames one.
     fn reply(payload: &str) -> String {
         serde_json::json!({
             "content": [{ "type": "text", "text": payload }],
             "usage": { "input_tokens": 1, "output_tokens": 2 },
+        })
+        .to_string()
+    }
+
+    /// The same, framed the way everything that copied OpenAI frames one.
+    fn openai_reply(payload: &str) -> String {
+        serde_json::json!({
+            "choices": [{ "message": { "content": payload } }],
+            "usage": { "prompt_tokens": 1, "completion_tokens": 2 },
         })
         .to_string()
     }
@@ -794,6 +996,176 @@ mod tests {
         assert_eq!(listed.as_array().unwrap().len(), 1);
 
         unsafe { ephemeral_close(handle) };
+    }
+
+    /// The default is still Anthropic, and it still sends Anthropic's headers.
+    ///
+    /// Paired with the test below rather than assumed: the point of the change
+    /// is that a host *chooses*, and a choice only means something if the two
+    /// choices produce visibly different requests.
+    #[test]
+    fn the_default_reaches_anthropic() {
+        let home = tempfile::tempdir().unwrap();
+        let handle = open(home.path());
+        unsafe { ephemeral_set_credential(handle, c("sk-ant-not-real").as_ptr()) };
+
+        generate_something(handle, reply);
+
+        let (endpoint, headers) = first_request();
+        assert_eq!(endpoint, "https://api.anthropic.com/v1/messages");
+        assert_eq!(
+            header(&headers, "x-api-key").as_deref(),
+            Some("sk-ant-not-real")
+        );
+        assert_eq!(
+            header(&headers, "anthropic-version").as_deref(),
+            Some("2023-06-01")
+        );
+
+        unsafe { ephemeral_close(handle) };
+    }
+
+    /// A phone, generating with Groq.
+    ///
+    /// This is the test the whole provider seam exists for. Before it, the C
+    /// ABI took a bare `api_key` and the host wrapped it in Anthropic's
+    /// headers, so no configuration anywhere could send a request to anybody
+    /// else — the platform decided the vendor, which is not a decision a
+    /// platform should be making.
+    ///
+    /// It asserts the two things that were impossible: the request goes to the
+    /// URL that was chosen, and it carries the credential the way *that*
+    /// service wants it rather than the way Anthropic does.
+    #[test]
+    fn a_phone_can_generate_with_groq() {
+        let home = tempfile::tempdir().unwrap();
+        let handle = open(home.path());
+
+        let chosen = c(r#"{"provider":"openai",
+                           "base_url":"https://api.groq.com/openai/v1",
+                           "model":"llama-3.3-70b-versatile"}"#);
+        assert_eq!(
+            unsafe { ephemeral_set_provider(handle, chosen.as_ptr()) },
+            EPHEMERAL_OK,
+            "{}",
+            text(unsafe { ephemeral_last_error(handle) })
+        );
+        unsafe { ephemeral_set_credential(handle, c("gsk-not-real").as_ptr()) };
+
+        generate_something(handle, openai_reply);
+
+        let (endpoint, headers) = first_request();
+        assert_eq!(endpoint, "https://api.groq.com/openai/v1/chat/completions");
+        assert_eq!(
+            header(&headers, "authorization").as_deref(),
+            Some("Bearer gsk-not-real"),
+            "an OpenAI-compatible service wants a bearer token, not an x-api-key"
+        );
+        assert!(
+            header(&headers, "x-api-key").is_none(),
+            "and it must not also be sent Anthropic's header"
+        );
+
+        unsafe { ephemeral_close(handle) };
+    }
+
+    /// What is chosen can be read back, so a host can show it without keeping
+    /// its own copy that drifts. The credential is not in it, by construction.
+    #[test]
+    fn what_was_chosen_can_be_read_back_without_the_credential() {
+        let home = tempfile::tempdir().unwrap();
+        let handle = open(home.path());
+        unsafe { ephemeral_set_credential(handle, c("gsk-not-real").as_ptr()) };
+
+        let chosen = c(r#"{"provider":"openai","model":"kimi-k2"}"#);
+        unsafe { ephemeral_set_provider(handle, chosen.as_ptr()) };
+
+        let read: Value =
+            serde_json::from_str(&text(unsafe { ephemeral_provider(handle) })).unwrap();
+
+        assert_eq!(read["provider"], "openai");
+        assert_eq!(read["model"], "kimi-k2");
+        assert!(
+            !read.to_string().contains("gsk-not-real"),
+            "the credential is not part of the choice and must not appear in it"
+        );
+
+        unsafe { ephemeral_close(handle) };
+    }
+
+    /// A provider that does not exist changes nothing. A phone that quietly
+    /// carried on with the previous service after somebody chose a different
+    /// one would be generating with a company they did not pick.
+    #[test]
+    fn a_provider_that_does_not_exist_leaves_the_choice_alone() {
+        let home = tempfile::tempdir().unwrap();
+        let handle = open(home.path());
+
+        let nonsense = c(r#"{"provider":"gorq"}"#);
+        assert_eq!(
+            unsafe { ephemeral_set_provider(handle, nonsense.as_ptr()) },
+            EPHEMERAL_ERROR
+        );
+
+        let why = text(unsafe { ephemeral_last_error(handle) });
+        assert!(why.contains("gorq"), "{why}");
+
+        let read: Value =
+            serde_json::from_str(&text(unsafe { ephemeral_provider(handle) })).unwrap();
+        assert_eq!(read["provider"], "anthropic", "the choice is unchanged");
+
+        unsafe { ephemeral_close(handle) };
+    }
+
+    /// The catalogue a host builds its picker from is readable before anything
+    /// is open, because a person may want to choose before they have a
+    /// workspace.
+    #[test]
+    fn the_catalogue_is_readable_with_no_handle() {
+        let listed: Value = serde_json::from_str(&text(ephemeral_providers())).unwrap();
+        let names: Vec<&str> = listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|one| one["name"].as_str().unwrap())
+            .collect();
+
+        assert!(names.contains(&"openai"), "{names:?}");
+        assert!(names.contains(&"anthropic"), "{names:?}");
+        assert!(names.contains(&"mock"), "{names:?}");
+    }
+
+    /// Creates an application and generates it, with two replies framed by
+    /// whichever provider is in use. The part every generation test needs and
+    /// none of them is about.
+    fn generate_something(handle: *mut Ephemeral, frame: fn(&str) -> String) {
+        let created = text(unsafe { ephemeral_create(handle, c("count words").as_ptr()) });
+        let id = serde_json::from_str::<Value>(&created).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        queue(vec![
+            frame(
+                r#"{"name":"Word Counter","summary":"counts words in a file",
+                    "runtime":"docker","image":"python:3.12-slim",
+                    "interface":"command_line","requests":[]}"#,
+            ),
+            frame(
+                r#"{"files":[{"path":"main.py","contents":"print('hi')"}],
+                    "dockerfile":"FROM python:3.12-slim\nCOPY . /app",
+                    "entrypoint":["python","/app/main.py"],
+                    "test_command":["python","-c","print(1)"]}"#,
+            ),
+        ]);
+
+        let produced = unsafe { ephemeral_generate(handle, c(&id).as_ptr()) };
+        assert!(
+            !produced.is_null(),
+            "generate failed: {}",
+            text(unsafe { ephemeral_last_error(handle) })
+        );
+        unsafe { ephemeral_string_free(produced) };
     }
 
     /// The whole point of the exercise: plan and generate, on the device,
@@ -957,30 +1329,51 @@ mod header {
     /// A hand-written header can drift from the library it describes, and the
     /// failure mode is a linker error on somebody else's machine, or worse a
     /// call through a signature that no longer matches. Cheap to check here.
+    ///
+    /// The list is read out of the source rather than written down twice. It
+    /// used to be a literal array, which meant it checked only the symbols
+    /// somebody remembered to add to it — a new export was undeclared and
+    /// unnoticed, which is exactly the drift this test exists to catch.
     #[test]
     fn the_header_and_the_library_agree() {
         let header = include_str!("../include/ephemeral.h");
         let source = include_str!("lib.rs");
 
-        for symbol in [
-            "ephemeral_open",
-            "ephemeral_close",
-            "ephemeral_set_credential",
-            "ephemeral_last_error",
-            "ephemeral_string_free",
-            "ephemeral_create",
-            "ephemeral_applications",
-            "ephemeral_application",
-            "ephemeral_generate",
-            "ephemeral_decide",
-        ] {
+        let exported: Vec<&str> = source
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix("pub "))
+            .filter_map(|line| {
+                line.strip_prefix("unsafe extern \"C\" fn ")
+                    .or_else(|| line.strip_prefix("extern \"C\" fn "))
+            })
+            .filter_map(|rest| rest.split(['(', '<']).next())
+            .collect();
+
+        assert!(
+            exported.len() >= 10,
+            "the source was not read properly: {exported:?}"
+        );
+
+        // Declarations, not mentions. Asking whether the file *contains* the
+        // name passes on a symbol that appears only in a comment about
+        // another function — which is exactly what happened the first time
+        // this was checked that way, and it reported agreement while the
+        // declaration was missing.
+        let declarations: Vec<&str> = header.lines().filter_map(declared).collect();
+
+        for symbol in &exported {
             assert!(
-                header.contains(symbol),
+                declarations.contains(symbol),
                 "{symbol} is exported but the header does not declare it"
             );
+        }
+
+        // And the other way. A declaration with nothing behind it is a linker
+        // error on the host's machine rather than on this one.
+        for name in &declarations {
             assert!(
-                source.contains(&format!("pub unsafe extern \"C\" fn {symbol}")),
-                "the header declares {symbol}, which the library does not export"
+                exported.contains(name),
+                "the header declares {name}, which the library does not export"
             );
         }
 
@@ -990,5 +1383,21 @@ mod header {
                 "{status} is missing from the header"
             );
         }
+    }
+
+    /// The name in a C declaration of one of ours, if the line is one.
+    fn declared(line: &str) -> Option<&str> {
+        let line = line.trim();
+        if line.starts_with('*') || line.starts_with("/*") || line.starts_with("typedef") {
+            return None;
+        }
+
+        let start = line.find("ephemeral_")?;
+        let name = &line[start..];
+        let name = &name[..name.find('(')?];
+
+        // `ephemeral_open` is declared as `EphemeralHandle *ephemeral_open`, so
+        // the pointer star is part of neither name.
+        Some(name.trim_start_matches('*'))
     }
 }

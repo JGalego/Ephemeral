@@ -48,13 +48,47 @@ public final class Check {
         require(Native.setCredential(session, "test-credential") == 0, "the credential is accepted");
         require(Native.generate(session, id) == null, "generation fails when the transport refuses");
         require(refusing.calls > 0, "generation went through the host transport");
-        require("test-credential".equals(refusing.apiKey), "the transport was handed the credential");
+        require(
+            refusing.headers != null && refusing.headers.contains("test-credential"),
+            "the transport was handed the credential, among the provider's own headers"
+        );
+        require(
+            refusing.headers.contains("\"name\""),
+            "as a header set rather than a bare key"
+        );
         require(
             refusing.endpoint != null && refusing.endpoint.startsWith("https://"),
             "and an https endpoint"
         );
         require(refusing.body != null && refusing.body.contains("{"), "and a JSON body");
         require(Native.lastError(session) != null, "the refusal is reported");
+
+        // Choosing a service. JNI is looked up by name and signature at call
+        // time, so a method nothing exercises here is a method that fails on a
+        // phone and nowhere else — which is the entire reason this harness
+        // exists.
+        require(
+            Native.providers() != null && Native.providers().contains("openai"),
+            "the catalogue crosses the bridge"
+        );
+        require(
+            Native.setProvider(session, "{\"provider\":\"openai\","
+                + "\"base_url\":\"https://api.groq.com/openai/v1\"}") == 0,
+            "a service can be chosen from Java"
+        );
+        require(
+            Native.provider(session) != null && Native.provider(session).contains("groq.com"),
+            "and read back"
+        );
+        require(Native.generate(session, id) == null, "generating still fails, the transport refusing");
+        require(
+            refusing.endpoint != null && refusing.endpoint.contains("api.groq.com"),
+            "but it went to the service that was chosen"
+        );
+        require(
+            refusing.headers.contains("authorization"),
+            "with that service's own header rather than the other one's"
+        );
 
         // A host whose transport throws is a host with a bug. It must not
         // become Ephemeral's crash: an exception left pending across a JNI
@@ -108,7 +142,7 @@ public final class Check {
 
         int calls;
         String endpoint;
-        String apiKey;
+        String headers;
         String body;
 
         Recording(String reply) {
@@ -116,10 +150,10 @@ public final class Check {
         }
 
         @Override
-        public String send(String endpoint, String apiKey, String body) {
+        public String send(String endpoint, String headersJson, String body) {
             this.calls++;
             this.endpoint = endpoint;
-            this.apiKey = apiKey;
+            this.headers = headersJson;
             this.body = body;
             return reply;
         }
@@ -130,7 +164,7 @@ public final class Check {
         int calls;
 
         @Override
-        public String send(String endpoint, String apiKey, String body) {
+        public String send(String endpoint, String headersJson, String body) {
             this.calls++;
             throw new IllegalStateException("this host's transport is broken");
         }

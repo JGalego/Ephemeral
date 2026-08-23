@@ -68,6 +68,9 @@ pub enum Behaviour {
     ReturnsGarbage,
 }
 
+/// What this provider is called, in the interface and the audit record.
+pub const NAME: &str = "mock";
+
 /// A deterministic provider.
 ///
 /// Interior mutability rather than `&mut self` on the trait: a provider is
@@ -261,7 +264,7 @@ if __name__ == "__main__":
 
 impl AgentProvider for MockProvider {
     fn name(&self) -> &'static str {
-        "mock"
+        NAME
     }
 
     fn availability(&self) -> Result<(), AgentError> {

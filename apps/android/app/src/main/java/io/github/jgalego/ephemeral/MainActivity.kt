@@ -10,10 +10,13 @@ import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
+import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.ListView
+import android.widget.Spinner
 import android.widget.TextView
 
 /** Everything recorded so far, and the box you describe the next thing in. */
@@ -50,13 +53,13 @@ class MainActivity : Activity() {
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        menu.add(0, R.id.credential_menu, 0, R.string.credential_title)
+        menu.add(0, R.id.credential_menu, 0, R.string.model_title)
         return true
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         if (item.itemId == R.id.credential_menu) {
-            askForCredential()
+            askForModel()
             return true
         }
         return super.onOptionsItemSelected(item)
@@ -104,29 +107,123 @@ class MainActivity : Activity() {
         )
     }
 
-    private fun askForCredential() {
-        val field = EditText(this).apply {
-            // Named, because a control with no id is a control no automated
-            // walkthrough can be pointed at — and this is the one control
-            // standing between a phone in a test rack and generation working
-            // on it at all.
+    /**
+     * Which service generates, and the key to reach it with.
+     *
+     * One dialog rather than two, because they are one decision: a key is for a
+     * particular service, and choosing a service without being able to say
+     * which key goes with it is how somebody sends an Anthropic key to Groq and
+     * gets an error about authentication that explains nothing.
+     *
+     * The list of services comes from the engine. Writing it here would put a
+     * list of providers in an app that ships on a different schedule from the
+     * engine it links against, and it would be wrong the first time one was
+     * added.
+     */
+    private fun askForModel() {
+        val providers = Engine.providers()
+        if (providers.isEmpty()) {
+            say(getString(R.string.model_none))
+            return
+        }
+
+        val chosen = Choice.read(this)
+        var selected = providers.indexOfFirst { it.name == chosen?.provider }.coerceAtLeast(0)
+
+        val service = Spinner(this).apply {
+            // `this.adapter`, spelled out: MainActivity has a field of that
+            // name too, and a reader should not have to work out which one an
+            // implicit receiver picked.
+            this.adapter = ArrayAdapter(
+                this@MainActivity,
+                android.R.layout.simple_spinner_dropdown_item,
+                providers.map { it.name },
+            )
+            setSelection(selected)
+        }
+
+        val explains = TextView(this).apply {
+            text = providers[selected].what
+            setTextColor(getColor(R.color.ink_quiet))
+        }
+
+        val baseUrl = EditText(this).apply {
+            id = R.id.base_url
+            hint = getString(R.string.model_base_url)
+            setSingleLine()
+            setText(chosen?.baseUrl.orEmpty())
+        }
+
+        val model = EditText(this).apply {
+            id = R.id.model
+            hint = getString(R.string.model_model)
+            setSingleLine()
+            setText(chosen?.model.orEmpty())
+        }
+
+        val key = EditText(this).apply {
             id = R.id.credential
             hint = getString(R.string.credential_hint)
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
             setSingleLine()
         }
 
+        // Only what the chosen service actually reads. A model box on the mock
+        // is a box that does nothing, and a person who fills one in and sees no
+        // difference has learnt that this screen lies.
+        fun showWhatApplies() {
+            val provider = providers[selected]
+            explains.text = provider.what
+            baseUrl.visibility = if (provider.configures("base_url")) View.VISIBLE else View.GONE
+            model.visibility = if (provider.configures("model")) View.VISIBLE else View.GONE
+            key.visibility = if (provider.needsCredential) View.VISIBLE else View.GONE
+            baseUrl.hint = provider.baseUrl ?: getString(R.string.model_base_url)
+            model.hint = provider.model ?: getString(R.string.model_model)
+        }
+        showWhatApplies()
+
+        service.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                selected = position
+                showWhatApplies()
+            }
+
+            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+        }
+
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            // The dialog supplies its own horizontal inset; this is the
+            // breathing room between that and the fields.
+            val margin = (16 * resources.displayMetrics.density).toInt()
+            setPadding(margin, margin, margin, 0)
+            addView(service)
+            addView(explains)
+            addView(baseUrl)
+            addView(model)
+            addView(key)
+        }
+
         val dialog = AlertDialog.Builder(this)
-            .setTitle(R.string.credential_title)
+            .setTitle(R.string.model_title)
             .setMessage(R.string.credential_explains)
-            .setView(field)
+            .setView(layout)
             .setPositiveButton(R.string.save) { _, _ ->
-                val key = field.text.toString().trim()
-                if (key.isNotEmpty()) {
-                    Credential.save(this, key)
+                Engine.choose(
+                    this,
+                    Choice(
+                        provider = providers[selected].name,
+                        baseUrl = baseUrl.text.toString().trim(),
+                        model = model.text.toString().trim(),
+                    ),
+                )
+
+                val typed = key.text.toString().trim()
+                if (typed.isNotEmpty()) {
+                    Credential.save(this, typed)
                     Engine.refreshCredential(this)
-                    say(getString(R.string.credential_saved))
                 }
+                say(getString(R.string.model_saved, providers[selected].name))
             }
             .setNegativeButton(R.string.cancel, null)
 

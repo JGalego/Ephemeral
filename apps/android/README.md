@@ -129,11 +129,11 @@ interesting to photograph. Turning on the **generate** input puts the
 
 Three things are worth knowing before you do:
 
-- **It is Anthropic.** The engine both phones link against builds an Anthropic
-  provider and nothing else, so `MODEL_API_KEY` has to be an Anthropic key. The
-  `openai` provider — and with it Groq, and everything else that copied that
-  format — is reachable from the desktop and the terminal but not yet from a
-  phone.
+- **Which service is a setting.** *Model* in the app's menu chooses one —
+  Anthropic, anything that speaks the chat completions format (Groq, Together,
+  OpenRouter, a company gateway), or the mock. `MODEL_API_KEY` has to match
+  whichever is chosen. Robo picks whatever the app was last set to, so set it
+  before the run, or add a `click:` directive for the picker.
 - **Generating is not building.** A phone plans the application and writes its
   source. It cannot build or run it: that needs a container runtime, which is
   why a phone is a control plane and not a second desktop ([ADR-0007]).
@@ -204,13 +204,22 @@ gradle assembleRelease
 Without those, `assembleRelease` produces an unsigned APK you can inspect but
 not install.
 
-## The model key
+## The model, and its key
 
-Entered in the app, sealed with an AES key held in the Android keystore, and
-handed to the engine in memory for the duration of a call. It is never written
-to Ephemeral's files, never put in the audit log, and never read from an
-environment variable — that is a desktop convention and a phone has no
-equivalent.
+*Model* in the menu chooses the service, its base URL and its model name, and
+takes the key for it. One screen rather than two, because it is one decision: a
+key belongs to a particular service, and a key saved without one is a key sent
+to whichever company happens to be the default.
+
+The list of services is read from the engine ([ADR-0020]) rather than written
+into the app. An app ships on its own schedule; a list of providers hardcoded in
+it is wrong the first time one is added.
+
+The service and its settings are ordinary `SharedPreferences`. The key is not:
+it is sealed with an AES key held in the Android keystore and handed to the
+engine in memory for the duration of a call. It is never written to Ephemeral's
+files, never put in the audit log, and never read from an environment
+variable — that is a desktop convention and a phone has no equivalent.
 
 The engine has no way to forget a credential mid-session, so *Forget* ends the
 session; the next call opens a fresh one without it.
@@ -227,6 +236,7 @@ plain views rather than what a new Android project would start with. That is a
 deliberate trade, not an old template.
 
 [ADR-0007]: ../../docs/architecture/decisions/0007-mobile-control-plane.md
+[ADR-0020]: ../../docs/architecture/decisions/0020-the-host-chooses-the-provider.md
 [ADR-0017]: ../../docs/architecture/decisions/0017-mobile-generates-through-a-host-transport.md
 [SECURITY.md]: ../../SECURITY.md
 [docs/install.md]: ../../docs/install.md

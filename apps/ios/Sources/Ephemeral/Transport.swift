@@ -21,17 +21,26 @@ enum Transport {
     /// closure with no context — everything it needs arrives as an argument.
     /// Blocking is correct here: the engine's call is synchronous, and it is
     /// already running off the main thread on the engine's own queue.
-    static let send: EphemeralHttpSend = { _, endpoint, apiKey, body in
-        guard let endpoint, let apiKey, let body,
+    static let send: EphemeralHttpSend = { _, endpoint, headersJson, body in
+        guard let endpoint, let headersJson, let body,
               let url = URL(string: String(cString: endpoint))
         else { return nil }
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue(String(cString: apiKey), forHTTPHeaderField: "x-api-key")
-        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.httpBody = Data(String(cString: body).utf8)
+
+        // Exactly the headers the provider composed, and nothing added here.
+        // Which headers a service wants is the provider's knowledge; this file
+        // used to write Anthropic's three, which is why a phone could not be
+        // pointed at any other service however it was configured.
+        let headers = try? JSONSerialization.jsonObject(
+            with: Data(String(cString: headersJson).utf8)
+        )
+        for header in headers as? [[String: String]] ?? [] {
+            guard let name = header["name"], let value = header["value"] else { continue }
+            request.setValue(value, forHTTPHeaderField: name)
+        }
 
         // Generation is a model request and takes as long as one takes. The
         // default sixty seconds is not enough, and a timeout in the middle of

@@ -45,18 +45,25 @@ typedef struct Ephemeral EphemeralHandle;
  * what makes generating on iOS possible at all: the desktop transport spawns
  * `curl`, and iOS does not allow a process to spawn another process.
  *
- * POST `request_json` to `endpoint` with these headers:
+ * POST `request_json` to `endpoint` with exactly the headers in
+ * `headers_json`, which is a JSON array in the order the provider composed
+ * them:
  *
- *     x-api-key: <api_key>
- *     anthropic-version: 2023-06-01
- *     content-type: application/json
+ *     [{"name": "x-api-key", "value": "…"},
+ *      {"name": "anthropic-version", "value": "2023-06-01"},
+ *      {"name": "content-type", "value": "application/json"}]
+ *
+ * Set those and add nothing. The credential is one of them, and which headers
+ * a service wants is the provider's business — this used to be a single
+ * `api_key` that you wrapped in Anthropic's headers yourself, which meant a
+ * phone could only ever talk to Anthropic however it was configured.
  *
  * Return the response body as a newly allocated NUL-terminated string, or NULL
  * on any failure. Ephemeral copies it immediately and then passes it to your
  * free function, so the allocation is yours throughout.
  */
 typedef char *(*EphemeralHttpSend)(void *context, const char *endpoint,
-                                   const char *api_key,
+                                   const char *headers_json,
                                    const char *request_json);
 
 /* Releases a response your send function returned. */
@@ -79,6 +86,47 @@ EphemeralHandle *ephemeral_open(const char *home, EphemeralHttpSend send,
  * this library does not look for one.
  */
 int32_t ephemeral_set_credential(EphemeralHandle *handle, const char *api_key);
+
+/*
+ * Chooses which service generates, and how it is configured.
+ *
+ * `configuration_json` is:
+ *
+ *     {"provider": "openai",
+ *      "base_url": "https://api.groq.com/openai/v1",
+ *      "model":    "llama-3.3-70b-versatile",
+ *      "ceiling":  "max_completion_tokens"}
+ *
+ * Only `provider` is required; everything absent means that provider's own
+ * default. A name that is not in `ephemeral_providers` is refused rather than
+ * defaulted past — generating with a company somebody did not choose is worse
+ * than not generating.
+ *
+ * The credential is not part of this and does not belong in it: it comes from
+ * the secure store through `ephemeral_set_credential`, which is what lets this
+ * be saved in ordinary preferences.
+ */
+int32_t ephemeral_set_provider(EphemeralHandle *handle,
+                               const char *configuration_json);
+
+/*
+ * What is currently chosen, as the same JSON `ephemeral_set_provider` takes.
+ * Carries no credential, because a credential was never part of it.
+ */
+char *ephemeral_provider(EphemeralHandle *handle);
+
+/*
+ * Every provider this build can be pointed at, as a JSON array:
+ *
+ *     [{"name": "openai", "what": "…", "needs_credential": true,
+ *       "configurable": ["base_url", "model", "ceiling"],
+ *       "base_url": "https://api.openai.com/v1", "model": "gpt-5"}, …]
+ *
+ * Build your picker from this rather than from a list of your own: your
+ * application ships on its own schedule, and a hardcoded list is wrong the
+ * moment a provider is added. Needs no handle.
+ */
+char *ephemeral_providers(void);
 
 /* Closes Ephemeral. Passing NULL is allowed and does nothing. */
 void ephemeral_close(EphemeralHandle *handle);

@@ -32,11 +32,11 @@ struct ApplicationList: View {
             .navigationTitle("Ephemeral")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Model key") { showingKey = true }
+                    Button("Model") { showingKey = true }
                         .tint(Palette.accent)
                 }
             }
-            .sheet(isPresented: $showingKey) { CredentialSheet() }
+            .sheet(isPresented: $showingKey) { ModelSheet() }
         }
         .tint(Palette.accent)
         .preferredColorScheme(.dark)
@@ -448,12 +448,24 @@ struct PermissionCard: View {
     }
 }
 
-// MARK: - The model key
+// MARK: - Which model, and the key for it
 
-struct CredentialSheet: View {
+/// One sheet, not two, because it is one decision: a key belongs to a
+/// particular service, and choosing a service without saying which key goes
+/// with it is how somebody sends an Anthropic key to Groq and gets an
+/// authentication error that explains nothing.
+struct ModelSheet: View {
     @Environment(\.dismiss) private var dismiss
+
+    private let providers = Engine.providers()
+
+    @State private var choice = Choice.stored ?? Choice(provider: "anthropic")
     @State private var key = ""
     @State private var said: String?
+
+    private var chosen: Provider? {
+        providers.first { $0.name == choice.provider }
+    }
 
     var body: some View {
         NavigationStack {
@@ -461,21 +473,46 @@ struct CredentialSheet: View {
                 Palette.ground.ignoresSafeArea()
 
                 VStack(alignment: .leading, spacing: 16) {
-                    SecureField("sk-ant-…", text: $key)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .padding(14)
-                        .background(Palette.surface, in: .rect(cornerRadius: 10))
-                        .foregroundStyle(Palette.ink)
+                    // Built from what the engine has, never from a list written
+                    // here: this application and the engine it links against do
+                    // not ship on the same schedule, and a hardcoded list is
+                    // wrong the first time a provider is added.
+                    Picker("Service", selection: $choice.provider) {
+                        ForEach(providers) { provider in
+                            Text(provider.name).tag(provider.name)
+                        }
+                    }
+                    .pickerStyle(.segmented)
 
-                    Text(
-                        """
-                        Kept in this phone's Keychain, sent only to the model \
-                        provider, and never written to Ephemeral's files or its log.
-                        """
-                    )
-                    .font(.footnote)
-                    .foregroundStyle(Palette.inkQuiet)
+                    if let chosen {
+                        Text(chosen.what)
+                            .font(.footnote)
+                            .foregroundStyle(Palette.inkQuiet)
+
+                        if chosen.configures("base_url") {
+                            field("Base URL", placeholder: chosen.baseUrl ?? "", text: $choice.baseUrl)
+                        }
+                        if chosen.configures("model") {
+                            field("Model", placeholder: chosen.model ?? "", text: $choice.model)
+                        }
+                        if chosen.needsCredential {
+                            SecureField("API key", text: $key)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .padding(14)
+                                .background(Palette.surface, in: .rect(cornerRadius: 10))
+                                .foregroundStyle(Palette.ink)
+
+                            Text(
+                                """
+                                Kept in this phone's Keychain, sent only to the service \
+                                above, and never written to Ephemeral's files or its log.
+                                """
+                            )
+                            .font(.footnote)
+                            .foregroundStyle(Palette.inkQuiet)
+                        }
+                    }
 
                     if let said {
                         Text(said).font(.footnote).foregroundStyle(Palette.low)
@@ -485,13 +522,13 @@ struct CredentialSheet: View {
                 }
                 .padding(16)
             }
-            .navigationTitle("Model key")
+            .navigationTitle("Model")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     // Offered next to the field that sets it: a key you cannot
                     // take back is a key you did not really lend.
-                    Button("Forget") {
+                    Button("Forget key") {
                         Credential.forget()
                         said = "Key forgotten."
                         key = ""
@@ -499,15 +536,43 @@ struct CredentialSheet: View {
                     .tint(Palette.inkQuiet)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Save") {
-                        said = Credential.save(key) ? "Key saved." : "The Keychain refused it."
-                        key = ""
-                    }
-                    .tint(Palette.accent)
-                    .disabled(key.isEmpty)
+                    Button("Save", action: save).tint(Palette.accent)
                 }
             }
         }
         .preferredColorScheme(.dark)
+    }
+
+    private func field(
+        _ label: String,
+        placeholder: String,
+        text: Binding<String>
+    ) -> some View {
+        TextField(placeholder.isEmpty ? label : placeholder, text: text)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .keyboardType(.URL)
+            .padding(14)
+            .background(Palette.surface, in: .rect(cornerRadius: 10))
+            .foregroundStyle(Palette.ink)
+    }
+
+    private func save() {
+        // The service first. A key stored against a service nobody chose is a
+        // key sent to the wrong company on the very next generation.
+        Engine.shared.submit {
+            try Engine.shared.choose(choice)
+            if !key.trimmed.isEmpty, Credential.save(key.trimmed) {
+                try Engine.shared.useCredential(key.trimmed)
+            }
+        } then: { outcome in
+            switch outcome {
+            case .success:
+                said = "Generating with \(choice.provider)."
+                key = ""
+            case .failure(let why):
+                said = why.localizedDescription
+            }
+        }
     }
 }

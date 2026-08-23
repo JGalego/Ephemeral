@@ -12,4 +12,6 @@
 <resources>
     <item name="credential_menu" type="id" />
     <item name="credential" type="id" />
+    <item name="base_url" type="id" />
+    <item name="model" type="id" />
 </resources>

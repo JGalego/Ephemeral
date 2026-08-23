@@ -1,5 +1,6 @@
 package io.github.jgalego.ephemeral
 
+import org.json.JSONArray
 import java.io.BufferedReader
 import java.net.HttpURLConnection
 import java.net.URL
@@ -14,14 +15,20 @@ import javax.net.ssl.HttpsURLConnection
  */
 interface Transport {
     /**
-     * POSTs [body] to [endpoint], returning the response body or null on any
-     * failure.
+     * POSTs [body] to [endpoint] with exactly the headers in [headersJson],
+     * returning the response body or null on any failure.
+     *
+     * [headersJson] is `[{"name":…,"value":…}, …]` — the complete set the
+     * provider composed, credential included. This app sets those and adds
+     * nothing: which headers a service wants is the provider's knowledge, and
+     * the version of this that wrote Anthropic's headers here is the reason a
+     * phone could not be pointed at anything else.
      *
      * Called from a background thread the engine owns. It must not throw: an
      * exception here crosses back into native code, where there is nothing that
      * can act on it.
      */
-    fun send(endpoint: String, apiKey: String, body: String): String?
+    fun send(endpoint: String, headersJson: String, body: String): String?
 }
 
 /** The platform's HTTPS stack, and nothing on top of it. */
@@ -29,7 +36,7 @@ internal object Https : Transport {
     private const val CONNECT_TIMEOUT = 30_000
     private const val READ_TIMEOUT = 180_000
 
-    override fun send(endpoint: String, apiKey: String, body: String): String? {
+    override fun send(endpoint: String, headersJson: String, body: String): String? {
         var connection: HttpURLConnection? = null
         return try {
             // Plain HTTP would put the credential on the wire in clear text, so
@@ -42,9 +49,12 @@ internal object Https : Transport {
             opened.connectTimeout = CONNECT_TIMEOUT
             opened.readTimeout = READ_TIMEOUT
             opened.doOutput = true
-            opened.setRequestProperty("x-api-key", apiKey)
-            opened.setRequestProperty("anthropic-version", "2023-06-01")
-            opened.setRequestProperty("content-type", "application/json")
+            // Whatever the provider asked for, and only that.
+            val headers = JSONArray(headersJson)
+            for (index in 0 until headers.length()) {
+                val header = headers.optJSONObject(index) ?: continue
+                opened.setRequestProperty(header.optString("name"), header.optString("value"))
+            }
 
             opened.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
 

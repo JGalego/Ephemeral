@@ -30,6 +30,7 @@ supersedes the old one; the old one stays, marked superseded and linked forward.
 | [0017](0017-mobile-generates-through-a-host-transport.md) | A phone generates for itself, through a C ABI and the host's own HTTPS | accepted | 5 |
 | [0018](0018-android-is-an-application-and-jni-is-testable.md) | Android gets an application, and its JNI bridge is testable without a phone | accepted | 5 |
 | [0019](0019-openai-compatible-and-a-local-model.md) | One OpenAI-compatible wire format, and a local provider that cannot leave the machine | accepted | 2 |
+| [0020](0020-the-host-chooses-the-provider.md) | The host chooses the provider, on every platform | accepted | 5 |
 
 ## When you need an ADR
 

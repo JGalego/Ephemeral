@@ -22,10 +22,14 @@
     <string name="generating">Planning and writing it. This can take a minute.</string>
     <string name="needs_credential">Add a model key first — menu, then \"Model key\".</string>
 
+    <string name="model_title">Model</string>
+    <string name="model_base_url">Base URL</string>
+    <string name="model_model">Model name</string>
+    <string name="model_saved">Generating with %1$s.</string>
+    <string name="model_none">This build has no providers, which should not be possible.</string>
     <string name="credential_title">Model key</string>
-    <string name="credential_hint">sk-ant-…</string>
+    <string name="credential_hint">API key</string>
     <string name="credential_explains">Kept in this phone\'s keystore, sent only to the model provider, and never written to Ephemeral\'s files or its log.</string>
-    <string name="credential_saved">Key saved.</string>
     <string name="credential_forget">Forget</string>
     <string name="credential_forgotten">Key forgotten.</string>
     <string name="save">Save</string>

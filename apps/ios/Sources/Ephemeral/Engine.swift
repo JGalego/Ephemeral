@@ -142,6 +142,13 @@ final class Engine {
         }
 
         handle = opened
+
+        // Both halves of "which model", restored together. A session that came
+        // back with the credential but not the choice would quietly send it to
+        // whichever service is the default — which is somebody else's.
+        if let chosen = Choice.stored {
+            _ = ephemeral_set_provider(handle, chosen.asJson)
+        }
     }
 
     /// Hands the engine the model credential, from the Keychain.
@@ -153,6 +160,36 @@ final class Engine {
         guard ephemeral_set_credential(handle, key) == 0 else {
             throw failure("The model key was refused.")
         }
+    }
+
+    /// Chooses which service generates, and how it is configured.
+    ///
+    /// Saved on this side too, because the engine holds the choice for the life
+    /// of a session and a phone's sessions end whenever the system decides they
+    /// do. The credential is not part of it: that is in the Keychain, and
+    /// keeping the two apart is what lets this live in ordinary preferences.
+    func choose(_ choice: Choice) throws {
+        try open()
+        guard ephemeral_set_provider(handle, choice.asJson) == 0 else {
+            throw failure("That provider was refused.")
+        }
+        choice.save()
+    }
+
+    /// Every provider this build can be pointed at.
+    ///
+    /// Read from the engine rather than listed here. A list of providers in the
+    /// application is a list that is wrong the moment one is added, and the
+    /// application and the engine do not ship on the same schedule.
+    ///
+    /// The one call that needs no handle and no queue: it answers from a fixed
+    /// list and touches nothing.
+    static func providers() -> [Provider] {
+        guard let produced = ephemeral_providers() else { return [] }
+        defer { ephemeral_string_free(produced) }
+
+        let json = try? JSONSerialization.jsonObject(with: Data(String(cString: produced).utf8))
+        return (json as? [[String: Any]] ?? []).map(Provider.init)
     }
 
     // MARK: - What the screens call

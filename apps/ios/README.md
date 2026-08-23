@@ -31,6 +31,7 @@ A machine that can build finishes the job — the same workspace, on a desktop.
 | `Sources/Ephemeral/Engine.swift` | The only thing allowed to call the engine |
 | `Sources/Ephemeral/Transport.swift` | The HTTPS this application performs on the engine's behalf |
 | `Sources/Ephemeral/Credential.swift` | The model key, in the Keychain |
+| `Sources/Ephemeral/Model.swift` | Which service generates, and how it is configured |
 | `Sources/Ephemeral/Palette.swift` | Generated. Do not edit — see [docs/design.md](../../docs/design.md) |
 | `typecheck.sh` | Puts all of the above through a compiler |
 

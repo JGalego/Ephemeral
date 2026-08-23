@@ -24,6 +24,20 @@ internal object Native {
     /** Supplies the model credential. Returns 0 on success. */
     external fun setCredential(session: Long, apiKey: String): Int
 
+    /** Chooses which service generates, and how. Returns 0 on success. */
+    external fun setProvider(session: Long, configuration: String): Int
+
+    /** What is currently chosen, as JSON. Carries no credential. */
+    external fun provider(session: Long): String?
+
+    /**
+     * Every provider this build can be pointed at, as JSON.
+     *
+     * Takes no session: a person may want to choose before there is a
+     * workspace, and the answer does not depend on one.
+     */
+    external fun providers(): String?
+
     /** Why the last call failed, or null. */
     external fun lastError(session: Long): String?
 
