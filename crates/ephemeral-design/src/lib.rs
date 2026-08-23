@@ -375,6 +375,16 @@ pub const PAIRINGS: &[Pairing] = &[
         least: 4.5,
         what: "the label on the primary button",
     },
+    // The one thing on a list that shouts. It is filled rather than outlined,
+    // so its text sits on a risk colour rather than on a ground — a pairing
+    // this list did not have until somebody read the markup looking for one it
+    // had missed.
+    Pairing {
+        fore: "ground",
+        back: "high",
+        least: 4.5,
+        what: "\"2 decisions waiting\", which is drawn filled",
+    },
     // A control's outline carries no words, so it needs 3:1 rather than 4.5 —
     // but it needs it on both grounds, because buttons sit on the page as well
     // as on cards. The first version of this palette failed here, in both

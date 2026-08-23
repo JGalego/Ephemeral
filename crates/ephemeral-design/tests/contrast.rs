@@ -65,17 +65,30 @@ fn the_risk_levels_are_visibly_different_from_each_other() {
     }
 }
 
-/// Colour is never the only carrier. Everything risk-coloured in either client
-/// also says its level in words — this test cannot check the markup, so it
-/// states the rule where somebody changing the palette will read it, and the
-/// clients' own tests check the words.
+/// The contract has to cover every risk on every ground it is drawn on.
+///
+/// A pairing that is checked is a pairing somebody thought to list. This is the
+/// check on the list itself: all four levels appear on the page, on a card, and
+/// on their own tinted ground, in that order of how often they are drawn. A
+/// palette can only be as accessible as its inventory is complete.
+///
+/// Colour is never the only carrier either. `ephemeral-cli` prints the level as
+/// a word beside every permission, the window renders `risk-<level>` on an
+/// element whose text says what it is, and both phones write the level next to
+/// the consequence. Those are checked by their own suites; what belongs here is
+/// that the palette is not asked to do the whole job alone.
 #[test]
-fn a_risk_is_never_only_a_colour() {
-    // `ephemeral-cli` prints the level as a word next to every permission, and
-    // the window renders `risk-<level>` as a class on an element whose text
-    // says what it is. Both are covered by their own suites; what belongs here
-    // is that the palette is not asked to do the whole job alone.
-    assert_eq!(PAIRINGS.iter().filter(|p| p.fore == "critical").count(), 3);
+fn every_risk_is_checked_on_every_ground_it_is_drawn_on() {
+    for level in ["low", "medium", "high", "critical"] {
+        for ground in ["ground", "surface", &format!("{level}-soft")] {
+            assert!(
+                PAIRINGS
+                    .iter()
+                    .any(|pairing| pairing.fore == level && pairing.back == ground),
+                "nothing checks {level} on {ground}"
+            );
+        }
+    }
 }
 
 /// Printing the whole table is worth more than a pass line: somebody adjusting
