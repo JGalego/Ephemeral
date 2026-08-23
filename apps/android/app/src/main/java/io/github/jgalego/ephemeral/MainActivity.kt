@@ -50,12 +50,12 @@ class MainActivity : Activity() {
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        menu.add(0, MENU_CREDENTIAL, 0, R.string.credential_title)
+        menu.add(0, R.id.credential_menu, 0, R.string.credential_title)
         return true
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        if (item.itemId == MENU_CREDENTIAL) {
+        if (item.itemId == R.id.credential_menu) {
             askForCredential()
             return true
         }
@@ -106,6 +106,11 @@ class MainActivity : Activity() {
 
     private fun askForCredential() {
         val field = EditText(this).apply {
+            // Named, because a control with no id is a control no automated
+            // walkthrough can be pointed at — and this is the one control
+            // standing between a phone in a test rack and generation working
+            // on it at all.
+            id = R.id.credential
             hint = getString(R.string.credential_hint)
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
             setSingleLine()
@@ -145,9 +150,6 @@ class MainActivity : Activity() {
         status.visibility = if (message == null) View.GONE else View.VISIBLE
     }
 
-    private companion object {
-        const val MENU_CREDENTIAL = 1
-    }
 }
 
 /**

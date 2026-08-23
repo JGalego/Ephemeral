@@ -108,6 +108,7 @@ Twenty minutes of setup, once, by somebody with a Google account:
    Actions*:
    - `FIREBASE_PROJECT_ID` — the project id from step 1
    - `FIREBASE_SERVICE_ACCOUNT` — the entire contents of the JSON file
+   - `MODEL_API_KEY` — optional, and only for the **generate** input below
 6. **Run it.** *Actions → Device → Run workflow*. Pick a device model; the
    default is a Pixel 8. If that model has been retired the run fails and
    prints every physical device that does exist, which is the list to choose
@@ -118,6 +119,29 @@ the application by itself; the one thing it cannot guess — what to type into
 the box — is given to it as a directive using the same resource ids
 `photograph.py` taps, so the two walkthroughs cannot drift into exercising
 different screens.
+
+### Generating on the phone
+
+Every device run so far has stopped at the front door: with no key stored, the
+app refuses to generate and says so, which is correct and is not very
+interesting to photograph. Turning on the **generate** input puts the
+`MODEL_API_KEY` secret into the app and lets Robo press Generate.
+
+Three things are worth knowing before you do:
+
+- **It is Anthropic.** The engine both phones link against builds an Anthropic
+  provider and nothing else, so `MODEL_API_KEY` has to be an Anthropic key. The
+  `openai` provider — and with it Groq, and everything else that copied that
+  format — is reachable from the desktop and the terminal but not yet from a
+  phone.
+- **Generating is not building.** A phone plans the application and writes its
+  source. It cannot build or run it: that needs a container runtime, which is
+  why a phone is a control plane and not a second desktop ([ADR-0007]).
+- **The key goes in on the command line.** Test Lab has no secret mechanism, so
+  the only way to reach a phone in a rack is through the command that starts the
+  run — which means the key is in gcloud's arguments here and in the run record
+  Test Lab keeps. Everywhere else a credential travels on stdin for exactly that
+  reason ([ADR-0016]). Use a key made for the run and revoked after it.
 
 **A better credential, when it is worth the time.** A JSON key never expires
 and works from anywhere it leaks to. [Workload Identity
@@ -206,3 +230,4 @@ deliberate trade, not an old template.
 [ADR-0017]: ../../docs/architecture/decisions/0017-mobile-generates-through-a-host-transport.md
 [SECURITY.md]: ../../SECURITY.md
 [docs/install.md]: ../../docs/install.md
+[ADR-0016]: ../../docs/architecture/decisions/0016-real-providers-live-in-their-own-crates.md

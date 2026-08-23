@@ -36,6 +36,13 @@ on:
         description: How long to let Robo explore.
         default: "5"
         type: string
+      generate:
+        description: >
+          Whether to put the MODEL_API_KEY secret into the app and let Robo
+          press Generate. Off by default: it spends a real model call, and the
+          key reaches the phone through the command line (see below).
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -55,6 +62,7 @@ jobs:
       # what is missing.
       PROJECT: ${{ secrets.FIREBASE_PROJECT_ID }}
       KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      MODEL_KEY: ${{ secrets.MODEL_API_KEY }}
     steps:
       - uses: actions/checkout@v4
 
@@ -133,6 +141,17 @@ jobs:
             exit 1
           fi
 
+      # A note about the key, because it is the one thing here that is not
+      # obviously safe. Test Lab has no secret mechanism: the only way to get a
+      # credential onto a phone in a rack is through the command that starts the
+      # run, so it is in gcloud's argument vector on this runner and in the run
+      # record Test Lab keeps. Everywhere else in this repository a credential
+      # travels on stdin for exactly that reason (ADR-0016), and this is a place
+      # that cannot.
+      #
+      # So: use a key made for the run and revoked after it, not one you use for
+      # anything else. That is not a workaround for a gap, it is what a
+      # credential handed to somebody else's rack of phones is worth.
       - name: Run it on a phone
         run: |
           set -uo pipefail
@@ -147,13 +166,28 @@ jobs:
           # the one thing it cannot guess — what to type into the box — using
           # the same resource ids `photograph.py` taps, so the two walkthroughs
           # cannot drift into testing different screens.
+          #
+          # With `generate` on, three more: open the credential menu, put the
+          # key in the field, and press Generate on the page Create opens.
+          # Those controls have resource ids for exactly this reason — a
+          # control with no name is one Robo can only stumble into, which is
+          # why every device run so far stopped at the front door.
+          directives="text:intent=compare two CSV files,click:create="
+          if [ "${{ inputs.generate }}" = "true" ]; then
+            if [ -z "$MODEL_KEY" ]; then
+              echo "::error::No MODEL_API_KEY secret, so there is nothing to generate with."
+              exit 1
+            fi
+            directives="click:credential_menu=,text:credential=$MODEL_KEY,$directives,click:generate="
+          fi
+
           set +e
           gcloud firebase test android run \
             --type robo \
             --app apps/android/app/build/outputs/apk/debug/app-debug.apk \
             --device "model=${{ inputs.model }},version=${{ inputs.version }},locale=en,orientation=portrait" \
             --timeout "${{ inputs.minutes }}m" \
-            --robo-directives "text:intent=compare two CSV files,click:create=" \
+            --robo-directives "$directives" \
             2>&1 | tee run.log
           outcome=${PIPESTATUS[0]}
           set -e

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Names for two controls that have no layout file.
+
+  The credential dialog is built in Kotlin, so its field and the menu item that
+  opens it had no resource ids — and a control with no id is a control Firebase
+  Test Lab cannot be pointed at. Robo finds things by resource name; everything
+  else it can only stumble into. These two exist so a run on a real phone can be
+  told to put a key in and get past the front door, which is where every device
+  run so far has stopped.
+-->
+<resources>
+    <item name="credential_menu" type="id" />
+    <item name="credential" type="id" />
+</resources>
