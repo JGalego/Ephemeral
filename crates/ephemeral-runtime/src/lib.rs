@@ -38,6 +38,9 @@
 pub mod docker;
 pub mod spec;
 
+#[cfg(feature = "wasm")]
+pub mod wasm;
+
 use std::fmt;
 
 use ephemeral_core::AppId;

@@ -17,8 +17,24 @@ authors.workspace = true
 default = ["daemon"]
 daemon = []
 
+# The WebAssembly runtime. Separate from `daemon` because it spawns nothing:
+# the sandbox is the module's own, and there is no process and no container.
+# That is exactly why it is the runtime a phone can have (ADR-0021).
+wasm = ["dep:wasmi", "dep:wasmi_wasi"]
+
 [dependencies]
 ephemeral-core.workspace = true
+
+# An interpreter, deliberately, not a just-in-time compiler. iOS does not allow
+# an application to generate and execute machine code, so a JIT engine — which
+# is most of them, wasmtime included — cannot ship on a phone at all. wasmi is
+# pure Rust and interprets, which costs speed and buys every platform.
+#
+# Pinned to 0.46 rather than 1.x because 1.x needs Rust 1.86 and this workspace
+# declares 1.85. Moving is a deliberate bump of a published minimum, not
+# something a dependency should decide on the owner's behalf.
+wasmi = { version = "0.46", optional = true, default-features = false, features = ["std"] }
+wasmi_wasi = { version = "0.46", optional = true }
 
 serde.workspace = true
 serde_json.workspace = true
@@ -26,6 +42,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+wat = "1.257.1"
 
 [lints]
 workspace = true

@@ -1,0 +1,343 @@
+//! Running a generated application inside WebAssembly.
+//!
+//! [ADR-0005](https://github.com/JGalego/Ephemeral/blob/main/docs/architecture/decisions/0005-docker-first-runtime-abstraction.md)
+//! made the runtime a trait with three implementations in mind, and
+//! [ADR-0015](https://github.com/JGalego/Ephemeral/blob/main/docs/architecture/decisions/0015-defer-the-native-runtime.md)
+//! declined to build the native one on the grounds that a sandbox which cannot
+//! enforce what its manifest declares is a sandbox in name only. That reasoning
+//! has not changed. This is a different answer to the same question.
+//!
+//! ## Why this one is not the weak runtime ADR-0015 refused
+//!
+//! A native process starts with everything — the whole filesystem, the network,
+//! every syscall — and confinement means taking it away, one platform-specific
+//! mechanism at a time, and hoping the list is complete. That is the shape that
+//! makes a "less isolated" label do more work than a label can.
+//!
+//! A WebAssembly module starts with **nothing**. It has no syscalls. It cannot
+//! name a file, open a socket, read the clock or learn its own process id
+//! unless the host hands it a function that does so. Confinement is not applied
+//! to it; confinement is its resting state, and every capability is an explicit
+//! addition. Forgetting to remove something yields *less* access rather than
+//! more — which is the same property [`crate::ContainerSpec::minimal`] is built
+//! around, enforced by the execution model rather than by remembering.
+//!
+//! That is also why it can run on a phone. There is no daemon, no process, no
+//! namespace and no root: an interpreter in the host application's own memory
+//! is the entire mechanism.
+//!
+//! ## What it costs
+//!
+//! Interpreted, not compiled — iOS forbids an application generating machine
+//! code, so a just-in-time engine cannot ship there at all. Expect it to be
+//! slower than a container by a wide margin. For the sort of thing Ephemeral
+//! generates — read a file, count something, print an answer — that is a trade
+//! worth making to have any runtime at all on a device that has none.
+//!
+//! And the application has to *be* WebAssembly. What that means for something a
+//! model wrote in Python is a question for the layer above this one; what this
+//! module owes it is a place to run where the permission model is real.
+
+use std::path::PathBuf;
+use std::time::Duration;
+
+use crate::spec::{ContainerSpec, Egress};
+
+mod engine;
+
+pub use engine::{Confined, WasmError, run};
+
+/// What a module is allowed to do, derived from a [`ContainerSpec`].
+///
+/// The translation is the whole security argument, so it is a value that can be
+/// inspected and asserted about rather than a sequence of calls buried in the
+/// runtime. Every field here is something the specification granted; anything
+/// the specification did not grant simply has no representation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Capabilities {
+    /// Directories the module may see, as (host path, the name it sees).
+    ///
+    /// WASI cannot name a path outside a preopened directory — not by policy,
+    /// but because the only way to obtain a file descriptor is to derive it
+    /// from one it already holds. A module given no preopens cannot open
+    /// anything at all, which is the default here.
+    pub visible: Vec<(PathBuf, String)>,
+
+    /// Whether the module may write to any of them.
+    pub writable: bool,
+
+    /// The arguments, as the application sees them.
+    pub arguments: Vec<String>,
+
+    /// Environment variables, by name and value.
+    ///
+    /// Only the names a specification asked for, and only the values supplied
+    /// at the moment of running — the same contract the container runtime has,
+    /// for the same reason.
+    pub environment: Vec<(String, String)>,
+
+    /// How much work it may do before it is stopped.
+    ///
+    /// Not a wall clock. Fuel counts executed instructions, so a module cannot
+    /// escape it by sleeping, blocking or being descheduled, and the bound is
+    /// the same on a fast machine and a slow one.
+    pub fuel: u64,
+
+    /// How much memory it may allocate, in bytes.
+    pub memory: usize,
+}
+
+/// How much work a module may do per second of its declared CPU allowance.
+///
+/// Fuel is instructions, and instructions are not seconds, so this is a
+/// conversion with no exact answer. The number is deliberately generous: a
+/// module stopped early is a wrong answer, while a module stopped late has only
+/// cost time on a machine that was already waiting for it.
+const FUEL_PER_CPU_SECOND: u64 = 2_000_000_000;
+
+impl Capabilities {
+    /// What a specification permits, and nothing else.
+    ///
+    /// # Panics
+    ///
+    /// Never. A mount whose host path cannot be named is dropped rather than
+    /// guessed at, which fails closed.
+    #[must_use]
+    pub fn from_spec(spec: &ContainerSpec, timeout: Duration, secrets: &crate::Secrets) -> Self {
+        // Egress has no representation here at all. wasmi's WASI has no sockets
+        // to offer, so a module cannot reach the network whatever a
+        // specification says — the one case where this runtime is *stricter*
+        // than the container one, and the interface has to say so rather than
+        // quietly appearing to honour a grant it cannot give effect to.
+        let _ = Egress::Denied;
+
+        let visible = spec
+            .mounts
+            .iter()
+            .map(|mount| (mount.host_path.clone(), mount.container_path.clone()))
+            .collect();
+
+        Self {
+            visible,
+            writable: spec.mounts.iter().any(|mount| mount.writable),
+            arguments: spec.entrypoint.clone(),
+            environment: spec
+                .environment_names
+                .iter()
+                .filter_map(|name| {
+                    secrets
+                        .get(name)
+                        .map(|value| (name.clone(), value.to_owned()))
+                })
+                .collect(),
+            fuel: FUEL_PER_CPU_SECOND.saturating_mul(timeout.as_secs().max(1)),
+            memory: usize::try_from(spec.limits.memory_mib)
+                .unwrap_or(usize::MAX)
+                .saturating_mul(1024 * 1024),
+        }
+    }
+
+    /// Whether the module can reach anything of the user's at all.
+    #[must_use]
+    pub fn isolated(&self) -> bool {
+        self.visible.is_empty()
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+
+    /// Compiles WebAssembly text into a module.
+    ///
+    /// Written as text rather than shipped as a binary fixture: a `.wasm` blob
+    /// in the repository is a thing nobody can review, in the one place where
+    /// what the bytes do is the entire question.
+    fn module(text: &str) -> Vec<u8> {
+        wat::parse_str(text).expect("the test module should assemble")
+    }
+
+    fn granted(fuel: u64) -> Capabilities {
+        Capabilities {
+            visible: Vec::new(),
+            writable: false,
+            arguments: Vec::new(),
+            environment: Vec::new(),
+            fuel,
+            memory: 16 * 1024 * 1024,
+        }
+    }
+
+    /// A module that does nothing runs, and is not mistaken for a failure.
+    #[test]
+    fn a_module_that_does_nothing_succeeds() {
+        let wasm = module(r#"(module (func (export "_start")))"#);
+
+        let outcome = run(&wasm, &granted(1_000_000)).expect("it runs");
+
+        assert!(outcome.succeeded);
+        assert!(outcome.output.is_empty());
+    }
+
+    /// **The capability model, in one test.**
+    ///
+    /// A module that imports a function the host did not provide cannot be
+    /// instantiated. This is not a check Ephemeral performs — there is nothing
+    /// for the import to bind to, so the module never starts. An application
+    /// that wants a socket, or a host function somebody invented, fails at the
+    /// door rather than halfway through doing something.
+    #[test]
+    fn a_module_asking_for_what_it_was_not_given_never_starts() {
+        let wasm = module(
+            r#"(module
+                 (import "host" "exfiltrate" (func $out (param i32)))
+                 (func (export "_start") (call $out (i32.const 1))))"#,
+        );
+
+        let refused = run(&wasm, &granted(1_000_000)).expect_err("it must not be allowed to start");
+
+        assert!(
+            matches!(refused, WasmError::Ungranted(_)),
+            "expected a refusal about an ungranted capability, got {refused}"
+        );
+    }
+
+    /// The same, for the one an application would actually reach for. wasmi's
+    /// WASI has no sockets at all, so networking is not a permission this
+    /// runtime can grant — it is a thing that does not exist here.
+    #[test]
+    fn there_is_no_socket_to_open() {
+        let wasm = module(
+            r#"(module
+                 (import "wasi_snapshot_preview1" "sock_open"
+                   (func $open (param i32 i32 i32) (result i32)))
+                 (func (export "_start")
+                   (drop (call $open (i32.const 0) (i32.const 0) (i32.const 0)))))"#,
+        );
+
+        let refused = run(&wasm, &granted(1_000_000)).expect_err("there is no socket to open");
+
+        assert!(matches!(refused, WasmError::Ungranted(_)), "{refused}");
+    }
+
+    /// A module that never finishes is stopped, and the machine survives.
+    ///
+    /// Fuel counts instructions rather than seconds, so this bound cannot be
+    /// escaped by sleeping or by being descheduled, and it is the same bound on
+    /// a fast machine and a slow one.
+    #[test]
+    fn a_module_that_loops_forever_is_stopped() {
+        let wasm = module(r#"(module (func (export "_start") (loop $forever (br $forever))))"#);
+
+        let stopped =
+            run(&wasm, &granted(100_000)).expect_err("it must not be allowed to run forever");
+
+        assert!(
+            matches!(stopped, WasmError::Stopped(_)),
+            "expected it to be stopped, got {stopped}"
+        );
+        assert!(
+            stopped.to_string().contains("Nothing was left running"),
+            "and to say so in words somebody can read: {stopped}"
+        );
+    }
+
+    /// Output is captured rather than reaching the host's own streams. On a
+    /// phone there is no terminal for it to reach, and on a desktop it belongs
+    /// in the application's log rather than in Ephemeral's.
+    #[test]
+    fn what_it_prints_comes_back_rather_than_escaping() {
+        // Writes "hi\n" to fd 1 through WASI, which is the only way out.
+        let wasm = module(
+            r#"(module
+                 (import "wasi_snapshot_preview1" "fd_write"
+                   (func $write (param i32 i32 i32 i32) (result i32)))
+                 (memory (export "memory") 1)
+                 (data (i32.const 8) "hi\n")
+                 (func (export "_start")
+                   (i32.store (i32.const 0) (i32.const 8))
+                   (i32.store (i32.const 4) (i32.const 3))
+                   (drop (call $write
+                     (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 20)))))"#,
+        );
+
+        let outcome = run(&wasm, &granted(1_000_000)).expect("it runs");
+
+        assert_eq!(outcome.output, "hi\n");
+    }
+
+    /// A specification that grants nothing produces capabilities that permit
+    /// nothing. The default has to be the safe one, because forgetting is the
+    /// common case.
+    #[test]
+    fn a_minimal_specification_can_reach_nothing() {
+        let spec = ContainerSpec::minimal(
+            ephemeral_core::AppId::parse("csv-comparator").expect("a valid id"),
+            "unused",
+            vec!["--help".to_owned()],
+        );
+
+        let capabilities =
+            Capabilities::from_spec(&spec, Duration::from_secs(60), &crate::Secrets::new());
+
+        assert!(capabilities.isolated(), "it can see nothing of the user's");
+        assert!(capabilities.visible.is_empty());
+        assert!(!capabilities.writable);
+        assert!(capabilities.environment.is_empty());
+        assert!(capabilities.fuel > 0, "and it still has room to run");
+    }
+
+    /// A granted folder becomes a directory the module can name, and nothing
+    /// else does. This is the translation the whole security argument rests on,
+    /// so it is asserted rather than assumed.
+    #[test]
+    fn a_granted_folder_is_the_only_one_it_can_name() {
+        let home = tempfile::tempdir().expect("a temporary directory");
+
+        let mut spec = ContainerSpec::minimal(
+            ephemeral_core::AppId::parse("csv-comparator").expect("a valid id"),
+            "unused",
+            Vec::new(),
+        );
+        spec.mounts
+            .push(crate::spec::Mount::read_only(home.path(), "/mnt/data"));
+
+        let capabilities =
+            Capabilities::from_spec(&spec, Duration::from_secs(60), &crate::Secrets::new());
+
+        assert_eq!(
+            capabilities.visible,
+            vec![(home.path().to_path_buf(), "/mnt/data".to_owned())]
+        );
+        assert!(!capabilities.isolated());
+        assert!(
+            !capabilities.writable,
+            "a read-only grant stays read-only across the translation"
+        );
+    }
+
+    /// Only the settings a specification named, and only when a value was
+    /// supplied. A name with no value is not passed as empty — it is absent,
+    /// which is what the application can then complain about.
+    #[test]
+    fn only_the_named_settings_are_passed() {
+        let mut spec = ContainerSpec::minimal(
+            ephemeral_core::AppId::parse("csv-comparator").expect("a valid id"),
+            "unused",
+            Vec::new(),
+        );
+        spec.environment_names = vec!["WANTED".to_owned(), "NEVER_SUPPLIED".to_owned()];
+
+        let mut secrets = crate::Secrets::new();
+        secrets.insert("WANTED", "a-value");
+        secrets.insert("NOT_ASKED_FOR", "must not appear");
+
+        let capabilities = Capabilities::from_spec(&spec, Duration::from_secs(60), &secrets);
+
+        assert_eq!(
+            capabilities.environment,
+            vec![("WANTED".to_owned(), "a-value".to_owned())]
+        );
+    }
+}

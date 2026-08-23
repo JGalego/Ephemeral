@@ -39,6 +39,13 @@ step "Sandbox purity (ephemeral-runtime without a daemon)"
 cargo build -p ephemeral-runtime --no-default-features
 cargo test -p ephemeral-runtime --no-default-features
 
+# The WebAssembly runtime is behind a feature, so the default build does not
+# compile it and the default test run does not exercise it. The sandbox it
+# claims is the whole reason it exists, so it is checked explicitly.
+step "The WebAssembly sandbox holds"
+cargo clippy -p ephemeral-runtime --features wasm --all-targets -- -D warnings
+cargo test -p ephemeral-runtime --features wasm wasm::
+
 # CI never makes a live model call (ADR-0008). Generation is exercised entirely
 # through the deterministic mock provider.
 step "Generating and running, in the crate both clients call"

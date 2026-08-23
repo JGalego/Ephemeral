@@ -107,6 +107,13 @@ jobs:
       - run: cargo build -p ephemeral-runtime --no-default-features
       - run: cargo test -p ephemeral-runtime --no-default-features
 
+      # The WebAssembly runtime is behind a feature, so neither the default
+      # build nor the default test run touches it. What it claims — that a
+      # module gets what it was granted and nothing else — is the reason it
+      # exists, so it is checked on its own.
+      - run: cargo clippy -p ephemeral-runtime --features wasm --all-targets -- -D warnings
+      - run: cargo test -p ephemeral-runtime --features wasm wasm::
+
   # CI never makes a live model call (ADR-0008). Generation is exercised
   # entirely through the deterministic mock provider, so this job proves the
   # loop works without a credential, a network connection, or a bill.
