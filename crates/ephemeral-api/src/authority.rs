@@ -93,8 +93,15 @@ pub fn require(ledger: &PermissionLedger, permission: &MetaPermission) -> Result
 #[must_use]
 pub fn grant_argument(permission: &MetaPermission) -> Option<String> {
     let written = match permission {
-        MetaPermission::FilesystemRead { scope } => format!("read:{}", scope.display_path()),
-        MetaPermission::FilesystemWrite { scope } => format!("write:{}", scope.display_path()),
+        // `as_written`, not `display_path`: the difference between them is the
+        // trailing `**`, and the difference between those two scopes is whether
+        // the remedy works. A folder granted without it covers that one path and
+        // nothing beneath it, so a refusal about `~/Downloads/**` used to print
+        // a command that ran successfully and changed nothing — the same
+        // refusal appeared again on the next run, now with the grant visibly in
+        // the ledger. `display_path` is for prose, where the marker is noise.
+        MetaPermission::FilesystemRead { scope } => format!("read:{}", scope.as_written()),
+        MetaPermission::FilesystemWrite { scope } => format!("write:{}", scope.as_written()),
         MetaPermission::ExecuteProcesses => "execute".to_owned(),
         MetaPermission::InstallDependencies => "install-deps".to_owned(),
         MetaPermission::NetworkAccess => "network".to_owned(),
@@ -726,6 +733,31 @@ mod tests {
             require(workspace.ledger(), &RUNTIME).is_err(),
             "taking it back has to reach the thing that asks"
         );
+    }
+
+    /// A remedy has to grant the scope it is a remedy for.
+    ///
+    /// This is the case the previous test could not see: every permission had
+    /// *a* written form, and for a folder it was the wrong one. `read:~/x` and
+    /// `read:~/x/**` are different scopes — the first covers that path and
+    /// nothing under it — so a refusal about the second printed a command that
+    /// succeeded, granted the first, and left the refusal exactly where it was.
+    /// Found by following the instructions and watching them not work.
+    #[test]
+    fn the_remedy_grants_the_scope_it_is_a_remedy_for() {
+        for written in ["~/Downloads/**", "~/Downloads", "/srv/data/**"] {
+            let scope = PathScope::parse(written).expect("a scope");
+            let permission = MetaPermission::read(scope.clone());
+
+            let argument = grant_argument(&permission).expect("a way to grant it");
+            let granted = argument.strip_prefix("read:").expect("a read remedy");
+
+            assert_eq!(
+                PathScope::parse(granted).expect("the remedy is a usable scope"),
+                scope,
+                "the remedy for {written} grants {granted}"
+            );
+        }
     }
 
     /// Every meta-permission has to be grantable, or a refusal could name a
