@@ -243,6 +243,62 @@ mod tests {
         );
     }
 
+    /// A module that allocates without end is stopped, and the phone survives.
+    ///
+    /// The bound this asserts was declared by [`Capabilities::memory`] for a
+    /// while before anything applied it — a limit in a struct field is a
+    /// promise, and this is the test that makes it a fact. One page is 64 KiB,
+    /// so a ceiling of one page and a request for a thousand more is the
+    /// smallest honest version of "it asked for the machine".
+    #[test]
+    fn a_module_that_allocates_without_end_is_stopped() {
+        let wasm = module(
+            r#"(module
+                 (memory 1)
+                 (func (export "_start")
+                   (loop $more
+                     (drop (memory.grow (i32.const 1)))
+                     (br $more))))"#,
+        );
+
+        let stopped = run(
+            &wasm,
+            &Capabilities {
+                memory: 64 * 1024,
+                ..granted(100_000_000)
+            },
+        )
+        .expect_err("it must not be allowed to take the machine");
+
+        assert!(
+            matches!(stopped, WasmError::Stopped(_)),
+            "expected it to be stopped, got {stopped}"
+        );
+    }
+
+    /// And the same ceiling does not stop a module that stays under it. A bound
+    /// that refuses everything is not a bound, it is a broken runtime, and the
+    /// two look identical from the test above alone.
+    #[test]
+    fn a_module_that_stays_within_its_memory_is_left_alone() {
+        let wasm = module(
+            r#"(module
+                 (memory 1)
+                 (func (export "_start") (drop (memory.grow (i32.const 1)))))"#,
+        );
+
+        let outcome = run(
+            &wasm,
+            &Capabilities {
+                memory: 4 * 64 * 1024,
+                ..granted(1_000_000)
+            },
+        )
+        .expect("two pages is inside a four page ceiling");
+
+        assert!(outcome.succeeded);
+    }
+
     /// Output is captured rather than reaching the host's own streams. On a
     /// phone there is no terminal for it to reach, and on a desktop it belongs
     /// in the application's log rather than in Ephemeral's.

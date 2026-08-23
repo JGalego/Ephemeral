@@ -9,7 +9,7 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use wasmi::{Config, Engine, Linker, Module, Store};
+use wasmi::{Config, Engine, Linker, Module, Store, StoreLimits, StoreLimitsBuilder};
 use wasmi_wasi::WasiCtx;
 
 use super::Capabilities;
@@ -73,19 +73,30 @@ pub fn run(wasm: &[u8], capabilities: &Capabilities) -> Result<Confined, WasmErr
         Module::new(&engine, wasm).map_err(|error| WasmError::NotAModule(error.to_string()))?;
 
     let captured = Captured::new();
-    let context = build_context(capabilities, &captured)?;
+    let sandboxed = Sandboxed {
+        wasi: build_context(capabilities, &captured)?,
+        // Applied per linear memory. A module that grows past it traps rather
+        // than being told the growth failed, because a generated application
+        // handling `memory.grow` returning -1 gracefully is not something to
+        // rely on: the honest outcome of exceeding a bound is being stopped.
+        limits: StoreLimitsBuilder::new()
+            .memory_size(capabilities.memory)
+            .trap_on_grow_failure(true)
+            .build(),
+    };
 
-    let mut store = Store::new(&engine, context);
+    let mut store = Store::new(&engine, sandboxed);
+    store.limiter(|sandboxed| &mut sandboxed.limits);
     store
         .set_fuel(capabilities.fuel)
         .map_err(|error| WasmError::CannotPrepare(error.to_string()))?;
 
-    let mut linker = <Linker<WasiCtx>>::new(&engine);
+    let mut linker = <Linker<Sandboxed>>::new(&engine);
     // The *only* imports this module will be able to resolve. Nothing else is
     // added, so anything the application asks for beyond WASI — a socket, a
     // host function somebody invented — has nothing to bind to and the
     // instantiation below fails.
-    wasmi_wasi::add_to_linker(&mut linker, |context| context)
+    wasmi_wasi::add_to_linker(&mut linker, |sandboxed: &mut Sandboxed| &mut sandboxed.wasi)
         .map_err(|error| WasmError::CannotPrepare(error.to_string()))?;
 
     let instance = linker
@@ -127,6 +138,17 @@ pub fn run(wasm: &[u8], capabilities: &Capabilities) -> Result<Confined, WasmErr
     }
 }
 
+/// Everything one run's store holds.
+///
+/// The WASI context and the allocation bounds travel together because wasmi
+/// asks for both through the store's data type: a limiter is a function from
+/// that type, so a store whose data is a bare [`WasiCtx`] is a store that can
+/// have no memory limit at all.
+struct Sandboxed {
+    wasi: WasiCtx,
+    limits: StoreLimits,
+}
+
 /// Whether a failure was the sandbox holding or the module misbehaving.
 ///
 /// Separated because the two need different words: one is Ephemeral refusing,
@@ -143,7 +165,10 @@ fn classify(error: &wasmi::Error) -> WasmError {
             "it used more processing than it was allowed. Nothing was left running.".to_owned(),
         );
     }
-    if said.contains("memory") && said.contains("limit") {
+    if said.contains("out of bounds")
+        || said.contains("memory")
+            && (said.contains("limit") || said.contains("grow") || said.contains("allocat"))
+    {
         return WasmError::Stopped(
             "it asked for more memory than it was allowed. Nothing was left running.".to_owned(),
         );
