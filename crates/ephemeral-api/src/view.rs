@@ -125,7 +125,12 @@ pub struct ApplicationDetail {
     /// What is happening, in a sentence.
     pub explanation: String,
 
-    /// What the state means.
+    /// What the state means, when that is not already the whole of
+    /// [`Self::explanation`].
+    ///
+    /// Empty rather than duplicated: with no reason recorded for the current
+    /// state, the explanation *is* the description, and a client that drew
+    /// both showed the same sentence twice, one under the other.
     pub description: String,
 
     /// Where it runs, if that has been decided.
@@ -181,10 +186,26 @@ impl ApplicationDetail {
             .collect();
         versions.reverse();
 
+        let explanation = manifest.lifecycle.explain();
+        let description = manifest.lifecycle.state().description().to_owned();
+
         Self {
             summary: ApplicationSummary::of(manifest, ledger),
-            explanation: manifest.lifecycle.explain(),
-            description: manifest.lifecycle.state().description().to_owned(),
+            explanation: explanation.clone(),
+            // Empty when it would only repeat the explanation, which is what
+            // happens whenever no reason has been recorded for the current
+            // state — `explain()` is the description plus that reason, so with
+            // no reason the two are the same sentence.
+            //
+            // Decided here rather than in each client, because it was decided
+            // in each client: the window happened not to draw this field, and
+            // the phone drew it directly under an identical line. A photograph
+            // of the Android application is what showed it.
+            description: if description == explanation {
+                String::new()
+            } else {
+                description
+            },
             runtime: manifest.runtime.as_ref().map(|runtime| RuntimeView {
                 kind: runtime.kind.to_string(),
                 isolation: runtime.kind.describe_isolation().to_owned(),
@@ -839,6 +860,38 @@ mod tests {
 
         assert!(!detail.can.contains(&"build_succeeded".to_owned()));
         assert!(!detail.can.contains(&"build_failed".to_owned()));
+    }
+
+    /// A photograph of the Android application showed this: the same sentence,
+    /// twice, one line under the other. The two fields are genuinely different
+    /// things — until nothing has happened yet, at which point they are one
+    /// thing said twice.
+    #[test]
+    fn the_state_is_not_explained_twice() {
+        let detail = ApplicationDetail::of(&manifest(), &PermissionLedger::new());
+
+        assert!(!detail.explanation.is_empty(), "there is always an account");
+        assert!(
+            detail.description.is_empty(),
+            "and nothing repeats it: {:?}",
+            detail.description
+        );
+
+        // Once something has happened, the reason is in the explanation and
+        // the plain description is worth having beside it again.
+        let mut moved = manifest();
+        moved
+            .lifecycle
+            .apply(ephemeral_core::lifecycle::TransitionRequest::new(
+                ephemeral_core::lifecycle::LifecycleEvent::Plan,
+                Actor::Ephemeral,
+                "asked for by the user",
+            ))
+            .expect("planning is allowed");
+
+        let after = ApplicationDetail::of(&moved, &PermissionLedger::new());
+        assert!(!after.description.is_empty());
+        assert_ne!(after.description, after.explanation);
     }
 
     #[test]

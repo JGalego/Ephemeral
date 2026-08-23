@@ -119,15 +119,18 @@ def main() -> None:
     adb("shell", "input", "keyevent", "111")  # dismiss the keyboard
     tap("create")
 
-    # One application, recorded. The card has to show what it is, where it is
-    # in its life, and what it holds — as three things, because they were one
-    # grey line and that made a dangerous application look like a harmless one.
-    shot("one-application-recorded", 3.0)
+    # Creating opens the new application's page, which is where somebody wants
+    # to be. Nothing has been generated yet, so it should be asking for nothing
+    # and saying so, and Generate should be the only filled control.
+    shot("its-page", 3.0)
 
-    # Its page. Nothing has been generated, so it should be asking for nothing
-    # and saying so, and the Generate button should be the only filled control.
-    if tap("purpose", required=False):
-        shot("its-page", 3.0)
+    # Back to the list, which is the screen the first version of this never
+    # reached — it assumed Create left you where you were. The card has to show
+    # what it is, where it is in its life, and what it holds as three things,
+    # because they were one grey line and that made a dangerous application
+    # look exactly like a harmless one.
+    adb("shell", "input", "keyevent", "4")  # back
+    shot("one-application-recorded", 3.0)
 
     print()
     print(f"Photographed into {out}")

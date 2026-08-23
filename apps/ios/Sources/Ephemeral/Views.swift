@@ -253,9 +253,14 @@ struct ApplicationPage: View {
                     StatePill(state: page.summary.state, kind: page.summary.stateKind)
 
                     Text(page.explanation).foregroundStyle(Palette.ink)
-                    Text(page.description)
-                        .font(.footnote)
-                        .foregroundStyle(Palette.inkQuiet)
+                    // Empty when it would only repeat the explanation. The
+                    // service layer decides that once for every client; this
+                    // screen only has to not draw an empty line.
+                    if !page.description.isEmpty {
+                        Text(page.description)
+                            .font(.footnote)
+                            .foregroundStyle(Palette.inkQuiet)
+                    }
 
                     generateButton(page)
 

@@ -85,7 +85,11 @@ class DetailActivity : Activity() {
         stateLabel.text = page.summary.state
         stateLabel.setTextColor(getColor(Palette.forState(page.summary.stateKind)))
         explanation.text = page.explanation
+        // Empty when it would only repeat the explanation, which the service
+        // layer now decides for every client at once. A photograph of this
+        // screen is what showed the same sentence twice, one line apart.
         description.text = page.description
+        description.visibility = if (page.description.isBlank()) View.GONE else View.VISIBLE
 
         generate.setText(if (page.versions.isEmpty()) R.string.generate else R.string.generate_again)
 
