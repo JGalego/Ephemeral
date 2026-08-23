@@ -84,20 +84,52 @@ pub struct Capabilities {
     ///
     /// Not a wall clock. Fuel counts executed instructions, so a module cannot
     /// escape it by sleeping, blocking or being descheduled, and the bound is
-    /// the same on a fast machine and a slow one.
+    /// the same on a fast machine and a slow one — which is also why it is the
+    /// only bound of this kind a phone can rely on.
     pub fuel: u64,
 
     /// How much memory it may allocate, in bytes.
     pub memory: usize,
 }
 
-/// How much work a module may do per second of its declared CPU allowance.
+/// How much work a module may do per second of CPU it was allowed.
 ///
-/// Fuel is instructions, and instructions are not seconds, so this is a
-/// conversion with no exact answer. The number is deliberately generous: a
-/// module stopped early is a wrong answer, while a module stopped late has only
-/// cost time on a machine that was already waiting for it.
-const FUEL_PER_CPU_SECOND: u64 = 2_000_000_000;
+/// Fuel is instructions and instructions are not seconds, so this is a
+/// conversion with no exact answer. The number is measured rather than
+/// imagined: a tight branch loop — the cheapest instruction there is, and so
+/// the fastest a module can possibly go — runs at roughly 80 million fuel per
+/// second under this interpreter. Real code, which touches memory, is slower
+/// per instruction and therefore takes *longer* in wall clock for the same
+/// fuel.
+///
+/// 50 million is that rate rounded down, which makes a second of declared CPU
+/// mean somewhere between one and a few seconds of a person waiting. Being
+/// generous here is not free: on a handset, the cost of a bound that is too
+/// loose is a phone that appears to have stopped.
+const FUEL_PER_CPU_SECOND: u64 = 50_000_000;
+
+/// The longest a module runs where somebody is waiting for it.
+///
+/// A manifest may declare fifteen minutes, and on a desktop that is a job left
+/// to get on with it. On a phone it is an application that has frozen. A caller
+/// running something interactively passes this instead of what the manifest
+/// says, and takes the smaller of the two.
+pub const HANDHELD_CEILING: Duration = Duration::from_secs(30);
+
+/// How much CPU time a specification allows, in whole seconds, at least one.
+///
+/// The product of the fraction of a core granted and how long it may run. At
+/// least one second because a specification that works out to zero is one
+/// nothing can run under, and refusing to start an application over a rounding
+/// error is not a security property.
+fn cpu_seconds(spec: &ContainerSpec, timeout: Duration) -> u64 {
+    let millis = u64::from(spec.limits.cpu_millis).max(1);
+    timeout
+        .as_secs()
+        .saturating_mul(millis)
+        .saturating_div(1000)
+        .max(1)
+}
 
 impl Capabilities {
     /// What a specification permits, and nothing else.
@@ -134,7 +166,10 @@ impl Capabilities {
                         .map(|value| (name.clone(), value.to_owned()))
                 })
                 .collect(),
-            fuel: FUEL_PER_CPU_SECOND.saturating_mul(timeout.as_secs().max(1)),
+            // CPU-seconds, not seconds: a specification granting half a core
+            // for a minute granted thirty seconds of work, and metering the
+            // wall clock instead would silently double it.
+            fuel: FUEL_PER_CPU_SECOND.saturating_mul(cpu_seconds(spec, timeout)),
             memory: usize::try_from(spec.limits.memory_mib)
                 .unwrap_or(usize::MAX)
                 .saturating_mul(1024 * 1024),
@@ -399,6 +434,48 @@ mod tests {
         assert!(!capabilities.writable);
         assert!(capabilities.environment.is_empty());
         assert!(capabilities.fuel > 0, "and it still has room to run");
+    }
+
+    /// A specification granting half a core for a minute has granted thirty
+    /// CPU-seconds, not sixty. Metering the wall clock instead would silently
+    /// hand every application twice what its manifest says.
+    #[test]
+    fn the_allowance_is_cpu_time_rather_than_elapsed_time() {
+        let mut half = ContainerSpec::minimal(
+            ephemeral_core::AppId::parse("csv-comparator").expect("a valid id"),
+            "unused",
+            Vec::new(),
+        );
+        half.limits.cpu_millis = 500;
+
+        let mut whole = half.clone();
+        whole.limits.cpu_millis = 1000;
+
+        let minute = Duration::from_secs(60);
+        let secrets = crate::Secrets::new();
+
+        assert_eq!(
+            Capabilities::from_spec(&half, minute, &secrets).fuel * 2,
+            Capabilities::from_spec(&whole, minute, &secrets).fuel,
+            "twice the core is twice the work"
+        );
+    }
+
+    /// A specification that rounds down to nothing still runs. Refusing to
+    /// start an application over a rounding error is not a security property.
+    #[test]
+    fn an_allowance_too_small_to_measure_is_still_an_allowance() {
+        let mut sliver = ContainerSpec::minimal(
+            ephemeral_core::AppId::parse("csv-comparator").expect("a valid id"),
+            "unused",
+            Vec::new(),
+        );
+        sliver.limits.cpu_millis = 1;
+
+        let capabilities =
+            Capabilities::from_spec(&sliver, Duration::from_secs(1), &crate::Secrets::new());
+
+        assert!(capabilities.fuel > 0);
     }
 
     /// A granted folder becomes a directory the module can name, and nothing
