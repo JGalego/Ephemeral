@@ -8,6 +8,7 @@ import android.text.InputType
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
+import android.webkit.WebView
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.CheckBox
@@ -262,6 +263,27 @@ class DetailActivity : Activity() {
      * "something went wrong" throws away the only thing that says what.
      */
     private fun showWhatItDid(ran: Ran) {
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(
+                if (ran.succeeded) {
+                    getString(R.string.it_ran)
+                } else {
+                    getString(R.string.it_failed, ran.exitCode)
+                },
+            )
+            .setPositiveButton(R.string.close, null)
+
+        if (ran.isPage() && ran.succeeded) {
+            dialog.setView(page(ran))
+        } else {
+            dialog.setMessage(plainly(ran))
+        }
+
+        dialog.show()
+    }
+
+    /** What it printed, and anything it was not given, as words. */
+    private fun plainly(ran: Ran): String {
         val said = StringBuilder()
 
         if (ran.refused.isNotEmpty()) {
@@ -270,17 +292,62 @@ class DetailActivity : Activity() {
         }
         said.append(ran.output.ifBlank { getString(R.string.nothing_printed) })
 
-        AlertDialog.Builder(this)
-            .setTitle(
-                if (ran.succeeded) {
-                    getString(R.string.it_ran)
-                } else {
-                    getString(R.string.it_failed, ran.exitCode)
-                },
+        return said.toString()
+    }
+
+    /**
+     * The page an application wrote, rendered.
+     *
+     * **The interesting part is everything this view cannot do.** A
+     * WebAssembly application has no socket, so it writes a page rather than
+     * serving one — and the page is then displayed by a view with scripts off,
+     * file access off, network loads blocked, and no base URL. Markup a model
+     * wrote is untrusted content, and it is treated as content.
+     *
+     * Blocking network loads is not belt and braces. *This application holds
+     * `INTERNET`*, because generating needs it, and a `WebView` inherits that:
+     * without `blockNetworkLoads` a generated page could put what it was shown
+     * into the query string of an image and send it anywhere. The sandbox the
+     * application ran in has no sockets; the view that displays its output must
+     * not quietly supply one.
+     *
+     * That is also why showing somebody a user interface costs no network
+     * permission at all. The usual arrangement — an application serving a page
+     * on a port — needs one, and then the same permission lets it talk to
+     * anybody.
+     */
+    private fun page(ran: Ran): View {
+        val shown = WebView(this).apply {
+            settings.javaScriptEnabled = false
+            settings.allowFileAccess = false
+            settings.allowContentAccess = false
+            settings.blockNetworkLoads = true
+            settings.blockNetworkImage = true
+            isVerticalScrollBarEnabled = true
+            // No base URL. Without one every relative reference resolves to
+            // nothing, so a page cannot reach a file next to it or anywhere
+            // else — which is the point.
+            loadDataWithBaseURL(null, ran.output, "text/html", "utf-8", null)
+        }
+
+        if (ran.refused.isEmpty()) {
+            return shown
+        }
+
+        // What was granted and not given effect is said in Ephemeral's own
+        // voice, above the page, rather than inside content the application
+        // wrote — where it could be styled to look like anything at all.
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(quiet(getString(R.string.not_given, ran.refused.joinToString("\n"))))
+            addView(
+                shown,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    dp(360),
+                ),
             )
-            .setMessage(said.toString())
-            .setPositiveButton(R.string.close, null)
-            .show()
+        }
     }
 
     /** A capability that has been asked for, with the two answers to it. */

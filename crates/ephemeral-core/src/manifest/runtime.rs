@@ -72,6 +72,33 @@ impl RuntimeKind {
         matches!(self, Self::Docker | Self::Wasm | Self::Remote)
     }
 
+    /// Whether an application on this runtime is started from an image.
+    ///
+    /// Not the same question as [`RuntimeKind::is_containerised`], which asks
+    /// whether something confines the application. WebAssembly confines and has
+    /// no image; it has a module.
+    #[must_use]
+    pub fn runs_an_image(self) -> bool {
+        matches!(self, Self::Docker | Self::Remote)
+    }
+
+    /// Whether a web application on this runtime is reached over a port.
+    ///
+    /// A WebAssembly application has no socket to listen on, so "a web
+    /// application" there means one that *writes* a page for the host to
+    /// render. It needs no port, and — the part worth noticing — no network
+    /// permission either: showing somebody a user interface stops being
+    /// something an application has to be trusted with.
+    ///
+    /// Deliberately a separate question from [`RuntimeKind::runs_an_image`],
+    /// which happens to have the same answer today. Collapsing two questions
+    /// because their answers currently agree is how the next runtime added gets
+    /// the wrong one of them.
+    #[must_use]
+    pub fn serves_over_a_port(self) -> bool {
+        matches!(self, Self::Docker | Self::Remote)
+    }
+
     /// Whether the application executes on this device.
     ///
     /// The answer the interface must show honestly: if it is `false`, the user's
@@ -358,6 +385,21 @@ mod tests {
             RuntimeKind::Native
                 .describe_isolation()
                 .contains("less isolated")
+        );
+    }
+
+    /// A web application on WebAssembly needs no port, because there is
+    /// nothing to listen with. That is not a gap in the runtime — it is why
+    /// showing somebody a user interface there costs no network permission.
+    #[test]
+    fn a_page_written_by_a_module_needs_no_port_to_be_reachable_on() {
+        assert!(!RuntimeKind::Wasm.serves_over_a_port());
+        assert!(RuntimeKind::Docker.serves_over_a_port());
+
+        assert!(!RuntimeKind::Wasm.runs_an_image());
+        assert!(
+            RuntimeKind::Wasm.is_containerised(),
+            "having no image is not the same as confining nothing"
         );
     }
 

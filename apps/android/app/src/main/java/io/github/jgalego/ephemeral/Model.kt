@@ -159,6 +159,15 @@ data class Ran(
     val exitCode: Int,
     val output: String,
     /**
+     * How to show [output]: `"page"` or `"text"`.
+     *
+     * Decided by the engine from what the application declared itself to be,
+     * never here from the shape of the bytes. A screen that sniffed for a
+     * leading `<` would render a comparison's first line of markup as a
+     * document, and a document beginning with a newline as text.
+     */
+    val presentation: String,
+    /**
      * Access somebody granted that the runtime will not give effect to.
      *
      * Shown rather than swallowed. Somebody who allowed an application to read
@@ -167,6 +176,9 @@ data class Ran(
      */
     val refused: List<String>,
 ) {
+    /** Whether this is meant to be rendered rather than read. */
+    fun isPage() = presentation == "page"
+
     companion object {
         fun from(json: JSONObject): Ran {
             val refused = json.optJSONArray("refused") ?: JSONArray()
@@ -174,6 +186,7 @@ data class Ran(
                 succeeded = json.optBoolean("succeeded"),
                 exitCode = json.optInt("exit_code"),
                 output = json.optString("output"),
+                presentation = json.optString("presentation").ifBlank { "text" },
                 refused = (0 until refused.length()).map { refused.optString(it) },
             )
         }

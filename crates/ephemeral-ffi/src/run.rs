@@ -26,7 +26,7 @@ use std::time::Duration;
 
 use ephemeral_core::{
     AppId,
-    manifest::RuntimeKind,
+    manifest::{AppInterface, RuntimeKind},
     storage::{AppStore as _, Workspace},
 };
 use ephemeral_runtime::{
@@ -48,6 +48,14 @@ pub(crate) struct Ran {
 
     /// Everything it printed, both streams, whole.
     pub output: String,
+
+    /// How the output is meant to be shown: `"page"` or `"text"`.
+    ///
+    /// From the application's declared interface, decided once here rather than
+    /// by each client guessing from the shape of the bytes. A host that sniffed
+    /// for a leading `<` would render a CSV comparison's first line of markup
+    /// as a page, and a page whose first character was a newline as text.
+    pub presentation: &'static str,
 
     /// Access the person granted that this runtime will not give effect to.
     ///
@@ -139,11 +147,26 @@ pub(crate) fn run(
         .map_err(|error| error.to_string())?;
 
     Ok(Ran {
+        presentation: presentation(runtime.interface),
         succeeded: completed.succeeded,
         exit_code: completed.exit_code,
         output: completed.output,
         refused,
     })
+}
+
+/// How an application's output is meant to be shown.
+///
+/// A WebAssembly application has no socket and no server, so "a web
+/// application" here means one that *writes a page* — the host renders what it
+/// printed. That is not a lesser version of a web application on this runtime;
+/// it is the only version, and it is why serving a UI needs no network
+/// permission at all.
+fn presentation(interface: AppInterface) -> &'static str {
+    match interface {
+        AppInterface::Web => "page",
+        _ => "text",
+    }
 }
 
 /// How long this application may run here.
@@ -167,6 +190,30 @@ fn allowance(manifest: &ephemeral_core::AppManifest) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A web application on this runtime is one that writes a page. There is
+    /// no socket to listen on and no server to be, so the host renders what it
+    /// printed — which is why showing a UI costs no network permission.
+    #[test]
+    fn a_web_application_says_its_output_is_a_page() {
+        assert_eq!(presentation(AppInterface::Web), "page");
+    }
+
+    /// And everything else is text, including the shapes that might *look*
+    /// like a page. Deciding this from the declaration rather than from the
+    /// bytes is what stops a comparison whose first line happens to be markup
+    /// from being rendered as a document.
+    #[test]
+    fn everything_that_is_not_a_web_application_is_text() {
+        for interface in [
+            AppInterface::CommandLine,
+            AppInterface::Job,
+            AppInterface::Worker,
+            AppInterface::Api,
+        ] {
+            assert_eq!(presentation(interface), "text", "{interface}");
+        }
+    }
 
     /// A manifest written for a desktop does not get a desktop's patience.
     #[test]

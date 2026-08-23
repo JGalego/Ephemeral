@@ -384,7 +384,7 @@ impl AppManifest {
                 // arrived at the end, after the source on disk had already gone
                 // back, which is the half-done state the operation is written
                 // to avoid.
-                if runtime.kind.is_containerised()
+                if runtime.kind.runs_an_image()
                     && runtime.image.is_none()
                     && self.lifecycle.state().is_runnable()
                 {
@@ -396,7 +396,28 @@ impl AppManifest {
                         ),
                     ));
                 }
-                if runtime.interface == AppInterface::Web && runtime.port.is_none() {
+                // The same requirement for the runtime that has a module rather
+                // than an image. An application that can be started and does not
+                // say what to start is the same hole either way.
+                if runtime.kind == RuntimeKind::Wasm
+                    && runtime.program.is_none()
+                    && self.lifecycle.state().is_runnable()
+                {
+                    return Err(ManifestError::invalid(
+                        "runtime.program",
+                        format!(
+                            "an application that is {} has to say which file to run",
+                            self.lifecycle.state()
+                        ),
+                    ));
+                }
+                // Only where a web application is something that listens. On
+                // WebAssembly it is something that writes a page, which needs
+                // no port — and no network permission.
+                if runtime.interface == AppInterface::Web
+                    && runtime.kind.serves_over_a_port()
+                    && runtime.port.is_none()
+                {
                     return Err(ManifestError::invalid(
                         "runtime.port",
                         "a web application needs a port to be reachable on",

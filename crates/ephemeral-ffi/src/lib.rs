@@ -1138,14 +1138,23 @@ mod tests {
     /// Written as WebAssembly text and assembled here rather than committed as
     /// a blob, because what the bytes do is the entire question.
     fn install(home: &std::path::Path, id: &str, text: &str) -> AppId {
+        install_as(home, id, text, ephemeral_core::manifest::AppInterface::Job)
+    }
+
+    fn install_as(
+        home: &std::path::Path,
+        id: &str,
+        text: &str,
+        interface: ephemeral_core::manifest::AppInterface,
+    ) -> AppId {
         let app = AppId::parse(id).unwrap();
         let mut workspace = Workspace::open(home).unwrap();
 
         let mut manifest = ephemeral_core::AppManifest::requested(app.clone(), id);
-        manifest.runtime = Some(ephemeral_core::manifest::RuntimeSpec::wasm_job(
-            "program.wasm",
-            Vec::new(),
-        ));
+        let mut runtime =
+            ephemeral_core::manifest::RuntimeSpec::wasm_job("program.wasm", Vec::new());
+        runtime.interface = interface;
+        manifest.runtime = Some(runtime);
 
         let source = workspace.layout().app(&app).source();
         std::fs::create_dir_all(&source).unwrap();
@@ -1195,6 +1204,69 @@ mod tests {
 
         unsafe { ephemeral_close(handle) };
     }
+
+    /// **Tier one: an application that returns a page.**
+    ///
+    /// A WebAssembly application has no socket and cannot be a server, so a
+    /// "web application" here is one that *writes* a page and lets the host
+    /// render it. That is not a lesser version of the idea — it is why showing
+    /// somebody a user interface costs no network permission at all.
+    #[test]
+    fn an_application_can_return_a_page_without_a_server() {
+        let home = tempfile::tempdir().unwrap();
+        install_as(
+            home.path(),
+            "tally",
+            WRITES_A_PAGE,
+            ephemeral_core::manifest::AppInterface::Web,
+        );
+        let handle = open(home.path());
+
+        let ran = text(unsafe { ephemeral_run(handle, c("tally").as_ptr(), c("[]").as_ptr()) });
+        let ran: Value = serde_json::from_str(&ran).unwrap();
+
+        assert_eq!(ran["succeeded"], true);
+        assert_eq!(
+            ran["presentation"], "page",
+            "so a host knows to render it rather than print it"
+        );
+        assert!(
+            ran["output"].as_str().unwrap().contains("<h1>"),
+            "{}",
+            ran["output"]
+        );
+
+        unsafe { ephemeral_close(handle) };
+    }
+
+    /// The same output from an application that did not declare itself a web
+    /// application is text. Deciding from the declaration rather than from the
+    /// bytes is what stops a comparison whose first line happens to be markup
+    /// from being rendered as a document.
+    #[test]
+    fn markup_from_an_application_that_is_not_a_page_stays_text() {
+        let home = tempfile::tempdir().unwrap();
+        install(home.path(), "tally", WRITES_A_PAGE);
+        let handle = open(home.path());
+
+        let ran = text(unsafe { ephemeral_run(handle, c("tally").as_ptr(), c("[]").as_ptr()) });
+        let ran: Value = serde_json::from_str(&ran).unwrap();
+
+        assert_eq!(ran["presentation"], "text");
+
+        unsafe { ephemeral_close(handle) };
+    }
+
+    /// Writes a small page and stops.
+    const WRITES_A_PAGE: &str = r#"(module
+      (import "wasi_snapshot_preview1" "fd_write"
+        (func $write (param i32 i32 i32 i32) (result i32)))
+      (memory (export "memory") 1)
+      (data (i32.const 32) "<h1>4 rows differ</h1>")
+      (func (export "_start")
+        (i32.store (i32.const 0) (i32.const 32))
+        (i32.store (i32.const 4) (i32.const 22))
+        (drop (call $write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 16)))))"#;
 
     /// An application that fails is an answer, not a failure of the call. A
     /// host that treated a non-zero exit as an error would hide every message
