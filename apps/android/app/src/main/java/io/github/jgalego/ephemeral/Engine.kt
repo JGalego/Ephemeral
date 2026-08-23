@@ -204,7 +204,11 @@ internal object Engine {
 
         val opened = Native.open(home.absolutePath, Https)
         if (opened == 0L) {
-            throw EphemeralFailure("Ephemeral could not open its files on this phone.")
+            // Asked, rather than assumed. There are six ways opening can fail
+            // and they used to be one sentence that named none of them — which
+            // is exactly what a real phone showed, and it took reading the
+            // bridge's source to narrow it down at all.
+            throw EphemeralFailure(Native.lastError(0L) ?: "Ephemeral could not start, and did not say why.")
         }
         session = opened
 

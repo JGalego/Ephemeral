@@ -7,6 +7,7 @@
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr;
+use std::sync::Mutex;
 
 use jni::objects::{GlobalRef, JClass, JObject, JString, JValue};
 use jni::sys::{jboolean, jint, jlong, jstring};
@@ -79,6 +80,23 @@ fn opened<'a>(session: jlong) -> Option<&'a Session> {
 /// Runs a body, turning a panic into a failure rather than an unwind into Java.
 fn guarded<T>(fallback: T, body: impl FnOnce() -> T) -> T {
     catch_unwind(AssertUnwindSafe(body)).unwrap_or(fallback)
+}
+
+/// Why the last attempt to open failed.
+///
+/// Every other call reports through the session's own error slot, which is no
+/// use for the one call that fails by not producing a session. `open` had six
+/// distinct ways to return zero and no way to say which, so a phone that could
+/// not start said "Ephemeral could not open its files" and stopped there —
+/// which is what a real device did, and it took a code read to even narrow it.
+static WHY_OPEN_FAILED: Mutex<Option<String>> = Mutex::new(None);
+
+/// Records why, for `lastError(0)` to hand back.
+fn opening_failed(reason: String) -> jlong {
+    if let Ok(mut slot) = WHY_OPEN_FAILED.lock() {
+        *slot = Some(reason);
+    }
+    0
 }
 
 // ---------------------------------------------------------------------------
@@ -197,33 +215,44 @@ pub extern "system" fn Java_io_github_jgalego_ephemeral_Native_open<'local>(
     home: JString<'local>,
     transport: JObject<'local>,
 ) -> jlong {
-    guarded(0, || {
-        let Some(home) = text(&mut env, &home) else {
-            return 0;
-        };
-        let Ok(home) = CString::new(home) else {
-            return 0;
-        };
-        let (Ok(vm), Ok(transport)) = (env.get_java_vm(), env.new_global_ref(transport)) else {
-            return 0;
-        };
+    guarded(
+        opening_failed("Opening Ephemeral panicked.".to_owned()),
+        || {
+            let Some(home) = text(&mut env, &home) else {
+                return opening_failed(
+                    "The path given for Ephemeral's files is unreadable.".to_owned(),
+                );
+            };
+            let Ok(home_c) = CString::new(home.clone()) else {
+                return opening_failed(format!("The path {home} cannot be passed to the engine."));
+            };
+            let home = home_c;
+            let (Ok(vm), Ok(transport)) = (env.get_java_vm(), env.new_global_ref(transport)) else {
+                return opening_failed(
+                    "The Java runtime would not lend a reference to the transport.".to_owned(),
+                );
+            };
 
-        let host = Box::into_raw(Box::new(Host { vm, transport }));
+            let host = Box::into_raw(Box::new(Host { vm, transport }));
 
-        // SAFETY: `home` is NUL-terminated, and `host` stays alive until
-        // `close` releases it — after the handle it belongs to.
-        let ephemeral =
-            unsafe { ephemeral_ffi::ephemeral_open(home.as_ptr(), send, release, host.cast()) };
+            // SAFETY: `home` is NUL-terminated, and `host` stays alive until
+            // `close` releases it — after the handle it belongs to.
+            let ephemeral =
+                unsafe { ephemeral_ffi::ephemeral_open(home.as_ptr(), send, release, host.cast()) };
 
-        if ephemeral.is_null() {
-            // SAFETY: nothing took ownership of it, so this crate still has it.
-            drop(unsafe { Box::from_raw(host) });
-            return 0;
-        }
+            if ephemeral.is_null() {
+                // SAFETY: nothing took ownership of it, so this crate still has it.
+                drop(unsafe { Box::from_raw(host) });
+                return opening_failed("The engine refused the path it was given.".to_owned());
+            }
 
-        let session = Box::into_raw(Box::new(Session { ephemeral, host }));
-        jlong::try_from(session as usize).unwrap_or(0)
-    })
+            let session = Box::into_raw(Box::new(Session { ephemeral, host }));
+            match jlong::try_from(session as usize) {
+                Ok(handle) => handle,
+                Err(_) => opening_failed("The session does not fit in a Java long.".to_owned()),
+            }
+        },
+    )
 }
 
 /// Closes a session. Passing 0 is allowed and does nothing.
@@ -286,7 +315,16 @@ pub extern "system" fn Java_io_github_jgalego_ephemeral_Native_lastError<'local>
 ) -> jstring {
     guarded(ptr::null_mut(), || {
         let Some(open) = opened(session) else {
-            return ptr::null_mut();
+            // No session, so the question can only be about the attempt to make
+            // one. Answering "nothing went wrong" here is how a phone that
+            // could not start came to say nothing about why.
+            let said = WHY_OPEN_FAILED.lock().ok().and_then(|slot| slot.clone());
+            return match said {
+                Some(reason) => env
+                    .new_string(reason)
+                    .map_or(ptr::null_mut(), jni::objects::JString::into_raw),
+                None => ptr::null_mut(),
+            };
         };
         // SAFETY: live handle.
         let produced = unsafe { ephemeral_ffi::ephemeral_last_error(open.ephemeral) };
