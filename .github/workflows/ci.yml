@@ -303,6 +303,35 @@ jobs:
       # screens compile.
       - run: gradle assembleDebug --no-daemon
         working-directory: apps/android
+      # A generated application's page is displayed in a WebView, and this
+      # application holds INTERNET because generating needs it. A WebView
+      # inherits that: with scripts on, or with network loads unblocked, a page
+      # a model wrote could send what it was shown anywhere — through fetch, or
+      # through the query string of an image. The sandbox the application ran in
+      # has no sockets, and the view that displays its output must not supply
+      # one. No test can see this; a grep can.
+      - name: The page a generated application wrote cannot phone home
+        run: |
+          view=apps/android/app/src/main/java/io/github/jgalego/ephemeral/DetailActivity.kt
+          if grep -nE 'javaScriptEnabled\s*=\s*true' "$view"; then
+            echo "Scripts were enabled in the view that renders generated markup."
+            exit 1
+          fi
+          for locked in \
+            'javaScriptEnabled = false' \
+            'blockNetworkLoads = true' \
+            'allowFileAccess = false' \
+            'allowContentAccess = false'; do
+            if ! grep -qF "$locked" "$view"; then
+              echo "The WebView no longer sets: $locked"
+              exit 1
+            fi
+          done
+          if ! grep -qF 'loadDataWithBaseURL(null,' "$view"; then
+            echo "The page is loaded with a base URL, so relative references resolve."
+            exit 1
+          fi
+          echo "A generated page is rendered with nothing to reach out with."
 
   # The iOS application is Swift, and Swift for iOS needs a Mac. Nothing in
   # this repository could compile it, so until this job existed the only Swift
