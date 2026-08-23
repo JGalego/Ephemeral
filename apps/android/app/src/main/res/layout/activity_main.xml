@@ -2,6 +2,7 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="@color/ground"
     android:orientation="vertical">
 
     <FrameLayout
@@ -13,66 +14,89 @@
             android:id="@+id/applications"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:divider="@color/surface"
-            android:dividerHeight="1dp"
-            android:paddingTop="8dp" />
+            android:clipToPadding="false"
+            android:divider="@null"
+            android:dividerHeight="0dp"
+            android:paddingTop="10dp"
+            android:paddingBottom="10dp"
+            android:scrollbarStyle="outsideOverlay" />
 
         <TextView
             android:id="@+id/nothing_yet"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_gravity="center_vertical"
+            android:lineSpacingMultiplier="1.3"
             android:padding="32dp"
             android:text="@string/nothing_yet"
-            android:textColor="@color/quiet"
+            android:textColor="@color/ink_quiet"
             android:textSize="16sp"
             android:visibility="gone" />
     </FrameLayout>
 
+    <!-- Anything that went wrong sits directly above the control that caused
+         it, so it cannot be rendered somewhere nobody is looking. -->
     <TextView
         android:id="@+id/status"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="@color/surface"
-        android:padding="12dp"
-        android:textColor="@color/care"
+        android:background="@color/high_soft"
+        android:padding="14dp"
+        android:textColor="@color/high"
         android:textSize="14sp"
         android:visibility="gone" />
 
+    <!-- The front door. It sits at the bottom because that is where a thumb
+         is, and it is the one filled control on this screen: asking for an
+         application grants nothing. -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:background="@color/surface"
-        android:orientation="horizontal"
-        android:padding="8dp">
+        android:orientation="vertical"
+        android:paddingHorizontal="16dp"
+        android:paddingTop="14dp"
+        android:paddingBottom="12dp">
 
-        <EditText
-            android:id="@+id/intent"
-            android:layout_width="0dp"
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:hint="@string/intent_hint"
-            android:importantForAutofill="no"
-            android:inputType="textCapSentences|textMultiLine"
-            android:maxLines="4"
-            android:textColor="@color/text"
-            android:textColorHint="@color/quiet" />
+            android:gravity="bottom"
+            android:orientation="horizontal">
 
-        <Button
-            android:id="@+id/create"
-            android:layout_width="wrap_content"
+            <EditText
+                android:id="@+id/intent"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:background="@drawable/field"
+                android:hint="@string/intent_hint"
+                android:importantForAutofill="no"
+                android:inputType="textCapSentences|textMultiLine"
+                android:maxLines="4"
+                android:minHeight="48dp"
+                android:paddingHorizontal="14dp"
+                android:paddingVertical="10dp"
+                android:textColor="@color/ink"
+                android:textColorHint="@color/ink_faint"
+                android:textSize="15sp" />
+
+            <Button
+                android:id="@+id/create"
+                style="@style/EphemeralButton.Primary"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:text="@string/create" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/create" />
+            android:paddingTop="10dp"
+            android:text="@string/phone_limits"
+            android:textColor="@color/ink_quiet"
+            android:textSize="12sp" />
     </LinearLayout>
-
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:background="@color/surface"
-        android:paddingHorizontal="12dp"
-        android:paddingBottom="10dp"
-        android:text="@string/phone_limits"
-        android:textColor="@color/quiet"
-        android:textSize="12sp" />
 
 </LinearLayout>

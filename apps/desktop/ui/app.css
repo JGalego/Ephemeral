@@ -1,51 +1,218 @@
-/* Deliberately small and dependency-free. A desktop shell that pulled in a
-   framework would carry a build step and a supply chain for a window that
-   shows a list. */
+/* How the window looks.
+ *
+ * Deliberately small and dependency-free. A desktop shell that pulled in a
+ * framework would carry a build step and a supply chain for a window that
+ * shows a list.
+ *
+ * Every colour here comes from `tokens.css`, which is generated from
+ * `crates/ephemeral-design` and shared with the phone. Nothing in this file
+ * may name a colour directly: a hex here is a hex the contrast tests never
+ * see, and risk is carried by colour in this window.
+ *
+ * The rules that look oddly specific are not fussiness. Each one is a bug a
+ * film of this window found, and the comment above it says which. */
+
+/* Dimensions and motion, which are this client's own — a phone lays itself out
+   in dp and shares nothing but the palette. */
 :root {
-  --ink: #1a1a1a;
-  --quiet: #666;
-  --edge: #e2e2e2;
-  --low: #2f7d4f;
-  --medium: #a06a10;
-  --high: #b1400f;
-  --critical: #96122b;
+  --gap: 0.75rem;
+  --pad: 1.1rem;
+  --radius: 14px;
+  --radius-small: 9px;
+  --column: 58rem;
+
+  --lift: 0 1px 2px rgb(0 0 0 / 20%), 0 8px 24px rgb(0 0 0 / 14%);
+  --lift-high: 0 2px 6px rgb(0 0 0 / 24%), 0 18px 48px rgb(0 0 0 / 26%);
+  --quick: 130ms cubic-bezier(0.2, 0, 0.2, 1);
 }
 
 * { box-sizing: border-box; }
 
-body {
-  margin: 0;
-  padding: 2rem;
-  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
-  color: var(--ink);
-  max-width: 52rem;
+/* Somebody reading a permission prompt is deciding something. Nothing on this
+   page may move while they are doing that, so the only motion here is on
+   hover and focus — and none at all for anybody who has asked for none. */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
 }
 
-h1 { margin: 0; font-size: 1.5rem; }
-.tagline { margin: 0.25rem 0 2rem; color: var(--quiet); }
+html { background: var(--ground); }
+
+body {
+  margin: 0;
+  padding: 0 1.5rem 4rem;
+  font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--ink);
+  background: var(--ground);
+  /* A single wash of the accent behind the top of the page, so the window has
+     a horizon rather than being one flat rectangle. It sits behind everything
+     and is fixed, so scrolling does not drag it around. */
+  background-image: radial-gradient(
+    120% 42rem at 50% -16rem,
+    var(--accent-soft) 0%,
+    transparent 70%
+  );
+  background-attachment: fixed;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* One column, centred. A window can be dragged to any width; a paragraph that
+   grows with it stops being readable at about ninety characters. */
+body > header,
+body > main {
+  max-width: var(--column);
+  margin: 0 auto;
+}
+
+body > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 2rem 0 1.75rem;
+}
+
+/* Quiet, in the corner, and never in the way of the thing somebody opened the
+   window to do. An appearance control that competes with a permission prompt
+   for attention has its priorities the wrong way round. */
+#appearance {
+  flex: none;
+  padding: 0.28rem 0.85rem;
+  background: transparent;
+  border-color: var(--edge);
+  color: var(--ink-quiet);
+  font-size: 0.85rem;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.4rem;
+  letter-spacing: -0.015em;
+}
+
+/* The wordmark carries a mark of its own, so the window is recognisable from
+   the dock at a glance rather than only by its title. */
+h1::before {
+  content: "";
+  display: inline-block;
+  width: 0.62em;
+  height: 0.62em;
+  margin-right: 0.5em;
+  border-radius: 3px;
+  background: var(--accent);
+  transform: rotate(45deg) translateY(-0.06em);
+}
+
+.tagline {
+  margin: 0.3rem 0 0;
+  color: var(--ink-quiet);
+  font-size: 0.95rem;
+}
 
 ul { list-style: none; margin: 0; padding: 0; }
 
-li.application {
-  border: 1px solid var(--edge);
-  border-radius: 8px;
-  padding: 1rem;
-  margin-bottom: 0.75rem;
+/* Anything you can operate says so when the keyboard reaches it. A window
+   whose focus is invisible is a window that can only be used with a mouse. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
-.name { font-weight: 600; }
-.purpose, .state { color: var(--quiet); font-size: 0.9rem; }
+::selection {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* --- the list ------------------------------------------------------------ */
+
+li.application {
+  border: 1px solid var(--edge);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: var(--pad);
+  margin-bottom: var(--gap);
+  cursor: pointer;
+  transition:
+    border-color var(--quick),
+    transform var(--quick),
+    box-shadow var(--quick);
+}
+
+li.application:hover {
+  border-color: var(--edge-strong);
+  transform: translateY(-1px);
+  box-shadow: var(--lift);
+}
+
+.name { font-weight: 600; letter-spacing: -0.005em; }
+.purpose { color: var(--ink-quiet); font-size: 0.9rem; margin-top: 0.15rem; }
+
+/* Where an application is in its life, as a pill with a dot rather than a grey
+   sentence. "Ready" and "Running" differ by one word and by everything that
+   matters, and a film of this window showed both drawn identically — the same
+   size, the same grey, one under the other down the list. The colour comes
+   from the state's *kind*, which the service layer already carries, so the
+   window is not inventing a second opinion about which states are alarming. */
+.state {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42em;
+  margin-top: 0.5rem;
+  padding: 0.12rem 0.6rem 0.12rem 0.5rem;
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  background: var(--ground);
+  color: var(--ink-quiet);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.state::before {
+  content: "";
+  width: 0.42em;
+  height: 0.42em;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+[data-state="working"] > .state { color: var(--accent); }
+[data-state="awaitinguser"] > .state { color: var(--medium); }
+[data-state="idle"] > .state { color: var(--ink-quiet); }
+[data-state="active"] > .state { color: var(--low); }
+[data-state="attention"] > .state { color: var(--high); }
+[data-state="archived"] > .state,
+[data-state="deleted"] > .state { color: var(--ink-faint); }
+
+/* Something Ephemeral is doing right now pulses, quietly. Generation takes
+   minutes and the window is otherwise perfectly still while it happens, which
+   reads as nothing happening at all. */
+[data-state="working"] > .state::before {
+  animation: breathe 2.2s ease-in-out infinite;
+}
+
+@keyframes breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
 
 /* An application waiting on a decision is the thing a person most needs to
    notice, so it is the only thing on the list that shouts. */
 .awaiting {
   display: inline-block;
   margin-left: 0.5rem;
-  padding: 0.05rem 0.5rem;
+  padding: 0.08rem 0.55rem;
   border-radius: 999px;
   background: var(--high);
-  color: white;
-  font-size: 0.8rem;
+  color: var(--ground);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  vertical-align: 0.05em;
 }
 
 .isolated { color: var(--low); font-size: 0.9rem; }
@@ -55,14 +222,33 @@ li.application {
 .risk-high { color: var(--high); }
 .risk-critical { color: var(--critical); font-weight: 600; }
 
-.reason { color: var(--quiet); font-style: italic; }
+.reason { color: var(--ink-quiet); font-style: italic; }
 .no-reason { color: var(--high); }
 
 /* The risk colour belongs on what a permission would let an application do, not
    on the sentence reassuring you it can be undone. Rendered in crimson bold
    next to a critical request, "You can take this back at any time" reads as a
    warning, which is the opposite of what it says. */
-.revocable { color: var(--quiet); font-weight: 400; }
+.revocable { color: var(--ink-quiet); font-weight: 400; }
+
+/* What an application already holds, said quietly on the list — loud enough to
+   separate "reads one folder" from "can reach anywhere", quiet enough not to
+   compete with the badge for something still waiting on an answer. */
+.grants {
+  font-size: 0.85rem;
+  margin-top: 0.4rem;
+}
+
+.empty { color: var(--ink-quiet); }
+
+li.empty {
+  border: 1px dashed var(--edge);
+  border-radius: var(--radius);
+  padding: 1.5rem var(--pad);
+  text-align: center;
+}
+
+/* --- what floats over the page ------------------------------------------- */
 
 /* Pinned to the viewport rather than dropped at the end of the page. A film of
    this window showed somebody type the wrong word into a critical permission,
@@ -78,155 +264,11 @@ li.application {
   max-width: min(40rem, calc(100vw - 2rem));
   margin: 0;
   border: 1px solid var(--high);
-  border-radius: 8px;
-  padding: 0.75rem 1rem;
-  background: #fff6f4;
+  border-radius: var(--radius);
+  padding: 0.8rem 1.1rem;
+  background: var(--high-soft);
   color: var(--high);
-  box-shadow: 0 2px 12px rgb(0 0 0 / 12%);
-}
-
-/* What an application already holds, said quietly on the list — loud enough to
-   separate "reads one folder" from "can reach anywhere", quiet enough not to
-   compete with the badge for something still waiting on an answer. */
-.grants {
-  font-size: 0.85rem;
-  margin-top: 0.25rem;
-}
-
-.empty { color: var(--quiet); }
-
-/* A granted permission and an unanswered one must not look the same. Looking at
-   the first recording of this window is what showed that they did. */
-li.permission {
-  border-left: 3px solid currentColor;
-  padding: 0.5rem 0 0.5rem 0.75rem;
-  margin-bottom: 1rem;
-  list-style: none;
-}
-
-/* Held is marked by the tick, the tinted ground and the control offering to
-   take it back — never by recolouring the risk. Granting something does not
-   make it safer, and the first version of this rule painted a green stripe over
-   an application that had just been allowed to reach the entire internet, then
-   faded it to 75% for good measure. A film of the window is what showed it:
-   the most dangerous grant on the page was the calmest thing on screen. The
-   tint is neutral grey precisely so it cannot be read as reassurance. */
-li.permission.held {
-  background: #f6f6f6;
-  border-radius: 0 5px 5px 0;
-}
-
-li.permission.held .wants::before {
-  content: "✓ ";
-  color: var(--low);
-}
-
-h3.holds, h3.waiting { font-size: 0.95rem; margin: 1.5rem 0 0.5rem; }
-h3.waiting { color: var(--high); }
-
-.decide { margin-top: 0.4rem; }
-.decide button, .decide input {
-  font: inherit;
-  padding: 0.2rem 0.7rem;
-  margin-right: 0.4rem;
-  border: 1px solid var(--edge);
-  border-radius: 5px;
-  background: white;
-  cursor: pointer;
-}
-.decide input { cursor: text; min-width: 9rem; }
-.decide button.deny, .decide button.revoke { color: var(--quiet); }
-
-/* The detail replaces the list rather than piling up under it. */
-#applications[hidden] { display: none; }
-#compose[hidden], #detail[hidden] { display: none; }
-
-/* The front door, so it reads as one. Until this existed the window could show
-   applications and answer their questions but not start one, which meant the
-   first thing anybody had to do with a graphical application was open a
-   terminal. */
-form.composer {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  margin-bottom: 1.75rem;
-}
-
-form.composer label.ask {
-  font-weight: 600;
-}
-
-form.composer textarea.intent {
-  font: inherit;
-  padding: 0.6rem 0.7rem;
-  border: 1px solid var(--edge);
-  border-radius: 6px;
-  resize: vertical;
-  min-height: 3.2rem;
-}
-
-form.composer button.create {
-  font: inherit;
-  align-self: flex-start;
-  padding: 0.35rem 1.1rem;
-  border: 1px solid var(--edge);
-  border-radius: 6px;
-  background: white;
-  cursor: pointer;
-}
-
-/* Disabled while a creation is in flight, so it has to look disabled. */
-form.composer button.create:disabled {
-  color: var(--quiet);
-  cursor: progress;
-}
-
-/* Quiet, but present before somebody asks rather than after they have waited. */
-form.composer p.note {
-  margin: 0;
-  font-size: 0.85rem;
-  color: var(--quiet);
-}
-
-/* What an application has been. Quiet by default: the version somebody is on is
-   rarely what they came for, and the list of the ones they are not on is never
-   what they came for. */
-h3.history { font-size: 0.95rem; margin: 1.5rem 0 0.5rem; }
-
-li.version {
-  border-left: 3px solid var(--edge);
-  padding: 0.4rem 0 0.4rem 0.75rem;
-  margin-bottom: 0.75rem;
-}
-
-li.version.current { border-left-color: var(--low); }
-
-li.version .what { font-variant-numeric: tabular-nums; }
-li.version .now { color: var(--low); font-size: 0.9rem; }
-
-/* A version whose source is gone is drawn as an absence rather than a warning.
-   Nothing is wrong; there is simply nothing to go back to. */
-li.version .gone { color: var(--quiet); font-size: 0.9rem; }
-
-.revert { margin-top: 0.4rem; }
-.revert button {
-  font: inherit;
-  padding: 0.2rem 0.7rem;
-  margin-right: 0.4rem;
-  border: 1px solid var(--edge);
-  border-radius: 5px;
-  background: white;
-  cursor: pointer;
-}
-.revert button.cancel-rollback { color: var(--quiet); }
-.revert button:disabled { color: var(--quiet); cursor: progress; }
-
-/* Said before the click, not after it. Rolling back clears a build and can take
-   permissions away, and neither is undone by clicking again. */
-.revert .consequence {
-  margin: 0 0 0.5rem;
-  font-size: 0.9rem;
-  color: var(--medium);
+  box-shadow: var(--lift-high);
 }
 
 /* Pinned like the problem banner, for the same reason: what a rollback took
@@ -240,30 +282,58 @@ li.version .gone { color: var(--quiet); font-size: 0.9rem; }
   transform: translateX(-50%);
   z-index: 9;
   max-width: min(40rem, calc(100vw - 2rem));
-  border: 1px solid var(--edge);
-  border-radius: 8px;
-  padding: 0.75rem 1rem;
-  background: #f7f9f8;
-  box-shadow: 0 2px 12px rgb(0 0 0 / 12%);
+  border: 1px solid var(--edge-strong);
+  border-radius: var(--radius);
+  padding: 0.9rem 1.1rem;
+  background: var(--surface-high);
+  box-shadow: var(--lift-high);
 }
 
 .notice p { margin: 0 0 0.4rem; }
 .notice p:last-child { margin-bottom: 0; }
 .notice .headline { font-weight: 600; }
 .notice .caution { color: var(--medium); }
-.notice .note { color: var(--quiet); font-size: 0.9rem; }
+.notice .note { color: var(--ink-quiet); font-size: 0.9rem; }
 
-/* Something this long, pinned over the page, needs a way to be put down. */
-.notice button.dismiss {
-  font: inherit;
-  margin-top: 0.4rem;
-  padding: 0.15rem 0.7rem;
-  border: 1px solid var(--edge);
-  border-radius: 5px;
-  background: white;
-  color: var(--quiet);
-  cursor: pointer;
+/* --- permissions ---------------------------------------------------------- */
+
+/* A granted permission and an unanswered one must not look the same. Looking at
+   the first recording of this window is what showed that they did. */
+li.permission {
+  border-left: 3px solid currentColor;
+  padding: 0.6rem 0 0.6rem 0.85rem;
+  margin-bottom: 1rem;
+  list-style: none;
 }
+
+/* Held is marked by the tick, the tinted ground and the control offering to
+   take it back — never by recolouring the risk. Granting something does not
+   make it safer, and the first version of this rule painted a green stripe over
+   an application that had just been allowed to reach the entire internet, then
+   faded it to 75% for good measure. A film of the window is what showed it:
+   the most dangerous grant on the page was the calmest thing on screen. The
+   tint is the ordinary surface precisely so it cannot be read as reassurance. */
+li.permission.held {
+  background: var(--surface);
+  border-radius: 0 var(--radius-small) var(--radius-small) 0;
+  padding-right: 0.85rem;
+}
+
+li.permission.held .wants::before {
+  content: "✓ ";
+  color: var(--low);
+}
+
+h3.holds, h3.waiting {
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-quiet);
+  margin: 1.75rem 0 0.75rem;
+}
+
+h3.waiting { color: var(--high); }
 
 /* A capability the person allowed that Ephemeral itself may not carry out. It
    is held and it does nothing, and it must look like neither an active grant
@@ -276,11 +346,164 @@ li.permission.inert {
 
 li.permission.inert .wants::before {
   content: "○ ";
-  color: var(--quiet);
+  color: var(--ink-quiet);
 }
 
 li.permission.inert .blocked {
   color: var(--medium);
+  font-size: 0.9rem;
+}
+
+/* --- controls ------------------------------------------------------------- */
+
+/* One shape for everything you can press. The differences that follow are
+   about what a button *does*, never about which one this window would prefer
+   you pressed. */
+button,
+.decide input,
+form.composer textarea.intent,
+form.run input.arguments,
+.actions select {
+  font: inherit;
+  border: 1px solid var(--edge-strong);
+  border-radius: var(--radius-small);
+  background: var(--surface-high);
+  color: var(--ink);
+  transition:
+    border-color var(--quick),
+    background-color var(--quick),
+    color var(--quick);
+}
+
+button {
+  padding: 0.32rem 0.85rem;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+button:disabled {
+  color: var(--ink-faint);
+  border-color: var(--edge);
+  cursor: progress;
+}
+
+.decide input,
+form.composer textarea.intent,
+form.run input.arguments {
+  padding: 0.5rem 0.7rem;
+}
+
+.decide input:focus,
+form.composer textarea.intent:focus,
+form.run input.arguments:focus {
+  border-color: var(--accent);
+}
+
+/* Allow and Deny are drawn the same. A window that made the permissive answer
+   the pretty one would be collecting consent rather than asking for it, which
+   is the whole thing this project exists to avoid — so nothing in `.decide`
+   gets the primary treatment, and the one below it is a filled button only
+   because creating an application grants nothing at all. */
+.decide { margin-top: 0.5rem; display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+.decide input { cursor: text; min-width: 9rem; }
+.decide button.deny, .decide button.revoke { color: var(--ink-quiet); }
+.decide button.deny:hover, .decide button.revoke:hover { color: var(--ink); }
+
+/* The detail replaces the list rather than piling up under it. */
+#applications[hidden] { display: none; }
+#compose[hidden], #detail[hidden] { display: none; }
+
+/* --- the front door -------------------------------------------------------- */
+
+/* So it reads as one. Until this existed the window could show applications and
+   answer their questions but not start one, which meant the first thing anybody
+   had to do with a graphical application was open a terminal. */
+form.composer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-bottom: 2rem;
+  padding: var(--pad);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--lift);
+}
+
+form.composer label.ask {
+  font-weight: 600;
+}
+
+form.composer textarea.intent {
+  resize: vertical;
+  min-height: 3.4rem;
+  background: var(--ground);
+}
+
+/* The only filled button on the page. Asking for an application is the one
+   action here that gives nothing away: nothing is written, nothing runs, and
+   no permission is granted until somebody says so later, on a page of its
+   own. */
+form.composer button.create {
+  align-self: flex-start;
+  padding: 0.42rem 1.3rem;
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+form.composer button.create:hover:not(:disabled) {
+  border-color: transparent;
+  color: var(--accent-ink);
+  filter: brightness(1.08);
+}
+
+/* Disabled while a creation is in flight, so it has to look disabled. */
+form.composer button.create:disabled {
+  background: var(--edge);
+  color: var(--ink-faint);
+}
+
+/* Quiet, but present before somebody asks rather than after they have waited. */
+form.composer p.note {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--ink-quiet);
+}
+
+/* --- one application ------------------------------------------------------- */
+
+.detail h2.name {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+  margin: 0.8rem 0 0.5rem;
+  font-size: 1.5rem;
+  letter-spacing: -0.02em;
+}
+
+.detail h2.name .state { margin-top: 0; }
+
+.detail .explanation { margin: 0 0 0.6rem; color: var(--ink); }
+.detail .local, .detail .remote, .detail .limits {
+  margin: 0 0 0.4rem;
+  color: var(--ink-quiet);
+  font-size: 0.9rem;
+}
+.detail .remote { color: var(--medium); }
+
+button.back {
+  margin-top: 1.5rem;
+  padding: 0.24rem 0.7rem;
+  background: transparent;
+  border-color: var(--edge);
+  color: var(--ink-quiet);
   font-size: 0.9rem;
 }
 
@@ -290,21 +513,36 @@ li.permission.inert .blocked {
 .actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
+  gap: 0.45rem;
   align-items: center;
-  margin: 1rem 0;
+  margin: 1.25rem 0;
 }
 
-.actions button, .actions select {
-  font: inherit;
-  padding: 0.25rem 0.8rem;
-  border: 1px solid var(--edge);
-  border-radius: 5px;
-  background: white;
-  cursor: pointer;
+.actions select { padding: 0.3rem 0.5rem; cursor: pointer; }
+
+/* Starting an application is what somebody came to this page to do. It is
+   filled for that reason and no other: it grants nothing, and everything it is
+   allowed to reach was decided further down this same page. */
+.actions button.start {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
 }
 
-.actions button.danger { color: var(--high); }
+.actions button.start:hover:not(:disabled) {
+  border-color: transparent;
+  color: var(--accent-ink);
+  filter: brightness(1.08);
+}
+
+.actions button.danger { color: var(--critical); border-color: var(--edge); }
+.actions button.danger:hover:not(:disabled) {
+  border-color: var(--critical);
+  color: var(--critical);
+  background: var(--critical-soft);
+}
+
 .actions .consequence {
   flex-basis: 100%;
   margin: 0;
@@ -315,27 +553,91 @@ li.permission.inert .blocked {
 form.run {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
-  margin-bottom: 1rem;
-}
-
-form.run input.arguments {
-  font: inherit;
-  padding: 0.4rem 0.6rem;
+  gap: 0.4rem;
+  margin-bottom: 1.25rem;
+  padding: var(--pad);
   border: 1px solid var(--edge);
-  border-radius: 6px;
+  border-radius: var(--radius);
+  background: var(--surface);
 }
 
+form.run input.arguments { background: var(--ground); }
 form.run label.ask { font-weight: 600; font-size: 0.95rem; }
-form.run p.note, .generation p.note { margin: 0; font-size: 0.85rem; color: var(--quiet); }
+form.run p.note, .generation p.note {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--ink-quiet);
+}
+
+/* --- history --------------------------------------------------------------- */
+
+/* What an application has been. Quiet by default: the version somebody is on is
+   rarely what they came for, and the list of the ones they are not on is never
+   what they came for. */
+h3.history {
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-quiet);
+  margin: 1.75rem 0 0.75rem;
+}
+
+li.version {
+  border-left: 3px solid var(--edge);
+  padding: 0.5rem 0 0.5rem 0.85rem;
+  margin-bottom: 0.75rem;
+}
+
+li.version.current { border-left-color: var(--low); }
+
+li.version .what { font-variant-numeric: tabular-nums; }
+li.version .now { color: var(--low); font-size: 0.9rem; }
+
+/* A version whose source is gone is drawn as an absence rather than a warning.
+   Nothing is wrong; there is simply nothing to go back to. */
+li.version .gone { color: var(--ink-quiet); font-size: 0.9rem; }
+
+.revert { margin-top: 0.45rem; display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.revert button.cancel-rollback { color: var(--ink-quiet); }
+
+/* Said before the click, not after it. Rolling back clears a build and can take
+   permissions away, and neither is undone by clicking again. */
+.revert .consequence {
+  flex-basis: 100%;
+  margin: 0 0 0.35rem;
+  font-size: 0.9rem;
+  color: var(--medium);
+}
+
+/* Something this long, pinned over the page, needs a way to be put down. */
+.notice button.dismiss {
+  margin-top: 0.5rem;
+  padding: 0.2rem 0.75rem;
+  background: transparent;
+  border-color: var(--edge);
+  color: var(--ink-quiet);
+}
+
+/* --- generating ------------------------------------------------------------ */
 
 /* A generation run. Minutes long, so it says so, and says where it has got to
    in the lifecycle's own words rather than inventing a progress bar. */
 .generation {
+  border: 1px solid var(--edge);
   border-left: 3px solid var(--edge);
-  padding: 0.5rem 0 0.5rem 0.75rem;
-  margin-bottom: 1rem;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: var(--surface);
+  padding: 0.75rem 1rem;
+  margin-bottom: 1.25rem;
 }
+
+/* Nothing is generating, so there is nothing to say. The panel is a slot the
+   window fills when a run starts, and an empty one used to be invisible — until
+   the panel gained a border, at which point an empty box appeared under every
+   application that had never been generated. */
+.generation:empty { display: none; }
+
 .generation.running { border-left-color: var(--medium); }
 .generation.built { border-left-color: var(--low); }
 .generation.failed { border-left-color: var(--high); }
@@ -346,41 +648,80 @@ form.run p.note, .generation p.note { margin: 0; font-size: 0.85rem; color: var(
    markup, and kept in its own scrollable box rather than pushing the page. */
 pre.output {
   margin: 0;
-  padding: 0.6rem 0.75rem;
-  background: #f6f6f6;
-  border-radius: 6px;
+  padding: 0.75rem 0.9rem;
+  background: var(--ground);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-small);
   overflow-x: auto;
   font-size: 0.85rem;
+  line-height: 1.5;
   max-height: 22rem;
 }
 
-ul.history li.moment { margin-bottom: 0.5rem; }
-ul.history .state { font-weight: 600; font-size: 0.9rem; }
-ul.history .what { color: var(--quiet); font-size: 0.9rem; }
+ul.history li.moment { margin-bottom: 0.55rem; }
+ul.history .state {
+  /* On the timeline a state is a label, not the application's current
+     condition, so it is not drawn as the pill that means "this is where it is
+     right now". */
+  display: inline;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  background: none;
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+ul.history .state::before { content: none; }
+ul.history .what { color: var(--ink-quiet); font-size: 0.9rem; }
+
+/* --- Ephemeral itself ------------------------------------------------------ */
 
 /* Ephemeral's own authority, and this machine. Deliberately a separate block
    from any application: they are two permission systems, and showing them as
    one list is the confusion the model exists to prevent. */
-#machine { margin-top: 2.5rem; border-top: 1px solid var(--edge); padding-top: 1.5rem; }
+#machine {
+  margin-top: 3rem;
+  border-top: 1px solid var(--edge);
+  padding-top: 1.75rem;
+}
 #machine[hidden] { display: none; }
 #machine h2.name { font-size: 1.05rem; margin: 0 0 0.4rem; }
-#machine p.note { margin: 0 0 0.75rem; color: var(--quiet); font-size: 0.9rem; }
+#machine p.note { margin: 0 0 1rem; color: var(--ink-quiet); font-size: 0.9rem; }
 
 li.authority {
   border-left: 3px solid currentColor;
-  padding: 0.5rem 0 0.5rem 0.75rem;
+  padding: 0.6rem 0 0.6rem 0.85rem;
   margin-bottom: 0.9rem;
 }
-li.authority.held { background: #f6f6f6; border-radius: 0 5px 5px 0; }
+li.authority.held {
+  background: var(--surface);
+  border-radius: 0 var(--radius-small) var(--radius-small) 0;
+  padding-right: 0.85rem;
+}
 li.authority.held .wants::before { content: "✓ "; color: var(--low); }
 li.authority .if-allowed { font-size: 0.9rem; }
-li.authority .decide .note { color: var(--quiet); font-size: 0.85rem; }
+li.authority .decide .note { color: var(--ink-quiet); font-size: 0.85rem; }
 
 li.check { margin-bottom: 0.5rem; font-size: 0.9rem; }
-li.check .advice { color: var(--quiet); }
+li.check .advice { color: var(--ink-quiet); }
 li.check.ok .what::before { content: "✓ "; color: var(--low); }
 li.check.note .what::before { content: "! "; color: var(--medium); }
 li.check.bad .what::before { content: "✗ "; color: var(--high); }
 
-ul.entries li.entry { margin-bottom: 0.35rem; font-size: 0.9rem; }
-ul.entries .who { color: var(--quiet); font-size: 0.8rem; }
+ul.entries li.entry { margin-bottom: 0.4rem; font-size: 0.9rem; }
+ul.entries .who { color: var(--ink-quiet); font-size: 0.8rem; }
+
+/* --- the window's own furniture -------------------------------------------- */
+
+/* The scrollbar is part of the window. A bright system one down the side of a
+   dark page is the one piece of chrome that gives away that this is a web view
+   rather than an application. */
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--edge);
+  border: 3px solid var(--ground);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--edge-strong); }

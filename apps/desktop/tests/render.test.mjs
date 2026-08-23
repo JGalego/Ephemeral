@@ -942,6 +942,47 @@ await check('a refused rollback says why, in the core\'s own words', async () =>
   await stubbed.close();
 });
 
+// The palette is generated from `crates/ephemeral-design`, where every pairing
+// it draws is checked for contrast. A hex written straight into the stylesheet
+// is a colour that check never sees — and risk is carried by colour in this
+// window, so an unreadable one is a permission prompt that does not work.
+await check('the stylesheet names no colour of its own', async () => {
+  const css = await readFile(join(ui, 'app.css'), 'utf8');
+  const withoutComments = css.replace(/\/\*[\s\S]*?\*\//g, '');
+
+  const literals = [
+    ...withoutComments.matchAll(/#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?)\(/g),
+  ].map((found) => found[0]);
+
+  // `rgb(0 0 0 / 20%)` in a shadow is the one exception: a shadow is the
+  // absence of light rather than a colour from the palette, and it is the same
+  // black in both schemes.
+  const notShadows = literals.filter((literal) => !/^rgba?\($/.test(literal));
+
+  assert.deepEqual(notShadows, [], 'every colour comes from tokens.css');
+});
+
+// A stylesheet asking for a custom property that nobody defines does not fail:
+// it renders as nothing at all — no colour, no error, no clue. A mistyped token
+// name would take a whole element's colour with it and pass every other test
+// here, because every other test asserts words.
+await check('every colour the stylesheet asks for exists', async () => {
+  const [app, tokens] = await Promise.all([
+    readFile(join(ui, 'app.css'), 'utf8'),
+    readFile(join(ui, 'tokens.css'), 'utf8'),
+  ]);
+
+  const declared = new Set(
+    [...app.matchAll(/^\s*(--[a-z-]+):/gm), ...tokens.matchAll(/^\s*(--[a-z-]+):/gm)].map(
+      (found) => found[1],
+    ),
+  );
+  const used = new Set([...app.matchAll(/var\((--[a-z-]+)\)/g)].map((found) => found[1]));
+  const missing = [...used].filter((name) => !declared.has(name));
+
+  assert.deepEqual(missing, [], 'no token is asked for that nothing defines');
+});
+
 // Pausing keeps the container and everything in it; stopping does not. The
 // terminal has had both since Phase 1 and the window had only one, which is the
 // sort of gap "everything the terminal does" hides until somebody lists it.

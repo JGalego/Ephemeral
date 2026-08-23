@@ -4,12 +4,24 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Ephemeral</title>
+    <!-- The palette first, because everything in app.css is written in terms
+         of it and nothing there may name a colour of its own. Generated from
+         crates/ephemeral-design and shared with the Android app. -->
+    <link rel="stylesheet" href="tokens.css" />
     <link rel="stylesheet" href="app.css" />
   </head>
   <body>
     <header>
-      <h1>Ephemeral</h1>
-      <p class="tagline">Software that exists only while it's useful.</p>
+      <div class="wordmark">
+        <h1>Ephemeral</h1>
+        <p class="tagline">Software that exists only while it's useful.</p>
+      </div>
+      <!--
+        Ephemeral is dark. This is for the people it does not suit — reading
+        pale text on a dark ground is harder for some eyes, not easier — and
+        the choice is remembered, so it is asked once.
+      -->
+      <button id="appearance" type="button" aria-pressed="false">Light</button>
     </header>
 
     <main>

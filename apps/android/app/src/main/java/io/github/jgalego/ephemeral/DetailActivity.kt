@@ -16,6 +16,7 @@ class DetailActivity : Activity() {
     private lateinit var application: String
 
     private lateinit var purpose: TextView
+    private lateinit var stateLabel: TextView
     private lateinit var explanation: TextView
     private lateinit var description: TextView
     private lateinit var generate: Button
@@ -34,6 +35,7 @@ class DetailActivity : Activity() {
         }
 
         purpose = findViewById(R.id.purpose)
+        stateLabel = findViewById(R.id.state)
         explanation = findViewById(R.id.explanation)
         description = findViewById(R.id.description)
         generate = findViewById(R.id.generate)
@@ -78,6 +80,10 @@ class DetailActivity : Activity() {
     private fun draw(page: Detail) {
         title = page.summary.name
         purpose.text = page.summary.purpose
+        // The same pill, in the same colours, as the list this page was opened
+        // from — and the colour is the lifecycle's opinion, not this screen's.
+        stateLabel.text = page.summary.state
+        stateLabel.setTextColor(getColor(Palette.forState(page.summary.stateKind)))
         explanation.text = page.explanation
         description.text = page.description
 
@@ -105,7 +111,7 @@ class DetailActivity : Activity() {
 
     /** A capability that has been asked for, with the two answers to it. */
     private fun asking(capability: Capability): View {
-        val row = column()
+        val row = column(capability.risk)
         row.addView(strong(capability.wants))
 
         // The stated reason is presented as a claim, never as a fact: it was
@@ -114,7 +120,8 @@ class DetailActivity : Activity() {
         capability.reason?.takeIf(String::isNotBlank)?.let {
             row.addView(quiet(getString(R.string.it_says, it)))
         }
-        row.addView(quiet(capability.ifAllowed))
+        // What would follow from allowing it, in the colour of what it costs.
+        row.addView(consequence(capability))
 
         val answers = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -144,9 +151,9 @@ class DetailActivity : Activity() {
 
     /** A capability already granted. */
     private fun held(capability: Capability): View {
-        val row = column()
-        row.addView(strong(capability.wants))
-        row.addView(quiet(getString(R.string.risk, capability.risk)))
+        val row = column(capability.risk)
+        row.addView(strong("\u2713 " + capability.wants))
+        row.addView(consequence(capability))
         return row
     }
 
@@ -183,14 +190,41 @@ class DetailActivity : Activity() {
 
     // --- small view helpers, so the drawing above reads as drawing ---
 
-    private fun column() = LinearLayout(this).apply {
+    /**
+     * One thing an application has asked for, or one it already holds.
+     *
+     * A card rather than a run of text, and the same card the window draws.
+     * `risk` colours the left edge and the sentence saying what would follow
+     * from allowing it — never the reassurance that it can be taken back,
+     * which in crimson reads as a warning and says the opposite of what it is.
+     */
+    private fun column(risk: String? = null) = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        setPadding(0, dp(12), 0, dp(12))
+        background = getDrawable(R.drawable.card)
+        setPadding(dp(14), dp(14), dp(14), dp(14))
+        layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+        ).apply { setMargins(0, dp(8), 0, 0) }
+
+        if (risk != null) {
+            // A hairline of the risk colour down the leading edge, so a
+            // critical request cannot be mistaken for an ordinary one at a
+            // glance — which is the only look most requests ever get.
+            val stripe = android.graphics.drawable.LayerDrawable(
+                arrayOf(
+                    android.graphics.drawable.ColorDrawable(getColor(Palette.forRisk(risk))),
+                    getDrawable(R.drawable.card),
+                ),
+            )
+            stripe.setLayerInset(1, dp(3), 0, 0, 0)
+            background = stripe
+        }
     }
 
     private fun heading(text: String) = TextView(this).apply {
         this.text = text
-        setTextColor(getColor(R.color.bubble))
+        setTextColor(getColor(R.color.ink_quiet))
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
         setTypeface(typeface, Typeface.BOLD)
         setPadding(0, dp(16), 0, 0)
@@ -198,13 +232,28 @@ class DetailActivity : Activity() {
 
     private fun strong(text: String) = TextView(this).apply {
         this.text = text
-        setTextColor(getColor(R.color.text))
+        setTextColor(getColor(R.color.ink))
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+    }
+
+    /**
+     * What allowing this would let the application do, in its risk's colour.
+     *
+     * The level is also said in words, next to it. Colour alone is not a way to
+     * tell somebody that a permission is dangerous — not everybody sees the
+     * difference between amber and rose, and the one who does not is the one
+     * least able to say so.
+     */
+    private fun consequence(capability: Capability) = TextView(this).apply {
+        text = capability.ifAllowed + "  (" + capability.risk + ")"
+        setTextColor(getColor(Palette.forRisk(capability.risk)))
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+        setPadding(0, dp(6), 0, 0)
     }
 
     private fun quiet(text: String) = TextView(this).apply {
         this.text = text
-        setTextColor(getColor(R.color.quiet))
+        setTextColor(getColor(R.color.ink_quiet))
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
         setPadding(0, dp(4), 0, 0)
     }

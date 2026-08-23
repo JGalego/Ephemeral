@@ -151,41 +151,59 @@ class MainActivity : Activity() {
 }
 
 /**
- * Two lines per application: what was asked for, and where it is.
+ * One card per application: what was asked for, where it is, and what it holds.
  *
  * The purpose comes first because that is what a person recognises — an
  * application's generated name is Ephemeral's convenience, not theirs.
+ *
+ * These were three facts joined by dots in one grey subtitle, which meant an
+ * application running with permission to reach the whole internet was drawn
+ * exactly like an idle one that can see nothing of yours. They are three things
+ * now, and the two that carry risk carry colour: the same colours the desktop
+ * window uses, from the same generated palette.
  */
 private class Applications(context: Context) : ArrayAdapter<Summary>(
     context,
-    android.R.layout.simple_list_item_2,
-    android.R.id.text1,
+    R.layout.row_application,
 ) {
     override fun getView(position: Int, recycled: View?, parent: ViewGroup): View {
         val view = super.getView(position, recycled, parent)
         val application = getItem(position) ?: return view
 
-        view.findViewById<TextView>(android.R.id.text1).text = application.purpose
-        view.findViewById<TextView>(android.R.id.text2).text = subtitle(application)
-        return view
-    }
+        view.findViewById<TextView>(R.id.purpose).text = application.purpose
+        view.findViewById<TextView>(R.id.name).text = application.name
 
-    private fun subtitle(application: Summary): String {
-        val parts = mutableListOf(application.state)
+        val state = view.findViewById<TextView>(R.id.state)
+        state.text = application.state
+        state.setTextColor(context.getColor(Palette.forState(application.stateKind)))
+
+        // The only thing in the list that shouts, because it is the only thing
+        // that cannot proceed without a person.
+        val awaiting = view.findViewById<TextView>(R.id.awaiting)
         if (application.awaitingDecision > 0) {
-            parts += context.resources.getQuantityString(
+            awaiting.text = context.resources.getQuantityString(
                 R.plurals.awaiting,
                 application.awaitingDecision,
                 application.awaitingDecision,
             )
+            awaiting.visibility = View.VISIBLE
+        } else {
+            awaiting.visibility = View.GONE
         }
+
+        val granted = view.findViewById<TextView>(R.id.granted)
         if (application.granted > 0) {
-            parts += context.resources.getQuantityString(
+            granted.text = context.resources.getQuantityString(
                 R.plurals.granted,
                 application.granted,
                 application.granted,
             )
+            granted.setTextColor(context.getColor(Palette.forRisk(application.highestGrantedRisk)))
+            granted.visibility = View.VISIBLE
+        } else {
+            granted.visibility = View.GONE
         }
-        return parts.joinToString(" · ")
+
+        return view
     }
 }

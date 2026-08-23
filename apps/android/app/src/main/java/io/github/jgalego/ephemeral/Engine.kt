@@ -17,9 +17,22 @@ data class Summary(
     val name: String,
     val purpose: String,
     val state: String,
+    /**
+     * The same state, as the kind of thing it is: working, idle, active,
+     * attention. What colour a state is drawn in follows from this rather than
+     * from a list of state names kept here, which is how a phone and a window
+     * start disagreeing about which states are alarming.
+     */
+    val stateKind: String,
     val running: Boolean,
     val putAway: Boolean,
     val granted: Int,
+    /**
+     * The worst thing this application is allowed to do, if it is allowed
+     * anything. Carried so the list can draw the difference between "reads one
+     * folder" and "can reach anywhere" — which it could not, and did not.
+     */
+    val highestGrantedRisk: String?,
     val awaitingDecision: Int,
 ) {
     companion object {
@@ -28,9 +41,18 @@ data class Summary(
             name = json.optString("name"),
             purpose = json.optString("purpose"),
             state = json.optString("state"),
+            stateKind = json.optString("state_kind"),
             running = json.optBoolean("running"),
             putAway = json.optBoolean("put_away"),
             granted = json.optInt("granted"),
+            // Absent and empty are different. An unknown risk is drawn as
+            // unknown rather than defaulted to `low`, which would paint a
+            // reassuring green over an application holding everything.
+            highestGrantedRisk = if (json.isNull("highest_granted_risk")) {
+                null
+            } else {
+                json.optString("highest_granted_risk").ifBlank { null }
+            },
             awaitingDecision = json.optInt("awaiting_decision"),
         )
     }

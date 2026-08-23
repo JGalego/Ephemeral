@@ -1,17 +1,50 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  The look, in terms of the palette in values/colors.xml — which is generated
+  from crates/ephemeral-design and is the same one the desktop window draws
+  from. Nothing here may define a colour: a hex written straight into a theme
+  is a hex the contrast tests never see.
+-->
 <resources>
-    <color name="ink">#0b1020</color>
-    <color name="surface">#141a2e</color>
-    <color name="text">#e6e8f0</color>
-    <color name="quiet">#9aa3bd</color>
-    <color name="bubble">#c4b5fd</color>
-    <color name="care">#f0abfc</color>
 
     <style name="EphemeralTheme" parent="@android:style/Theme.Material">
-        <item name="android:colorBackground">@color/ink</item>
+        <item name="android:colorBackground">@color/ground</item>
+        <item name="android:windowBackground">@color/ground</item>
+        <item name="android:statusBarColor">@color/ground</item>
+        <item name="android:navigationBarColor">@color/ground</item>
         <item name="android:colorPrimary">@color/surface</item>
-        <item name="android:colorAccent">@color/bubble</item>
-        <item name="android:textColorPrimary">@color/text</item>
-        <item name="android:textColorSecondary">@color/quiet</item>
+        <item name="android:colorAccent">@color/accent</item>
+        <item name="android:textColorPrimary">@color/ink</item>
+        <item name="android:textColorSecondary">@color/ink_quiet</item>
+        <item name="android:textColorHint">@color/ink_faint</item>
+
+        <!-- Every button in the app, including the ones built in Kotlin, so a
+             control drawn in code cannot end up looking like a different
+             application from one drawn in a layout. -->
+        <item name="android:buttonStyle">@style/EphemeralButton</item>
     </style>
+
+    <!-- The ordinary control: an outline, and nothing that argues for being
+         pressed. Allow and Refuse are both this, deliberately — a phone that
+         made the permissive answer the pretty one would be collecting consent
+         rather than asking for it. -->
+    <style name="EphemeralButton" parent="@android:style/Widget.Material.Button">
+        <item name="android:background">@drawable/button</item>
+        <item name="android:textColor">@color/ink</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:letterSpacing">0</item>
+        <item name="android:minHeight">44dp</item>
+        <item name="android:paddingLeft">18dp</item>
+        <item name="android:paddingRight">18dp</item>
+        <item name="android:stateListAnimator">@null</item>
+    </style>
+
+    <!-- Filled, and used twice in the whole app: asking for an application,
+         and generating one. Neither grants anything. -->
+    <style name="EphemeralButton.Primary">
+        <item name="android:background">@drawable/button_primary</item>
+        <item name="android:textColor">@color/accent_ink</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
 </resources>

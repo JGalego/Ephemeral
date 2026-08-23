@@ -21,6 +21,7 @@
 | [security/enforcement.md](security/enforcement.md) | Every security promise, and the code that would have to be wrong for it to break |
 | [sharing.md](sharing.md) | Design: giving an app to somebody else, publishing it, and shared instances |
 | [mobile.md](mobile.md) | Embedding the engine on iOS and Android: what it does on a device, and what it deliberately will not |
+| [design.md](design.md) | How it looks: one generated palette for every client, and the contrast it has to meet |
 
 ## Working on it
 

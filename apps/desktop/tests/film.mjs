@@ -393,6 +393,13 @@ await scene('nothing-left-waiting', 1800);
 await page.evaluate(() => document.getElementById('machine')?.scrollIntoView());
 await scene('what-ephemeral-itself-may-do', 1500);
 
+// The same window, for somebody who asked for light. Ephemeral is dark and a
+// reviewer has to be able to check the other palette without building a second
+// film: nothing may become unreadable, and no risk may turn reassuring.
+await page.evaluate(() => window.scrollTo(0, 0));
+await page.click('#appearance');
+await scene('the-same-window-in-light', 1500);
+
 await context.close();
 
 // Playwright names the video after the page, which tells a reader nothing.

@@ -1,0 +1,18 @@
+[package]
+name = "ephemeral-design"
+description = "The palette both clients draw from, and the contrast rules it has to meet"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "ephemeral-design"
+path = "src/main.rs"

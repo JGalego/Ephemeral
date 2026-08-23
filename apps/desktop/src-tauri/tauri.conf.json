@@ -12,7 +12,9 @@
       {
         "title": "Ephemeral",
         "width": 900,
-        "height": 700
+        "height": 700,
+        "theme": "Dark",
+        "backgroundColor": "#0b0e17"
       }
     ],
     "security": {

@@ -291,6 +291,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "ephemeral-design"
+version = "0.1.0"
+
+[[package]]
 name = "ephemeral-engine"
 version = "0.1.0"
 dependencies = [

@@ -135,6 +135,16 @@ else
   printf '\n(skipping desktop rendering: run `cd apps/desktop && npm install playwright` first)\n'
 fi
 
+# The phone's shell, for anybody who has an Android SDK. Skipped with a word
+# when there is none: most people working on the engine do not have one, and CI
+# does, which is where this is guaranteed to run.
+if [ -n "${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}" ] && command -v gradle >/dev/null 2>&1; then
+  step "The Android application"
+  (cd apps/android && gradle assembleDebug --console=plain -q)
+else
+  printf '\n(skipping the Android application: no ANDROID_HOME, or no gradle)\n'
+fi
+
 if cargo deny --version >/dev/null 2>&1; then
   step "Supply chain"
   cargo deny check

@@ -754,7 +754,16 @@ export function applicationDetail(detail) {
   const back = element('button', 'back', '← All applications');
   page.appendChild(back);
 
-  page.appendChild(element('h2', 'name', detail.summary.name));
+  // The state travels with the name, drawn as the same pill the list uses, and
+  // the kind goes on the page so the colour is the lifecycle's opinion rather
+  // than this window's. Without it the only account of where an application is
+  // was a sentence of prose, and the two clients disagreed about how loudly to
+  // say "Running".
+  page.dataset.state = detail.summary.state_kind;
+  const heading = element('h2', 'name', detail.summary.name);
+  heading.appendChild(element('span', 'state', detail.summary.state));
+  page.appendChild(heading);
+
   page.appendChild(element('p', 'explanation', detail.explanation));
 
   if (detail.runtime) {

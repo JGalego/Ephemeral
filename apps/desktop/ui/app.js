@@ -20,6 +20,57 @@ import {
   rollbackNotice,
 } from './render.js';
 
+/** Where the appearance choice is kept, if somebody makes one. */
+const APPEARANCE = 'ephemeral.appearance';
+
+/**
+ * Dark, unless this person has said otherwise.
+ *
+ * Not `prefers-color-scheme`: a browser reports `light` for a machine that has
+ * expressed no preference at all, so following it means being white for
+ * everybody who never set one. Ephemeral is dark and says so; light is one
+ * click away, and the click is remembered.
+ *
+ * Reading storage can throw outright — a webview with site data blocked does
+ * not return null, it raises — so a broken preference is the default rather
+ * than a window that fails to start.
+ */
+function appearance(chosen) {
+  let wanted = chosen;
+
+  if (wanted === undefined) {
+    try {
+      wanted = localStorage.getItem(APPEARANCE);
+    } catch {
+      wanted = null;
+    }
+  } else {
+    try {
+      localStorage.setItem(APPEARANCE, wanted);
+    } catch {
+      // A choice that cannot be remembered still applies to this window.
+    }
+  }
+
+  const light = wanted === 'light';
+  // The dark palette is what `:root` holds, so dark is the absence of the
+  // attribute rather than a second value nothing defines.
+  if (light) {
+    document.documentElement.dataset.theme = 'light';
+  } else {
+    delete document.documentElement.dataset.theme;
+  }
+
+  const control = document.getElementById('appearance');
+  if (control) {
+    control.textContent = light ? 'Dark' : 'Light';
+    control.setAttribute('aria-pressed', String(light));
+    control.setAttribute('aria-label', light ? 'Use the dark palette' : 'Use the light palette');
+  }
+
+  return light ? 'light' : 'dark';
+}
+
 /** The pending re-read of a page whose application is being generated. */
 let watching = null;
 
@@ -536,8 +587,15 @@ document.addEventListener('click', (event) => {
   if (item) open(item.dataset.id);
 });
 
+// Before anything is drawn, so nobody sees the wrong palette for a frame.
+appearance();
+
+document.getElementById('appearance')?.addEventListener('click', () => {
+  appearance(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light');
+});
+
 document.getElementById('compose').replaceChildren(composer());
 
 refresh();
 
-export { refresh, open, problem };
+export { refresh, open, problem, appearance };

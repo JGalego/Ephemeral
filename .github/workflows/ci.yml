@@ -245,6 +245,33 @@ jobs:
       - run: cargo test
         working-directory: apps/desktop/src-tauri
 
+  # The phone's shell is Kotlin, in its own Gradle build, so nothing else here
+  # compiles it — and until this job existed nothing did until a release was
+  # cut. A screen that does not build is a screen nobody can open, and the JNI
+  # tests above deliberately cover the bridge rather than the application.
+  #
+  # No Gradle wrapper is committed: a wrapper is a binary jar in the tree, and
+  # this repository would rather pin a version here than carry one.
+  android:
+    name: The Android application compiles
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.14.3
+      # Debug rather than release: signing needs a key, and what this job is
+      # for is whether the Kotlin and the resources are sound. The native
+      # libraries are built by ../build-native.sh and are absent here, which
+      # the build tolerates — an APK with no engine in it still proves the
+      # screens compile.
+      - run: gradle assembleDebug --no-daemon
+        working-directory: apps/android
+
   supply-chain:
     name: Supply chain
     runs-on: ubuntu-latest
@@ -286,6 +313,7 @@ jobs:
       - generation
       - desktop
       - window
+      - android
       - supply-chain
       - lockfile
     steps:

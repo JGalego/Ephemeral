@@ -200,6 +200,7 @@ See [docs/development.md](docs/development.md) for the full development guide.
 | [docs/concepts.md](docs/concepts.md) | The vocabulary: apps, intents, principals, retention |
 | [docs/lifecycle.md](docs/lifecycle.md) | The application lifecycle state machine |
 | [docs/permissions.md](docs/permissions.md) | Both permission systems, in detail |
+| [docs/design.md](docs/design.md) | One palette for every client, and the contrast it has to meet |
 | [docs/architecture/decisions/](docs/architecture/decisions/) | Architecture Decision Records |
 | [docs/roadmap.md](docs/roadmap.md) | Phased plan |
 
