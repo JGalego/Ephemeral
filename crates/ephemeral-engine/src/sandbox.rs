@@ -55,9 +55,20 @@ pub fn specification(workspace: &Workspace, manifest: &AppManifest) -> Result<Co
     };
 
     if runtime.kind != RuntimeKind::Docker {
+        // Said precisely, because "not implemented" stopped being true. The
+        // WebAssembly runtime exists and a phone runs applications on it; what
+        // does not exist yet is this crate driving it, and somebody reading a
+        // refusal deserves to know which of those two they have hit.
+        let where_it_stands = match runtime.kind {
+            RuntimeKind::Wasm => {
+                "the WebAssembly runtime is built and reachable through the mobile engine, \
+                 but the desktop does not drive it yet"
+            }
+            RuntimeKind::Native => "nothing implements the native runtime, deliberately (ADR-0015)",
+            _ => "only Docker is implemented here so far",
+        };
         bail!(
-            "{} declares the {} runtime, and only Docker is implemented so far. \
-             See docs/roadmap.md.",
+            "{} declares the {} runtime: {where_it_stands}. See docs/roadmap.md.",
             manifest.id,
             runtime.kind
         );
