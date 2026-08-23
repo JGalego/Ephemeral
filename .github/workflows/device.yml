@@ -131,8 +131,17 @@ jobs:
           outcome=${PIPESTATUS[0]}
           set -e
 
-          # A device id that no longer exists is the likeliest way this fails,
-          # and the error for it does not say so. Print what does exist.
+          # The two ways this fails that are not the application's fault, each
+          # said in the words that fix it. Both were found by somebody hitting
+          # them: a 403 on upload reads as though Test Lab is broken, and a
+          # retired device id reads as though the command is wrong.
+          if [ "$outcome" -ne 0 ] && grep -q "storage.objects.create" run.log; then
+            echo "::error::The service account may not write to Test Lab's bucket."
+            echo "Add the 'Storage Object Admin' role to it in the Cloud console:"
+            echo "  IAM & Admin -> IAM -> edit $(gcloud config get account) -> add role"
+            echo "Object Viewer is not enough: the APK has to be uploaded before it runs."
+          fi
+
           if [ "$outcome" -ne 0 ] && grep -qiE "model|INVALID_ARGUMENT" run.log; then
             echo "::notice::If that device is gone, these are the ones that are not:"
             gcloud firebase test android models list --filter=form=PHYSICAL || true

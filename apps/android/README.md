@@ -75,9 +75,13 @@ Twenty minutes of setup, once, by somebody with a Google account:
    (`toolresults.googleapis.com`). Test Lab is a Cloud service wearing a
    Firebase badge, and both halves have to be switched on.
 3. **A service account** — Cloud console → *IAM & Admin* → *Service accounts* →
-   *Create*. Give it **Firebase Test Lab Admin** and **Storage Object Viewer**:
-   the first runs the test, the second reads the pictures back out of the
-   bucket Test Lab puts them in. Nothing here creates a bucket, deliberately —
+   *Create*. Give it **Firebase Test Lab Admin** and **Storage Object Admin**:
+   the first runs the test, the second puts the APK into the bucket Test Lab
+   works from and reads the pictures back out of it afterwards.
+
+   Object *Viewer* is not enough and the failure is late and unobvious — the
+   whole build succeeds, then the upload is refused with
+   `storage.objects.create denied`. Nothing here creates a bucket, though:
    making one needs billing enabled, and the free plan does not have it.
 4. **A JSON key** for that account — *Keys* → *Add key* → *JSON*. This is a
    long-lived credential. It belongs in repository secrets and nowhere else:
