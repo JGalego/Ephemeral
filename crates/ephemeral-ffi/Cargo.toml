@@ -25,6 +25,13 @@ ephemeral-api.workspace = true
 ephemeral-provider-anthropic = { path = "../ephemeral-provider-anthropic", version = "0.1.0", default-features = false }
 ephemeral-provider-openai = { path = "../ephemeral-provider-openai", version = "0.1.0", default-features = false }
 
+# The WebAssembly half only. `daemon` spawns processes to drive Docker, which
+# iOS forbids outright and Android has no Docker for anyway — and which is
+# exactly the dependency that made "a phone cannot run anything" true (ADR-0021).
+ephemeral-runtime = { path = "../ephemeral-runtime", version = "0.1.0", default-features = false, features = [
+    "wasm",
+] }
+
 serde.workspace = true
 serde_json.workspace = true
 
@@ -39,6 +46,11 @@ serde_json.workspace = true
 # caller must guarantee.
 [dev-dependencies]
 tempfile.workspace = true
+
+# Test applications are written as WebAssembly text and assembled here. A
+# `.wasm` blob checked into the repository is a thing nobody can review, in the
+# one place where what the bytes do is the entire question.
+wat = "1.257.1"
 
 [lints.rust]
 missing_docs = "warn"

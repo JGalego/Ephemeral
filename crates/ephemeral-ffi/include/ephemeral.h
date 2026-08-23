@@ -131,6 +131,25 @@ char *ephemeral_arguments(EphemeralHandle *handle, const char *id,
                           const char *answers_json);
 
 /*
+ * Runs an application on this device, and says what it did:
+ *
+ *     {"succeeded": true, "exit_code": 0, "output": "…", "refused": []}
+ *
+ * `arguments_json` is what ephemeral_arguments returned. NULL means the
+ * application never ran, and ephemeral_last_error says which of the reasons it
+ * was: not generated, not a WebAssembly application, its interpreter is not
+ * installed, or it asked for something it was not granted.
+ *
+ * An application that runs and fails is NOT null. That is a non-zero exit_code
+ * with the program's own output, because a failing program is an answer.
+ *
+ * THIS BLOCKS, for up to thirty seconds. Do not call it from a thread that
+ * draws.
+ */
+char *ephemeral_run(EphemeralHandle *handle, const char *id,
+                    const char *arguments_json);
+
+/*
  * What the chosen service says it can be asked for:
  *
  *     [{"id": "openai/gpt-oss-120b", "name": "GPT OSS 120B", "ceiling": 65536}, …]

@@ -435,9 +435,11 @@ dependencies = [
  "ephemeral-core",
  "ephemeral-provider-anthropic",
  "ephemeral-provider-openai",
+ "ephemeral-runtime",
  "serde",
  "serde_json",
  "tempfile",
+ "wat",
 ]
 
 [[package]]

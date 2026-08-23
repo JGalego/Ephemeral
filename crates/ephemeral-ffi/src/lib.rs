@@ -54,6 +54,7 @@ use ephemeral_core::{
 use serde_json::Value;
 
 mod model;
+mod run;
 
 pub use model::{Choice, DEFAULT_PROVIDER, Described, catalogue};
 
@@ -458,6 +459,63 @@ pub unsafe extern "C" fn ephemeral_arguments(
             .map_err(|refusal| refusal.to_string())?;
 
         json(&built)
+    })
+}
+
+/// Runs an application on this device, and says what it did.
+///
+/// `arguments_json` is the array [`ephemeral_arguments`] returned — composed by
+/// the domain from a filled-in form, never assembled by a host. Returns
+///
+/// ```json
+/// {"succeeded": true, "exit_code": 0, "output": "…", "refused": []}
+/// ```
+///
+/// or null with the reason in [`ephemeral_last_error`]. Free the result with
+/// [`ephemeral_string_free`].
+///
+/// **An application that runs and fails is not a failure of this call.** A
+/// non-zero `exit_code` with the program's output is the answer; null means the
+/// application never ran, and the reason says which of the several possible
+/// causes it was — not generated, not WebAssembly, no interpreter installed, or
+/// asking for something it was not granted.
+///
+/// ## This blocks
+///
+/// It runs the application to completion on the calling thread. A host must not
+/// call it from a thread that draws — thirty seconds is the ceiling, and thirty
+/// seconds of a frozen interface is worse than any answer is good.
+///
+/// # Safety
+///
+/// `handle` must come from [`ephemeral_open`]; `id` and `arguments_json` must
+/// be NUL-terminated UTF-8 strings.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ephemeral_run(
+    handle: *mut Ephemeral,
+    id: *const c_char,
+    arguments_json: *const c_char,
+) -> *mut c_char {
+    let Some(ephemeral) = (unsafe { handle.as_ref() }) else {
+        return std::ptr::null_mut();
+    };
+    let (Some(id), Some(arguments)) = (unsafe { string_from(id) }, unsafe {
+        string_from(arguments_json)
+    }) else {
+        ephemeral.remember("the application and its arguments could not be read");
+        return std::ptr::null_mut();
+    };
+
+    guard(ephemeral, || {
+        let workspace = ephemeral.workspace()?;
+        let app =
+            AppId::parse(&id).map_err(|error| format!("{id} is not an application id: {error}"))?;
+
+        let arguments: Vec<String> = serde_json::from_str(&arguments)
+            .map_err(|error| format!("those are not arguments: {error}"))?;
+
+        json(&run::run(&workspace, &app, arguments)?)
     })
 }
 
@@ -1067,6 +1125,205 @@ mod tests {
     fn c(value: &str) -> CString {
         CString::new(value).unwrap()
     }
+
+    /// Puts a runnable WebAssembly application on disk, generated-looking but
+    /// without a model: a manifest declaring the wasm runtime, and a module in
+    /// the application's own source.
+    ///
+    /// Written as WebAssembly text and assembled here rather than committed as
+    /// a blob, because what the bytes do is the entire question.
+    fn install(home: &std::path::Path, id: &str, text: &str) -> AppId {
+        let app = AppId::parse(id).unwrap();
+        let mut workspace = Workspace::open(home).unwrap();
+
+        let mut manifest = ephemeral_core::AppManifest::requested(app.clone(), id);
+        manifest.runtime = Some(ephemeral_core::manifest::RuntimeSpec::wasm_job(
+            "program.wasm",
+            Vec::new(),
+        ));
+
+        let source = workspace.layout().app(&app).source();
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            source.join("program.wasm"),
+            wat::parse_str(text).expect("the test application should assemble"),
+        )
+        .unwrap();
+
+        std::fs::create_dir_all(workspace.layout().app(&app).root()).unwrap();
+        workspace.apps_mut().save(&manifest).unwrap();
+
+        app
+    }
+
+    /// An application that prints one fixed line, and nothing else.
+    const SAYS_HELLO: &str = r#"(module
+      (import "wasi_snapshot_preview1" "fd_write"
+        (func $write (param i32 i32 i32 i32) (result i32)))
+      (memory (export "memory") 1)
+      (data (i32.const 32) "4 rows differ")
+      (func (export "_start")
+        (i32.store (i32.const 0) (i32.const 32))
+        (i32.store (i32.const 4) (i32.const 13))
+        (drop (call $write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 16)))))"#;
+
+    /// **A phone runs an application.**
+    ///
+    /// The sentence this whole runtime exists to make true, asserted through
+    /// the real C ABI a handset links against. Before this, `ephemeral_run` did
+    /// not exist and could not have: running meant Docker, and no phone has
+    /// Docker ([ADR-0021]).
+    ///
+    /// [ADR-0021]: https://github.com/JGalego/Ephemeral/blob/main/docs/architecture/decisions/0021-webassembly-is-the-runtime-a-phone-can-have.md
+    #[test]
+    fn a_phone_runs_an_application_and_gets_its_answer() {
+        let home = tempfile::tempdir().unwrap();
+        install(home.path(), "tally", SAYS_HELLO);
+        let handle = open(home.path());
+
+        let ran = text(unsafe { ephemeral_run(handle, c("tally").as_ptr(), c("[]").as_ptr()) });
+        let ran: Value = serde_json::from_str(&ran).unwrap();
+
+        assert_eq!(ran["succeeded"], true);
+        assert_eq!(ran["exit_code"], 0);
+        assert_eq!(ran["output"], "4 rows differ");
+
+        unsafe { ephemeral_close(handle) };
+    }
+
+    /// An application that fails is an answer, not a failure of the call. A
+    /// host that treated a non-zero exit as an error would hide every message
+    /// a program writes about what went wrong.
+    #[test]
+    fn an_application_that_fails_still_answers() {
+        let home = tempfile::tempdir().unwrap();
+        install(
+            home.path(),
+            "tally",
+            r#"(module
+                 (import "wasi_snapshot_preview1" "proc_exit" (func $exit (param i32)))
+                 (memory (export "memory") 1)
+                 (func (export "_start") (call $exit (i32.const 3))))"#,
+        );
+        let handle = open(home.path());
+
+        let ran = text(unsafe { ephemeral_run(handle, c("tally").as_ptr(), c("[]").as_ptr()) });
+        let ran: Value = serde_json::from_str(&ran).unwrap();
+
+        assert_eq!(ran["succeeded"], false);
+        assert_eq!(ran["exit_code"], 3, "the program's own code, kept");
+
+        unsafe { ephemeral_close(handle) };
+    }
+
+    /// An application that has not been generated has nothing to run, and is
+    /// told so in words that say what to do rather than what failed.
+    #[test]
+    fn an_application_with_nothing_to_run_says_what_to_do_about_it() {
+        let home = tempfile::tempdir().unwrap();
+        let handle = open(home.path());
+        let created =
+            text(unsafe { ephemeral_create(handle, c("compare two CSV files").as_ptr()) });
+        let created: Value = serde_json::from_str(&created).unwrap();
+        let id = c(created["id"].as_str().expect("an id"));
+
+        let refused = unsafe { ephemeral_run(handle, id.as_ptr(), c("[]").as_ptr()) };
+        assert!(refused.is_null(), "there is nothing to run");
+
+        let said = text(unsafe { ephemeral_last_error(handle) });
+        assert!(said.contains("generate"), "{said}");
+
+        unsafe { ephemeral_close(handle) };
+    }
+
+    /// A Docker application on a phone is refused with the reason, not with a
+    /// crash and not by pretending to run. Somebody holding a handset needs to
+    /// know their application needs a computer, and why.
+    #[test]
+    fn a_container_application_is_refused_on_a_device_with_the_reason() {
+        let home = tempfile::tempdir().unwrap();
+        let app = AppId::parse("tally").unwrap();
+        let mut workspace = Workspace::open(home.path()).unwrap();
+        let mut manifest = ephemeral_core::AppManifest::requested(app.clone(), "tally");
+        manifest.runtime = Some(ephemeral_core::manifest::RuntimeSpec::docker_job(
+            "python:3.12-slim",
+            vec!["python".to_owned(), "main.py".to_owned()],
+        ));
+        std::fs::create_dir_all(workspace.layout().app(&app).root()).unwrap();
+        workspace.apps_mut().save(&manifest).unwrap();
+
+        let handle = open(home.path());
+        let refused = unsafe { ephemeral_run(handle, c("tally").as_ptr(), c("[]").as_ptr()) };
+        assert!(refused.is_null());
+
+        let said = text(unsafe { ephemeral_last_error(handle) });
+        assert!(said.contains("docker"), "{said}");
+        assert!(said.contains("Docker"), "and what it would take: {said}");
+
+        unsafe { ephemeral_close(handle) };
+    }
+
+    /// The form's answers reach the program as its arguments, composed by the
+    /// domain rather than by the host — which is the only reason a phone, a
+    /// window and a terminal run the same application the same way.
+    #[test]
+    fn what_somebody_typed_reaches_the_program() {
+        let home = tempfile::tempdir().unwrap();
+        install(home.path(), "tally", ECHOES_ITS_ARGUMENTS);
+        let handle = open(home.path());
+
+        let ran = text(unsafe {
+            ephemeral_run(
+                handle,
+                c("tally").as_ptr(),
+                c(r#"["--count","rows"]"#).as_ptr(),
+            )
+        });
+        let ran: Value = serde_json::from_str(&ran).unwrap();
+
+        assert_eq!(ran["output"], "--count\nrows\n");
+
+        unsafe { ephemeral_close(handle) };
+    }
+
+    /// Prints its own arguments, one per line, skipping argument zero.
+    const ECHOES_ITS_ARGUMENTS: &str = r#"(module
+      (import "wasi_snapshot_preview1" "args_sizes_get"
+        (func $sizes (param i32 i32) (result i32)))
+      (import "wasi_snapshot_preview1" "args_get"
+        (func $args (param i32 i32) (result i32)))
+      (import "wasi_snapshot_preview1" "fd_write"
+        (func $write (param i32 i32 i32 i32) (result i32)))
+      (memory (export "memory") 2)
+      (global $count (mut i32) (i32.const 0))
+      (global $at (mut i32) (i32.const 0))
+      (func $print_at (param $pointer i32)
+        (local $end i32)
+        (local.set $end (local.get $pointer))
+        (block $found
+          (loop $scan
+            (br_if $found (i32.eqz (i32.load8_u (local.get $end))))
+            (local.set $end (i32.add (local.get $end) (i32.const 1)))
+            (br $scan)))
+        (i32.store8 (local.get $end) (i32.const 10))
+        (i32.store (i32.const 8) (local.get $pointer))
+        (i32.store (i32.const 12)
+          (i32.add (i32.sub (local.get $end) (local.get $pointer)) (i32.const 1)))
+        (drop (call $write (i32.const 1) (i32.const 8) (i32.const 1) (i32.const 24))))
+      (func (export "_start")
+        (drop (call $sizes (i32.const 64) (i32.const 68)))
+        (global.set $count (i32.load (i32.const 64)))
+        (drop (call $args (i32.const 1024) (i32.const 2048)))
+        (global.set $at (i32.const 1))
+        (block $done
+          (loop $next
+            (br_if $done (i32.ge_u (global.get $at) (global.get $count)))
+            (call $print_at
+              (i32.load (i32.add (i32.const 1024)
+                                 (i32.mul (global.get $at) (i32.const 4)))))
+            (global.set $at (i32.add (global.get $at) (i32.const 1)))
+            (br $next))))
+    )"#;
 
     /// Creating an application needs no credential, no network, and no
     /// sandbox — which is why a phone can do it.

@@ -210,9 +210,11 @@ pub fn run(wasm: &[u8], capabilities: &Capabilities) -> Result<Confined, WasmErr
         });
     }
 
-    // Compilation is lazy, so an unresolved import can surface here rather than
-    // at instantiation. It is the same refusal wherever it is discovered.
-    if let Some(refused) = ungranted(&error) {
+    // Compilation is lazy, so a module that cannot run at all surfaces here
+    // rather than at instantiation. It is the same refusal wherever it is
+    // discovered, and calling it a crash would send somebody debugging a
+    // program that never started.
+    if let Some(refused) = unrunnable(&error) {
         return Err(refused);
     }
 
@@ -242,17 +244,31 @@ struct Sandboxed {
 /// Ephemeral refusing, and the other is an application that did something
 /// wrong. Presenting a refusal as a crash would teach somebody to distrust the
 /// sandbox.
-fn ungranted(error: &wasmi::Error) -> Option<WasmError> {
+fn unrunnable(error: &wasmi::Error) -> Option<WasmError> {
     let said = error.to_string();
+
     if said.contains("unknown import") || said.contains("cannot find") {
         return Some(WasmError::Ungranted(said));
     }
+
+    // WASI reaches into the module's linear memory to read and write anything
+    // larger than a number, so a module that exports none is not a WASI program
+    // however well it compiles. Reporting it as a crash would send somebody
+    // debugging a program that never ran an instruction.
+    if said.contains("missing required WASI memory export") {
+        return Some(WasmError::NotAModule(
+            "it exports no memory, so it is not a program this build can run. \
+             It was probably compiled for something other than WASI."
+                .to_owned(),
+        ));
+    }
+
     None
 }
 
 /// A failure before the program ever started, classified.
 fn refusal(error: &wasmi::Error) -> WasmError {
-    ungranted(error).unwrap_or_else(|| WasmError::CannotPrepare(error.to_string()))
+    unrunnable(error).unwrap_or_else(|| WasmError::CannotPrepare(error.to_string()))
 }
 
 /// Which bound a running module hit.
