@@ -166,6 +166,31 @@ were sufficient, which is exactly the assumption that let these through.
 `recordings/` is gitignored. A committed film ages into a picture of a bug
 somebody already fixed, and it looks exactly as current as the code beside it.
 
+## The phone applications
+
+Two of them, and neither can be run from the machine most of this is written on.
+
+**Android** is Kotlin with no dependencies at all — the engine is the only thing
+it needs, and HTTPS, JSON, the keystore and the widgets are already in the
+platform. `gradle assembleDebug` in `apps/android` builds it, and CI does that
+on every commit. Set `ANDROID_HOME` and `./scripts/check` will too; without one
+it says so and moves on.
+
+**iOS** is Swift in `apps/ios`. `apps/ios/typecheck.sh` puts every source file
+through the compiler against the real iOS SDK with the real C header — and
+prints a line and exits cleanly on anything that is not a Mac, because the rest
+of this repository has to stay workable on a machine that is not one. CI runs it
+on `macos-latest`.
+
+Neither of those is *looking* at anything. For Android there is
+`.github/workflows/screens.yml`, which boots an emulator on a runner that has
+KVM, taps through the application and uploads the frames as an artifact — an
+emulator is not a device, but it is the real application drawn by the real
+framework, which is more than a compiler can say. For iOS there is nothing yet:
+it needs an Xcode project and a Mac.
+
+Read both the way the desktop window was read before somebody filmed it.
+
 ## Testing
 
 Four layers. The third is not optional.
