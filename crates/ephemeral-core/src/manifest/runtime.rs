@@ -27,6 +27,17 @@ pub enum RuntimeKind {
     /// SECURITY.md does not pretend the two are equivalent.
     Native,
 
+    /// A WebAssembly module, interpreted inside Ephemeral's own process.
+    ///
+    /// The runtime that exists where Docker does not — a phone above all
+    /// ([ADR-0021]). Confinement here is not subtracted from a process that
+    /// began with the whole machine; a module begins with nothing and every
+    /// capability is an explicit addition, which is why it is counted as
+    /// confining rather than as a weaker local option.
+    ///
+    /// [ADR-0021]: https://github.com/JGalego/Ephemeral/blob/main/docs/architecture/decisions/0021-webassembly-is-the-runtime-a-phone-can-have.md
+    Wasm,
+
     /// A sandbox on a control plane rather than on this device.
     ///
     /// Used by mobile, where no local runtime exists ([ADR-0007]). Because the
@@ -38,7 +49,7 @@ pub enum RuntimeKind {
 
 impl RuntimeKind {
     /// Every runtime kind.
-    pub const ALL: [Self; 3] = [Self::Docker, Self::Native, Self::Remote];
+    pub const ALL: [Self; 4] = [Self::Docker, Self::Native, Self::Wasm, Self::Remote];
 
     /// The machine-readable name.
     #[must_use]
@@ -46,6 +57,7 @@ impl RuntimeKind {
         match self {
             Self::Docker => "docker",
             Self::Native => "native",
+            Self::Wasm => "wasm",
             Self::Remote => "remote",
         }
     }
@@ -53,7 +65,11 @@ impl RuntimeKind {
     /// Whether this runtime confines the application in a container.
     #[must_use]
     pub fn is_containerised(self) -> bool {
-        matches!(self, Self::Docker | Self::Remote)
+        // WebAssembly is not a container, and counts here anyway. The
+        // question this answers is "is the application confined by something
+        // other than its own good behaviour", and a module that cannot name a
+        // file it was not handed answers it the same way a container does.
+        matches!(self, Self::Docker | Self::Wasm | Self::Remote)
     }
 
     /// Whether the application executes on this device.
@@ -62,7 +78,7 @@ impl RuntimeKind {
     /// data is leaving their machine.
     #[must_use]
     pub fn runs_locally(self) -> bool {
-        matches!(self, Self::Docker | Self::Native)
+        matches!(self, Self::Docker | Self::Native | Self::Wasm)
     }
 
     /// How the isolation is described to a person.
@@ -76,6 +92,10 @@ impl RuntimeKind {
             Self::Native => {
                 "This app runs directly on this device, without a container. That is less \
                  isolated than usual, so it is limited to a smaller set of permissions."
+            }
+            Self::Wasm => {
+                "This app runs on this device, inside Ephemeral itself. It starts with no \
+                 access to anything and can only reach what you have allowed."
             }
             Self::Remote => {
                 "This app runs on Ephemeral's servers, not on this device. Data you give \
@@ -274,6 +294,28 @@ mod tests {
             RuntimeKind::Remote
                 .describe_isolation()
                 .contains("leaves your device")
+        );
+    }
+
+    /// The two local non-container runtimes are not the same claim, and the
+    /// manifest has to keep them apart. `Native` is a process the platform
+    /// confines badly; `Wasm` is a module that begins with nothing. A version
+    /// of this enum that described both as "less isolated" would be hiding the
+    /// only distinction that made ADR-0021 possible after ADR-0015.
+    #[test]
+    fn webassembly_is_local_and_confining_at_the_same_time() {
+        assert!(RuntimeKind::Wasm.runs_locally());
+        assert!(RuntimeKind::Wasm.is_containerised());
+        assert!(!RuntimeKind::Native.is_containerised());
+
+        let said = RuntimeKind::Wasm.describe_isolation();
+        assert!(
+            !said.contains("less isolated"),
+            "it is not the weaker option, and must not borrow the weaker option's words: {said}"
+        );
+        assert!(
+            !said.contains("leaves your device"),
+            "and nothing leaves the device: {said}"
         );
     }
 
