@@ -61,6 +61,42 @@ data class Model(val id: String, val name: String, val ceiling: Int?) {
 }
 
 /**
+ * One thing an application says it takes.
+ *
+ * Read from the application's own declaration rather than guessed at, and
+ * rendered as a form field. A declaration is not a permission: an application
+ * saying it takes a file is not one that may read any particular file, and the
+ * sandbox still contains only what was granted.
+ */
+data class Field(
+    val name: String,
+    val label: String,
+    val kind: String,
+    val options: List<String>,
+    val required: Boolean,
+    val default: String?,
+    val help: String?,
+) {
+    companion object {
+        fun from(json: JSONObject): Field {
+            // Both are internally tagged by the domain, so the discriminator
+            // sits inside the object rather than beside it.
+            val kind = json.optJSONObject("kind")?.optString("kind").orEmpty()
+            val options = json.optJSONObject("kind")?.optJSONArray("options")
+            return Field(
+                name = json.optString("name"),
+                label = json.optString("label").ifBlank { json.optString("name") },
+                kind = kind,
+                options = (0 until (options?.length() ?: 0)).map { options!!.optString(it) },
+                required = json.optBoolean("required"),
+                default = json.optString("default").ifBlank { null },
+                help = json.optString("help").ifBlank { null },
+            )
+        }
+    }
+}
+
+/**
  * What somebody chose: a service, and how it is configured.
  *
  * Deliberately not a place a credential lives. The key is sealed in the

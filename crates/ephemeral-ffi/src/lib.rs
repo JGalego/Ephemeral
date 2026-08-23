@@ -402,6 +402,65 @@ pub unsafe extern "C" fn ephemeral_provider(handle: *mut Ephemeral) -> *mut c_ch
     })
 }
 
+/// Turns a filled-in form into the arguments the application receives.
+///
+/// `answers_json` is `{"input name": "what somebody typed", …}`. The result is
+/// a JSON array of strings, or null with the reason in
+/// [`ephemeral_last_error`] — in the words the person filling the form in needs
+/// ("The earlier file is needed before this can run"), because those come from
+/// the domain rather than from anything this crate invents.
+///
+/// A client could build this itself from the declaration on the page. It must
+/// not: a phone, a window and a terminal composing argument vectors separately
+/// are three subtly different applications, and the one that gets a flag's
+/// default wrong sends a program the opposite of what somebody chose.
+///
+/// # Safety
+///
+/// `handle` must come from [`ephemeral_open`]; `id` and `answers_json` must be
+/// NUL-terminated UTF-8 strings.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ephemeral_arguments(
+    handle: *mut Ephemeral,
+    id: *const c_char,
+    answers_json: *const c_char,
+) -> *mut c_char {
+    let Some(ephemeral) = (unsafe { handle.as_ref() }) else {
+        return std::ptr::null_mut();
+    };
+    let (Some(id), Some(answers)) = (unsafe { string_from(id) }, unsafe {
+        string_from(answers_json)
+    }) else {
+        ephemeral.remember("the form could not be read");
+        return std::ptr::null_mut();
+    };
+
+    guard(ephemeral, || {
+        let workspace = ephemeral.workspace()?;
+        let app =
+            AppId::parse(&id).map_err(|error| format!("{id} is not an application id: {error}"))?;
+        let manifest = workspace
+            .apps()
+            .load(&app)
+            .map_err(|_| format!("there is no application called {id}"))?;
+
+        let inputs = manifest
+            .runtime
+            .as_ref()
+            .map(|runtime| runtime.inputs.clone())
+            .unwrap_or_default();
+
+        let answers: std::collections::BTreeMap<String, String> = serde_json::from_str(&answers)
+            .map_err(|error| format!("that is not a form: {error}"))?;
+
+        let built = ephemeral_core::manifest::arguments(&inputs, &answers)
+            .map_err(|refusal| refusal.to_string())?;
+
+        json(&built)
+    })
+}
+
 /// What the chosen service says it can be asked for.
 ///
 /// The connection test, and the model list, in one call — because they have one

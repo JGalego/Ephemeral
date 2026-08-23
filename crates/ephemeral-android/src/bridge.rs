@@ -416,6 +416,38 @@ pub extern "system" fn Java_io_github_jgalego_ephemeral_Native_models<'local>(
     })
 }
 
+/// Turns a filled-in form into the arguments the application receives.
+///
+/// The phone never composes an argument vector itself: the domain does, so a
+/// phone and a terminal cannot disagree about what a filled-in form means.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_jgalego_ephemeral_Native_arguments<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    session: jlong,
+    id: JString<'local>,
+    answers: JString<'local>,
+) -> jstring {
+    guarded(ptr::null_mut(), || {
+        let Some(open) = opened(session) else {
+            return ptr::null_mut();
+        };
+        let (Some(id), Some(answers)) = (text(&mut env, &id), text(&mut env, &answers)) else {
+            return ptr::null_mut();
+        };
+        let (Ok(id), Ok(answers)) = (CString::new(id), CString::new(answers)) else {
+            return ptr::null_mut();
+        };
+
+        // SAFETY: live handle, NUL-terminated strings borrowed for the call.
+        let produced = unsafe {
+            ephemeral_ffi::ephemeral_arguments(open.ephemeral, id.as_ptr(), answers.as_ptr())
+        };
+        handed_back(&mut env, produced)
+    })
+}
+
 /// Why the last call failed, or null.
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]

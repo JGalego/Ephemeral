@@ -91,6 +91,12 @@ data class Detail(
     val isolated: Boolean,
     val versions: List<String>,
     val retention: String,
+    /**
+     * What it takes, if it said. Empty means no form, not a form with no
+     * fields — every application written before applications could declare
+     * anything has an empty list.
+     */
+    val takes: List<Field>,
 ) {
     companion object {
         fun from(json: JSONObject): Detail {
@@ -104,8 +110,14 @@ data class Detail(
                 isolated = permissions?.optBoolean("isolated") ?: true,
                 versions = versions(json.optJSONArray("versions")),
                 retention = json.optString("retention"),
+                takes = fields(json.optJSONObject("runtime")?.optJSONArray("inputs")),
             )
         }
+
+        private fun fields(array: JSONArray?): List<Field> =
+            (0 until (array?.length() ?: 0)).mapNotNull { index ->
+                array?.optJSONObject(index)?.let(Field::from)
+            }
 
         private fun capabilities(array: JSONArray?): List<Capability> =
             (0 until (array?.length() ?: 0)).mapNotNull { index ->
@@ -185,6 +197,22 @@ internal object Engine {
         return (0 until listed.length()).mapNotNull { index ->
             listed.optJSONObject(index)?.let(Model::from)
         }
+    }
+
+    /**
+     * Turns a filled-in form into the arguments the application receives.
+     *
+     * Built by the engine, never here. A phone and a terminal composing
+     * argument vectors separately are two subtly different applications.
+     */
+    fun arguments(id: String, answers: Map<String, String>): List<String> {
+        val form = JSONObject()
+        for ((name, value) in answers) {
+            form.put(name, value)
+        }
+
+        val built = JSONArray(demand(Native.arguments(session, id, form.toString())))
+        return (0 until built.length()).map(built::getString)
     }
 
     /** Records a choice of service and hands it to the engine. */

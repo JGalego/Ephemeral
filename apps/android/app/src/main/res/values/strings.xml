@@ -22,6 +22,13 @@
     <string name="generating">Planning and writing it. This can take a minute.</string>
     <string name="needs_credential">Add a model key first — menu, then \"Model key\".</string>
 
+    <string name="what_it_takes">What it needs from you</string>
+    <string name="required_field">%1$s *</string>
+    <string name="a_file">A file it can reach</string>
+    <string name="a_folder">A folder it can reach</string>
+    <string name="run_it">Run it</string>
+    <string name="close">Close</string>
+    <string name="cannot_run_here">This is what your answers mean:\n\n%1$s\n\nA phone writes applications but cannot run them — that needs a container runtime, which is why running happens on a machine that has one.</string>
     <string name="model_title">Model</string>
     <string name="model_base_url">Base URL</string>
     <string name="model_model">Model name</string>

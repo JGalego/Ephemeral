@@ -73,6 +73,20 @@
             android:text="@string/phone_limits"
             android:textSize="12sp" />
 
+        <!--
+          What the application says it takes, drawn as a form.
+
+          Above the permissions rather than below: the question "what do I give
+          it" comes before "what may it reach", and a person filling this in has
+          already decided to run the thing.
+        -->
+        <LinearLayout
+            android:id="@+id/form"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingTop="8dp" />
+
         <LinearLayout
             android:id="@+id/permissions"
             android:layout_width="match_parent"

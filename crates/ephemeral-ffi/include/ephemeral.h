@@ -116,6 +116,21 @@ int32_t ephemeral_set_provider(EphemeralHandle *handle,
 char *ephemeral_provider(EphemeralHandle *handle);
 
 /*
+ * Turns a filled-in form into the arguments the application receives.
+ *
+ * `answers_json` is {"input name": "what somebody typed", ...}; the result is a
+ * JSON array of strings. NULL on refusal, with the reason in
+ * ephemeral_last_error in words meant for the person who filled the form in.
+ *
+ * You could build this yourself from the `inputs` on the application's page.
+ * Do not: a phone, a window and a terminal composing argument vectors
+ * separately are three subtly different applications, and the one that gets a
+ * flag's default wrong sends a program the opposite of what somebody chose.
+ */
+char *ephemeral_arguments(EphemeralHandle *handle, const char *id,
+                          const char *answers_json);
+
+/*
  * What the chosen service says it can be asked for:
  *
  *     [{"id": "openai/gpt-oss-120b", "name": "GPT OSS 120B", "ceiling": 65536}, …]

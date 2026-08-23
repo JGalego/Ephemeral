@@ -4,11 +4,16 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.graphics.Typeface
 import android.os.Bundle
+import android.text.InputType
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
+import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.CheckBox
+import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.Spinner
 import android.widget.TextView
 
 /** One application: what it is, what it wants, and what you have said to it. */
@@ -21,7 +26,11 @@ class DetailActivity : Activity() {
     private lateinit var description: TextView
     private lateinit var generate: Button
     private lateinit var status: TextView
+    private lateinit var form: LinearLayout
     private lateinit var permissions: LinearLayout
+
+    /** How to read each form control back, by the input's name. */
+    private val filled = mutableMapOf<String, () -> String>()
     private lateinit var footnotes: TextView
 
     override fun onCreate(state: Bundle?) {
@@ -40,6 +49,7 @@ class DetailActivity : Activity() {
         description = findViewById(R.id.description)
         generate = findViewById(R.id.generate)
         status = findViewById(R.id.status)
+        form = findViewById(R.id.form)
         permissions = findViewById(R.id.permissions)
         footnotes = findViewById(R.id.footnotes)
 
@@ -93,6 +103,8 @@ class DetailActivity : Activity() {
 
         generate.setText(if (page.versions.isEmpty()) R.string.generate else R.string.generate_again)
 
+        drawForm(page)
+
         permissions.removeAllViews()
         if (page.outstanding.isNotEmpty()) {
             permissions.addView(heading(getString(R.string.asked_for)))
@@ -111,6 +123,130 @@ class DetailActivity : Activity() {
             notes += getString(R.string.versions) + ":\n" + page.versions.joinToString("\n")
         }
         footnotes.text = notes.joinToString("\n\n")
+    }
+
+    /**
+     * Draws what the application says it takes.
+     *
+     * Every generated application so far has been a command-line tool with
+     * flags, and a phone has no terminal to type one into. So the application
+     * declares its shape and this draws it — one form renderer for every
+     * application, rather than asking a model to write a screen as well as a
+     * program.
+     *
+     * Nothing here composes an argument vector. The engine does that, from the
+     * same declaration, so this and the terminal cannot disagree about what a
+     * filled-in form means.
+     */
+    private fun drawForm(page: Detail) {
+        form.removeAllViews()
+        filled.clear()
+
+        if (page.takes.isEmpty()) {
+            // No declaration is not an empty form. Most applications ever
+            // generated declared nothing, and drawing a form with no fields
+            // would claim they take nothing.
+            return
+        }
+
+        form.addView(heading(getString(R.string.what_it_takes)))
+
+        for (field in page.takes) {
+            form.addView(label(field))
+            form.addView(control(field))
+            field.help?.let { form.addView(quiet(it)) }
+        }
+
+        form.addView(
+            Button(this).apply {
+                text = getString(R.string.run_it)
+                setOnClickListener { runWithForm() }
+            },
+        )
+    }
+
+    /** The field's name, marked when it cannot be left out. */
+    private fun label(field: Field): View = TextView(this).apply {
+        text = if (field.required) {
+            getString(R.string.required_field, field.label)
+        } else {
+            field.label
+        }
+        setTextColor(getColor(R.color.ink))
+        setPadding(0, dp(12), 0, dp(4))
+    }
+
+    /** The control for one field, remembered so its value can be read back. */
+    private fun control(field: Field): View = when (field.kind) {
+        "flag" -> CheckBox(this).apply {
+            isChecked = field.default == "true"
+            // A checkbox says true or false; the engine decides that false
+            // means the flag is not passed at all.
+            filled[field.name] = { isChecked.toString() }
+        }
+
+        "choice" -> Spinner(this).apply {
+            val options = field.options
+            this.adapter = ArrayAdapter(
+                this@DetailActivity,
+                android.R.layout.simple_spinner_dropdown_item,
+                options,
+            )
+            field.default
+                ?.let(options::indexOf)
+                ?.takeIf { it >= 0 }
+                ?.let { chosen -> setSelection(chosen) }
+            filled[field.name] = { options.getOrNull(selectedItemPosition).orEmpty() }
+        }
+
+        else -> EditText(this).apply {
+            setSingleLine()
+            if (field.kind == "number") {
+                inputType = InputType.TYPE_CLASS_NUMBER
+            }
+            // A file field is a path the application will be handed. It is not
+            // a permission: whether it can be opened is the sandbox's answer,
+            // and the sandbox holds only what was granted.
+            hint = when (field.kind) {
+                "file" -> getString(R.string.a_file)
+                "folder" -> getString(R.string.a_folder)
+                else -> field.default.orEmpty()
+            }
+            setText(field.default.orEmpty())
+            filled[field.name] = { text.toString() }
+        }
+    }
+
+    /**
+     * Reads the form and asks the engine what command it means.
+     *
+     * A refusal comes back in the domain's words — "The earlier file is needed
+     * before this can run" — rather than in anything this screen invents.
+     */
+    private fun runWithForm() {
+        val answers = filled.mapValues { (_, read) -> read() }
+
+        Engine.submit(this, { Engine.arguments(application, answers) }) { outcome ->
+            outcome
+                .onSuccess(::wouldRun)
+                .onFailure { say(it.message) }
+        }
+    }
+
+    /**
+     * What would happen, said plainly, because it cannot happen here yet.
+     *
+     * A phone has no container runtime, so an application generated on one is
+     * written and not built (ADR-0007). Showing the command the form produced
+     * is worth doing anyway: it is the proof that the form and the application
+     * agree, and it is what somebody would run on a machine that can.
+     */
+    private fun wouldRun(arguments: List<String>) {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.run_it)
+            .setMessage(getString(R.string.cannot_run_here, arguments.joinToString(" ")))
+            .setPositiveButton(R.string.close, null)
+            .show()
     }
 
     /** A capability that has been asked for, with the two answers to it. */

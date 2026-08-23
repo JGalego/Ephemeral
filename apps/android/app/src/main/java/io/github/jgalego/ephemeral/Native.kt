@@ -46,6 +46,14 @@ internal object Native {
      */
     external fun models(session: Long): String?
 
+    /**
+     * Turns a filled-in form into the arguments the application receives.
+     *
+     * The app never builds an argument vector itself. The domain does, so this
+     * and the terminal cannot disagree about what a filled-in form means.
+     */
+    external fun arguments(session: Long, id: String, answers: String): String?
+
     /** Why the last call failed, or null. */
     external fun lastError(session: Long): String?
 

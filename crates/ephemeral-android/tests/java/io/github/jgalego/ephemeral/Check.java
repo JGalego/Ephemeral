@@ -100,6 +100,20 @@ public final class Check {
         );
         require(Native.lastError(session) != null, "and the refusal is reported");
 
+        // Turning a filled-in form into a command crosses the bridge too. This
+        // application declared nothing, so an empty form is an empty command —
+        // what matters is that the call resolves and comes back as JSON rather
+        // than failing to bind at run time, which is the one failure a desktop
+        // JVM can catch and a phone cannot.
+        require(
+            "[]".equals(Native.arguments(session, id, "{}")),
+            "a form with nothing in it is a command with nothing in it"
+        );
+        require(
+            Native.arguments(session, "not-an-id", "{}") == null,
+            "and an unknown application is refused rather than guessed at"
+        );
+
         // A host whose transport throws is a host with a bug. It must not
         // become Ephemeral's crash: an exception left pending across a JNI
         // return poisons every later call.
