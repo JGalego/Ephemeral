@@ -56,10 +56,12 @@
 //! # Ok::<(), ephemeral_core::manifest::ManifestError>(())
 //! ```
 
+mod inputs;
 mod metadata;
 mod resources;
 mod runtime;
 
+pub use inputs::{Input, InputError, InputKind, Passing, arguments, switched_on};
 pub use metadata::{Artifacts, ExecutionLocation, Metadata};
 
 /// One capability an application asked for, and the reason it gave.

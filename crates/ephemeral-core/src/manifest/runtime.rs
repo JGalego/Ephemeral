@@ -199,6 +199,17 @@ pub struct RuntimeSpec {
     /// not the application's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
+
+    /// What the application takes, so something can ask for it.
+    ///
+    /// Empty for an application that declared nothing, which is every
+    /// application written before this existed — so a client has to treat an
+    /// empty declaration as "no form", not as "no inputs".
+    ///
+    /// A declaration is not a permission. An application saying it takes a file
+    /// is not an application that may read one ([`crate::manifest::Input`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<super::Input>,
 }
 
 impl RuntimeSpec {
@@ -212,6 +223,7 @@ impl RuntimeSpec {
             entrypoint: Vec::new(),
             interface: AppInterface::Web,
             port: Some(port),
+            inputs: Vec::new(),
         }
     }
 
@@ -225,6 +237,7 @@ impl RuntimeSpec {
             entrypoint,
             interface: AppInterface::Job,
             port: None,
+            inputs: Vec::new(),
         }
     }
 

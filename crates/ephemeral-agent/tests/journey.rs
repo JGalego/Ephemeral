@@ -105,6 +105,7 @@ fn a_sentence_becomes_a_ready_application() {
         entrypoint: outcome.app.entrypoint.clone(),
         interface: outcome.app.plan.interface,
         port: None,
+        inputs: Vec::new(),
     });
 
     for (event, actor) in [

@@ -736,6 +736,7 @@ fn generate(ephemeral: &Ephemeral, id: &str) -> Result<*mut c_char, String> {
         entrypoint: generated.result.entrypoint.clone(),
         interface: plan.result.interface,
         port: None,
+        inputs: Vec::new(),
     });
 
     let source = workspace.layout().app(&manifest.id).source();

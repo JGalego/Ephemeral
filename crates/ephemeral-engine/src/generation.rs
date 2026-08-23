@@ -291,6 +291,7 @@ fn apply_success(
         entrypoint: outcome.app.entrypoint.clone(),
         interface: outcome.app.plan.interface,
         port: None,
+        inputs: Vec::new(),
     });
 
     // Requests, never grants. The manifest records what the application wants;

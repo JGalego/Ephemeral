@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use ephemeral_core::{
     AppManifest, LifecycleState, Timestamp,
     audit::AuditEntry,
+    manifest::Input,
     permission::{AppPermission, PermissionLedger, RiskLevel},
 };
 
@@ -213,6 +214,7 @@ impl ApplicationDetail {
                 image: runtime.image.clone(),
                 interface: runtime.interface.to_string(),
                 primary_action: runtime.interface.primary_action().to_owned(),
+                inputs: runtime.inputs.clone(),
             }),
             limits: LimitsView {
                 description: manifest.resources.describe(),
@@ -256,6 +258,19 @@ pub struct RuntimeView {
 
     /// What the main button should say.
     pub primary_action: String,
+
+    /// What the application takes, so a client can draw a form for it.
+    ///
+    /// Carried verbatim from the manifest rather than reshaped, because the
+    /// argument vector is built from these by
+    /// [`ephemeral_core::manifest::arguments`] — in the domain, so a phone, a
+    /// window and a terminal cannot disagree about what a filled-in form means.
+    ///
+    /// Empty means "no form", not "no inputs": every application written before
+    /// applications could declare anything has an empty list, and a client that
+    /// drew an empty form for those would be claiming they take nothing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<Input>,
 }
 
 /// What an application may consume.
@@ -900,5 +915,88 @@ mod tests {
 
         assert_eq!(order.first().map(String::as_str), Some("low"));
         assert_eq!(order.last().map(String::as_str), Some("critical"));
+    }
+    /// A declared form reaches a client, and what a client sends back becomes
+    /// the command the application receives.
+    ///
+    /// The point of the whole tier: eight applications out of eight came back
+    /// as command-line tools with flags, and this is the path from that shape
+    /// to something somebody can use without a terminal.
+    #[test]
+    fn a_declared_form_becomes_the_command_the_application_runs() {
+        use ephemeral_core::manifest::{Input, InputKind, Passing};
+
+        let mut manifest = manifest();
+        manifest.runtime = Some(ephemeral_core::manifest::RuntimeSpec {
+            kind: ephemeral_core::manifest::RuntimeKind::Docker,
+            image: Some("python:3.12-slim".to_owned()),
+            version: None,
+            entrypoint: vec!["python".to_owned(), "/app/csvdiff.py".to_owned()],
+            interface: ephemeral_core::manifest::AppInterface::Job,
+            port: None,
+            inputs: vec![
+                Input {
+                    name: "old".to_owned(),
+                    label: "The earlier file".to_owned(),
+                    kind: InputKind::File,
+                    passing: Passing::Positional { at: 0 },
+                    required: true,
+                    default: None,
+                    help: None,
+                },
+                Input {
+                    name: "key".to_owned(),
+                    label: "Match rows by".to_owned(),
+                    kind: InputKind::Text,
+                    passing: Passing::Named {
+                        flag: "--key".to_owned(),
+                    },
+                    required: false,
+                    default: Some("id".to_owned()),
+                    help: None,
+                },
+            ],
+        });
+
+        let ledger = PermissionLedger::new();
+        let page = ApplicationDetail::of(&manifest, &ledger);
+
+        // The client sees the form.
+        let runtime = page.runtime.expect("it has a runtime");
+        assert_eq!(runtime.inputs.len(), 2);
+        assert_eq!(runtime.inputs[0].label, "The earlier file");
+        assert!(runtime.inputs[0].required);
+
+        // And what it sends back becomes the command, built in the domain so
+        // that every client builds the same one.
+        let answers = [("old".to_owned(), "/mnt/data/before.csv".to_owned())]
+            .into_iter()
+            .collect();
+        let built =
+            ephemeral_core::manifest::arguments(&runtime.inputs, &answers).expect("a command");
+
+        assert_eq!(
+            built,
+            ["--key", "id", "/mnt/data/before.csv"],
+            "the default filled itself in, and the positional came last"
+        );
+    }
+
+    /// An application that declared nothing gets no form, rather than an empty
+    /// one. The two look identical in a list and mean opposite things.
+    #[test]
+    fn an_application_that_declared_nothing_offers_no_form() {
+        let mut manifest = manifest();
+        manifest.runtime = Some(ephemeral_core::manifest::RuntimeSpec::docker_job(
+            "alpine",
+            vec!["/bin/true".to_owned()],
+        ));
+
+        let page = ApplicationDetail::of(&manifest, &PermissionLedger::new());
+
+        assert!(
+            page.runtime.expect("a runtime").inputs.is_empty(),
+            "no declaration means no form, not a form with no fields"
+        );
     }
 }

@@ -1234,6 +1234,7 @@ mod tests {
             entrypoint: vec![],
             interface: AppInterface::CommandLine,
             port: None,
+            inputs: Vec::new(),
         });
 
         let error = specification(&workspace, &manifest)
