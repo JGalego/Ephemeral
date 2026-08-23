@@ -619,7 +619,16 @@ pub fn models(workspace: &Workspace, provider_name: &str) -> Result<Vec<ephemera
         ephemeral_api::authority::require(workspace.ledger(), &required).map_err(Error::msg)?;
     }
 
-    provider(provider_name)?.models().map_err(Into::into)
+    let mut listed = provider(provider_name)?.models()?;
+
+    // Sorted, because the order a service returns is the order it happens to
+    // store them in. OpenAI answers with 126 models beginning
+    // `gpt-4-0613, gpt-4, gpt-3.5-turbo, gpt-live-transcribe` — a list nobody
+    // can find anything in. Sorting claims nothing about the models; it just
+    // makes the list navigable.
+    listed.sort_by(|left, right| left.id.cmp(&right.id));
+
+    Ok(listed)
 }
 
 /// Writes generated source to disk and builds it in a container.

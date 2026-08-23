@@ -21,9 +21,13 @@
 
       The list of providers comes from the engine and this does not try to
       mirror it: a provider with no id here still appears in the dialog and can
-      still be chosen by hand — it just cannot be named in a `--robo-directives`
-      argument, because Robo addresses controls by resource name and a name has
-      to exist in the APK before the run.
+      still be chosen by hand — it just cannot be named in a Robo directive,
+      because Robo addresses controls by resource name and a name has to exist
+      in the APK before the run.
+
+      (Written without the flag's leading hyphens on purpose: two of them in a
+      row end an XML comment, and Android's resource merger rejects the file
+      rather than guessing. It rejected this one.)
 
       A picker built from a Spinner had none of these, which is why every
       device run so far could only exercise whichever provider was the default.
