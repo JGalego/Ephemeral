@@ -106,6 +106,41 @@ jobs:
           gcloud config set project "$PROJECT" --quiet
           rm -f "$RUNNER_TEMP/key.json"
 
+      # Guessing at roles is how the last two attempts went. This asks
+      # instead: who am I, which project am I in, and what am I actually
+      # allowed to do there. The most common cause of a 403 that survives
+      # adding the right role is that the role was added in a different
+      # project from the one being used — a service account's email carries
+      # the project it lives in, so that mismatch can simply be checked.
+      - name: Who this is, and what it may do
+        run: |
+          account=$(gcloud config get account 2>/dev/null)
+          echo "Signed in as: $account"
+          echo "Project set to: $PROJECT"
+
+          # name@PROJECT.iam.gserviceaccount.com
+          lives_in=$(echo "$account" | sed -n 's/.*@\(.*\)\.iam\.gserviceaccount\.com/\1/p')
+          echo "Account belongs to project: ${lives_in:-unknown}"
+
+          if [ -n "$lives_in" ] && [ "$lives_in" != "$PROJECT" ]; then
+            echo "::error::The service account lives in '$lives_in' but the run targets '$PROJECT'."
+            echo "Roles granted in one project mean nothing in the other. Either set"
+            echo "FIREBASE_PROJECT_ID to '$lives_in', or make the key in '$PROJECT'."
+          fi
+
+          echo
+          echo "Roles it holds on $PROJECT:"
+          gcloud projects get-iam-policy "$PROJECT" \
+            --flatten="bindings[].members" \
+            --filter="bindings.members:$account" \
+            --format="value(bindings.role)" \
+            || echo "(could not read the policy — the account may not be allowed to)"
+
+          echo
+          echo "Can it write to storage in this project?"
+          gcloud storage buckets list --limit=5 --format="value(name)" \
+            || echo "(cannot even list buckets, which is itself the answer)"
+
       - name: Run it on a phone
         run: |
           set -uo pipefail
