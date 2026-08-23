@@ -208,9 +208,58 @@ jobs:
       - name: Install the Tauri CLI
         run: cargo install tauri-cli --version "^2" --locked
 
+      # Signing, when there is an identity to sign with.
+      #
+      # Tauri's bundler signs and notarises macOS builds from exactly these
+      # variables, and skips both when they are empty — so this is wired now
+      # and inert until somebody puts a certificate in repository secrets.
+      # Wiring it later would mean discovering the wiring is wrong during a
+      # release, which is how the rest of this workflow was discovered to be
+      # wrong.
+      #
+      # These are paid identities belonging to a person or an organisation, not
+      # to a repository. There is deliberately no fallback, no self-signed
+      # certificate and no "signed by CI": an unsigned build that says so is
+      # more honest than a signed one nobody can trace.
       - name: Bundle
         run: cargo tauri build --bundles ${{ matrix.targets }} ${{ matrix.args }}
         working-directory: apps/desktop/src-tauri
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      # Whether it came out signed, said out loud.
+      #
+      # A release whose signing quietly did not happen looks exactly like one
+      # where it did, right up until somebody's operating system refuses to
+      # open it. This asks the platform rather than assuming from the presence
+      # of a secret.
+      - name: Signed, or not
+        shell: bash
+        run: |
+          set -uo pipefail
+          case "${{ runner.os }}" in
+            macOS)
+              app=$(find apps/desktop/src-tauri/target -maxdepth 6 \
+                    -path '*/release/bundle/macos/*.app' -type d | head -1)
+              if [ -n "$app" ] && codesign -dv "$app" 2>&1 | grep -q 'Authority='; then
+                echo "Signed:"
+                codesign -dv "$app" 2>&1 | grep 'Authority=' || true
+              else
+                echo "::warning::Unsigned. macOS will refuse to open this without a right-click."
+              fi
+              ;;
+            Windows)
+              echo "::warning::Unsigned. Windows will warn before running the installer."
+              ;;
+            *)
+              echo "Linux packages are not signed by this workflow, and are not expected to be."
+              ;;
+          esac
 
       # Collected by extension rather than by name: bundle filenames are decided
       # by each platform's packaging conventions, not by us, and a glob written

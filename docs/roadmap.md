@@ -402,6 +402,9 @@ consent model working as intended, not a missing button.
 | A C ABI for mobile, with the host supplying its own HTTPS transport ([ADR-0017](architecture/decisions/0017-mobile-generates-through-a-host-transport.md)) | ✅ |
 | iOS and Android libraries built and published, and checked against the header on every commit | ✅ |
 | The Kotlin shell: an Android application, and an `.apk` in the release | ✅ |
+| The Kotlin shell compiles on every commit, not only when a release is cut | ✅ |
+| The phone's screens photographed on an emulator, so somebody can look at them | ✅ |
+| Signing wired to repository secrets, inert until an identity exists | ✅ |
 | The JNI bridge driven from a real JVM on every commit, callback included | ✅ |
 | The Swift shell, and an iOS application | |
 | A run on a physical device, which no machine in CI is | |
@@ -453,6 +456,24 @@ running the installer. Both are correct to. It needs an Apple Developer account
 and a Windows code-signing certificate — paid identities belonging to a person
 or an organisation, not to a repository — after which the keys live in
 repository secrets and never in the tree.
+
+The wiring for it is in place and inert. The bundle step reads the six Apple
+variables Tauri signs and notarises from, and skips both when they are empty,
+so the day a certificate exists is a day of adding secrets rather than a day of
+editing a release workflow under time pressure — which is exactly the situation
+in which the rest of this workflow was found to be wrong. A step after it asks
+the platform whether the build actually came out signed and warns when it did
+not, because a release whose signing quietly did not happen looks identical to
+one where it did until somebody's machine refuses to open it. There is
+deliberately no self-signed fallback: an unsigned build that says so is more
+honest than a signed one nobody can trace.
+
+**The phone's screens can now be photographed.** `.github/workflows/screens.yml`
+builds the application, boots an emulator on a runner that has KVM, taps
+through it and uploads the frames. An emulator is not a device and this does
+not close the row below; what it closes is that nothing had ever drawn these
+screens at all. It runs outside the required checks, because a screenshot is
+something a person reviews rather than something that passes.
 
 ### Phase 6 — Hardening
 
