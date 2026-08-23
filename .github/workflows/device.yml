@@ -107,20 +107,15 @@ jobs:
           rm -f "$RUNNER_TEMP/key.json"
 
       - name: Run it on a phone
-        id: run
         run: |
           set -uo pipefail
-          bucket="$PROJECT-ephemeral-device"
-          directory="run-${{ github.run_id }}"
-          echo "bucket=$bucket" >> "$GITHUB_OUTPUT"
-          echo "directory=$directory" >> "$GITHUB_OUTPUT"
 
-          # Made if it is not there. Test Lab has a default bucket, but naming
-          # our own means the results are somewhere predictable and can be
-          # given a lifecycle rule rather than accumulating for ever.
-          gcloud storage buckets describe "gs://$bucket" > /dev/null 2>&1 \
-            || gcloud storage buckets create "gs://$bucket" --location=us-central1
-
+          # No `--results-bucket`. Test Lab has a bucket of its own and will
+          # use it; making one instead needs billing enabled on the project,
+          # which the free plan does not have — so the first thing somebody
+          # following the setup would have hit is a permission error at the
+          # last step, for a bucket they never needed.
+          #
           # Robo explores the application on its own. The directives give it
           # the one thing it cannot guess — what to type into the box — using
           # the same resource ids `photograph.py` taps, so the two walkthroughs
@@ -131,31 +126,40 @@ jobs:
             --app apps/android/app/build/outputs/apk/debug/app-debug.apk \
             --device "model=${{ inputs.model }},version=${{ inputs.version }},locale=en,orientation=portrait" \
             --timeout "${{ inputs.minutes }}m" \
-            --results-bucket "$bucket" \
-            --results-dir "$directory" \
             --robo-directives "text:intent=compare two CSV files,click:create=" \
             2>&1 | tee run.log
           outcome=${PIPESTATUS[0]}
           set -e
 
-          # A device id that no longer exists is the most likely way this
-          # fails, and the error for it is not obvious. Say what is available.
-          if [ "$outcome" -ne 0 ] && grep -qi "model.*not.*found\|INVALID_ARGUMENT" run.log; then
-            echo "::error::That device may no longer exist. What does:"
+          # A device id that no longer exists is the likeliest way this fails,
+          # and the error for it does not say so. Print what does exist.
+          if [ "$outcome" -ne 0 ] && grep -qiE "model|INVALID_ARGUMENT" run.log; then
+            echo "::notice::If that device is gone, these are the ones that are not:"
             gcloud firebase test android models list --filter=form=PHYSICAL || true
+          fi
+
+          # Where it put the pictures. gcloud says so in prose rather than in a
+          # field, so this reads it back out of what it said.
+          bucket_and_dir=$(grep -oE 'storage/browser/[^]/[:space:]]+/[^]/[:space:]]+' run.log | head -1 | sed 's|storage/browser/||')
+          if [ -n "$bucket_and_dir" ]; then
+            echo "RESULTS=gs://$bucket_and_dir" >> "$GITHUB_ENV"
+            echo "Results in gs://$bucket_and_dir"
+          else
+            echo "::warning::Could not tell from the output where the results went."
           fi
 
           exit "$outcome"
 
       # Whatever it managed to produce, even when the run itself failed — a
-      # crash is exactly the case where the artifacts matter most.
+      # crash is exactly the case where the pictures matter most.
       - name: Collect what it saw
         if: always()
         run: |
           mkdir -p device
-          gcloud storage cp -r \
-            "gs://${{ steps.run.outputs.bucket }}/${{ steps.run.outputs.directory }}/*" \
-            device/ || echo "Nothing was uploaded."
+          if [ -n "${RESULTS:-}" ]; then
+            gcloud storage cp -r "$RESULTS/*" device/ || echo "Nothing could be downloaded."
+          fi
+          cp run.log device/ 2>/dev/null || true
           find device -type f | head -50
 
       - uses: actions/upload-artifact@v4
