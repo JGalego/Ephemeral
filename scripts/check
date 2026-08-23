@@ -39,6 +39,39 @@ step "Sandbox purity (ephemeral-runtime without a daemon)"
 cargo build -p ephemeral-runtime --no-default-features
 cargo test -p ephemeral-runtime --no-default-features
 
+# The pipeline's own files, because a workflow that does not parse does not
+# fail a job — it fails *before* any job, with nothing to read and a green
+# local check. Four pushes in a row ran no CI at all because `wasm::` ended a
+# plain YAML scalar in a colon, and nothing here would have noticed.
+step "The pipeline's own files parse"
+python3 - <<'PARSE'
+import sys, pathlib
+try:
+    import yaml
+except ImportError:
+    print("(skipping: no pyyaml here; CI has it)")
+    sys.exit(0)
+
+broken = 0
+for path in sorted(pathlib.Path(".github/workflows").glob("*.yml")):
+    try:
+        loaded = yaml.safe_load(path.read_text())
+    except yaml.YAMLError as error:
+        print(f"  {path}: {error}")
+        broken += 1
+        continue
+
+    # Parsing is necessary and not sufficient: a file that reads as a string
+    # rather than a workflow parses perfectly and runs nothing.
+    if not isinstance(loaded, dict) or "jobs" not in loaded:
+        print(f"  {path}: parses, but declares no jobs")
+        broken += 1
+    else:
+        print(f"  ok  {path} ({len(loaded['jobs'])} jobs)")
+
+sys.exit(1 if broken else 0)
+PARSE
+
 # The WebAssembly runtime is behind a feature, so the default build does not
 # compile it and the default test run does not exercise it. The sandbox it
 # claims is the whole reason it exists, so it is checked explicitly.

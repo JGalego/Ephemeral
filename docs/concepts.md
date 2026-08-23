@@ -148,15 +148,43 @@ to change your mind about what it produced.
 ## Runtime
 
 **What an application executes on**, behind a trait so more can be added:
-`DockerRuntime` (the desktop default), `NativeRuntime` (weaker isolation,
-stricter permission gating, and labelled as such), and `RemoteRuntime` (mobile,
-via the control plane).
+`DockerRuntime` (the desktop default), `WasmRuntime` (an interpreter, and the
+only one a phone can have — a module starts with no syscalls at all, so
+confinement is its resting state rather than something applied to it),
+`NativeRuntime` (modelled, deliberately unbuilt — see
+[ADR-0015](architecture/decisions/0015-defer-the-native-runtime.md)), and
+`RemoteRuntime` (modelled, unbuilt: a sandbox on a machine that has one, driven
+from a device that does not).
 
 The runtime is recorded in the manifest rather than decided at launch, so an
 application's isolation is a durable fact rather than a property of whichever
 machine happens to start it. It is `None` until planning settles it — an
 application that has only been requested genuinely does not know yet what kind
 of program it needs to be.
+
+## Declared inputs
+
+**What an application says it takes**, so something can ask for it. A name, a
+label a person would recognise, a kind (text, number, file, folder, one of a
+fixed set, or an on/off flag), whether it is passed positionally or under a
+flag, and optionally a default and a line of help.
+
+Every application generated so far has been a command-line tool with flags, and
+a phone has no terminal to type one into. The alternative — asking a model to
+write a user interface as well as a program — doubles what can go wrong for the
+large majority of these things that are one input, one output and a couple of
+options. So the application declares its shape and whatever is showing it draws
+the form: one renderer per client rather than one per application.
+
+**A declaration is not a permission.** An application saying it takes a file is
+not an application that may read one; the person still chooses which, and the
+sandbox still contains only what was granted. Declaring widens nothing, which is
+what makes it safe for a model to write.
+
+The argument vector is composed in the domain, never in a client. A phone, a
+window and a terminal building commands separately are three subtly different
+applications, and the one that gets a flag's default wrong sends a program the
+opposite of what somebody chose.
 
 ## Workspace
 

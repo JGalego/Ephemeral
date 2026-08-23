@@ -107,12 +107,37 @@ jobs:
       - run: cargo build -p ephemeral-runtime --no-default-features
       - run: cargo test -p ephemeral-runtime --no-default-features
 
+      # The pipeline's own files. A workflow that does not parse fails before
+      # any job, with nothing to read — so this cannot catch the file it lives
+      # in, but it catches every other one, and it is what `scripts/check`
+      # runs too.
+      - run: |
+          python3 - <<'PARSE'
+          import pathlib, sys, yaml
+
+          broken = 0
+          for path in sorted(pathlib.Path(".github/workflows").glob("*.yml")):
+              try:
+                  loaded = yaml.safe_load(path.read_text())
+              except yaml.YAMLError as error:
+                  print(f"::error file={path}::{error}")
+                  broken += 1
+                  continue
+              if not isinstance(loaded, dict) or "jobs" not in loaded:
+                  print(f"::error file={path}::parses, but declares no jobs")
+                  broken += 1
+          sys.exit(1 if broken else 0)
+          PARSE
+
       # The WebAssembly runtime is behind a feature, so neither the default
       # build nor the default test run touches it. What it claims — that a
       # module gets what it was granted and nothing else — is the reason it
       # exists, so it is checked on its own.
       - run: cargo clippy -p ephemeral-runtime --features wasm --all-targets -- -D warnings
-      - run: cargo test -p ephemeral-runtime --features wasm wasm::
+      # Quoted: a plain YAML scalar may not end in a colon, and `wasm::` does.
+      # Unquoted, this file does not parse, no job runs at all, and the run
+      # fails before it starts — which is what happened, four pushes running.
+      - run: "cargo test -p ephemeral-runtime --features wasm wasm::"
 
   # CI never makes a live model call (ADR-0008). Generation is exercised
   # entirely through the deterministic mock provider, so this job proves the
