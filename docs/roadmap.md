@@ -406,7 +406,8 @@ consent model working as intended, not a missing button.
 | The phone's screens photographed on an emulator, so somebody can look at them | ✅ |
 | Signing wired to repository secrets, inert until an identity exists | ✅ |
 | The JNI bridge driven from a real JVM on every commit, callback included | ✅ |
-| The Swift shell, and an iOS application | |
+| The Swift shell, type-checked against the iOS SDK on every commit | ✅ |
+| An iOS application somebody can install, which needs an Xcode project and an identity | |
 | A run on a physical device, which no machine in CI is | |
 | Building and running on mobile, which needs the control plane in [ADR-0007](architecture/decisions/0007-mobile-control-plane.md) | |
 
@@ -430,7 +431,20 @@ afternoon; the seam then paid for itself immediately, since the provider's
 request building and error mapping had been untestable by construction and are
 now driven by fake transports in CI.
 
-**Android has an application; iOS has a library.** The Kotlin shell exists, in
+**The Swift is code now, not a snippet.** For as long as this row existed the
+only Swift in the repository was an example in `docs/mobile.md` — which is to
+say, code nobody had ever put through a compiler. `apps/ios` is the shell: the
+engine wrapper, a URLSession transport, the Keychain, and every screen, in the
+same palette and the same words as the window. CI type-checks all of it against
+the real iOS SDK with the real C header on every commit.
+
+What that is not is an application anybody can install. That needs an Xcode
+project — these are sources, not a target — and an identity to sign with, and
+nothing has run it. It is in the position the desktop window was in before
+somebody filmed it, and `apps/ios/README.md` says so on its own first screen
+rather than leaving it to be discovered.
+
+**Android has an application; iOS has a library and now a shell.** The Kotlin shell exists, in
 [`apps/android`](../apps/android), and ships as an APK. It declares no
 dependencies at all — the engine is the only thing it needs, and HTTPS, JSON,
 the keystore and the widgets are already in the platform — which is why it

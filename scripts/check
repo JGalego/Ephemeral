@@ -135,6 +135,11 @@ else
   printf '\n(skipping desktop rendering: run `cd apps/desktop && npm install playwright` first)\n'
 fi
 
+# The iOS application, for anybody on a Mac. Says so and passes anywhere else:
+# Swift for iOS needs an SDK that only exists on one operating system.
+step "The iOS application"
+apps/ios/typecheck.sh
+
 # The phone's shell, for anybody who has an Android SDK. Skipped with a word
 # when there is none: most people working on the engine do not have one, and CI
 # does, which is where this is guaranteed to run.

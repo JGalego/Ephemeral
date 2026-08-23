@@ -92,6 +92,12 @@ preference, or a log.
 
 ## Swift
 
+There is a whole application now, in [`apps/ios`](../apps/ios) — the engine
+wrapper, the transport, the Keychain and every screen — and CI type-checks it
+against the iOS SDK on every commit. What follows is the shape of it, kept here
+because the transport is the part somebody embedding the engine in their own
+application has to write themselves.
+
 Add the XCFramework to your target and `import Ephemeral`.
 
 ```swift

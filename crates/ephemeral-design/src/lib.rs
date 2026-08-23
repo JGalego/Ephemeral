@@ -629,6 +629,96 @@ pub fn android() -> String {
     out
 }
 
+/// The iOS application's colours.
+///
+/// SwiftUI takes components as fractions rather than bytes, so the conversion
+/// happens here, once, rather than in a helper every view has to remember to
+/// call. `Color(red:green:blue:)` is sRGB and needs no UIKit, which keeps this
+/// compilable by anything that can compile SwiftUI.
+#[must_use]
+pub fn swift() -> String {
+    let mut out = generated_by("//", "// ", "//");
+
+    out.push_str("\nimport SwiftUI\n\n");
+    out.push_str("/// Every colour Ephemeral draws, by the name it has on every platform.\n");
+    out.push_str("enum Palette {\n");
+
+    for colour in DARK.colours {
+        let rgb = Rgb::parse(colour.hex).unwrap_or(Rgb {
+            red: 0,
+            green: 0,
+            blue: 0,
+        });
+
+        let name = lower_camel(colour.name);
+        let _ = writeln!(out, "    /// {}", colour.what);
+        let _ = writeln!(
+            out,
+            "    static let {name} = Color(red: {:.4}, green: {:.4}, blue: {:.4})",
+            f64::from(rgb.red) / 255.0,
+            f64::from(rgb.green) / 255.0,
+            f64::from(rgb.blue) / 255.0
+        );
+    }
+
+    out.push_str(SWIFT_MAPPINGS);
+    out
+}
+
+/// The two mappings every client needs, in Swift.
+///
+/// Kept as text rather than built up line by line: it is a fixed piece of
+/// source, and a loop that emitted it would be harder to read than the thing
+/// it emits.
+const SWIFT_MAPPINGS: &str = r#"
+    /// The colour a lifecycle state is drawn in, by the kind of state it is.
+    /// The engine's own vocabulary, so a phone cannot quietly decide a state is
+    /// calmer than the window thinks it is.
+    static func forState(_ kind: String) -> Color {
+        switch kind {
+        case "working": return accent
+        case "awaitinguser": return medium
+        case "active": return low
+        case "attention": return high
+        case "archived", "deleted": return inkFaint
+        default: return inkQuiet
+        }
+    }
+
+    /// The colour of a risk level. An unrecognised one is ordinary text, never
+    /// green: guessing "low" about the widest permission Ephemeral offers is
+    /// the one guess that does real harm.
+    static func forRisk(_ level: String?) -> Color {
+        switch level {
+        case "low": return low
+        case "medium": return medium
+        case "high": return high
+        case "critical": return critical
+        default: return ink
+        }
+    }
+}
+"#;
+
+/// `ink-quiet` as `inkQuiet`, because Swift is not CSS.
+fn lower_camel(name: &str) -> String {
+    let mut out = String::new();
+    let mut capitalise = false;
+
+    for character in name.chars() {
+        if character == '-' {
+            capitalise = true;
+        } else if capitalise {
+            out.extend(character.to_uppercase());
+            capitalise = false;
+        } else {
+            out.push(character);
+        }
+    }
+
+    out
+}
+
 /// Every file this palette generates, as a repository-relative path and the
 /// text that belongs in it.
 ///
@@ -639,6 +729,7 @@ pub fn generated() -> Vec<(&'static str, String)> {
     vec![
         ("apps/desktop/ui/tokens.css", css()),
         ("apps/android/app/src/main/res/values/colors.xml", android()),
+        ("apps/ios/Sources/Ephemeral/Palette.swift", swift()),
     ]
 }
 

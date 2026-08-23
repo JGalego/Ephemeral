@@ -35,21 +35,47 @@ fn the_generated_files_are_current() {
     );
 }
 
-/// Neither generated file may be empty or missing: an empty stylesheet is a
-/// window with no colours at all, and the test above would pass happily if the
-/// generator started producing nothing.
+/// No generated file may quietly lose a colour.
+///
+/// The test above only says the files match the generator, which a generator
+/// that had started emitting nothing would also satisfy. This one says every
+/// colour in the palette actually reached every client — in whichever spelling
+/// that platform uses, because CSS, XML and Swift disagree about hyphens and
+/// Swift does not write hex at all.
 #[test]
-fn the_generated_files_contain_a_palette() {
+fn every_colour_reaches_every_client() {
     for (path, contents) in ephemeral_design::generated() {
         assert!(
             contents.len() > 500,
             "{path} came out at {} bytes, which is not a palette",
             contents.len()
         );
-        assert!(
-            contents.contains("#0b0e17"),
-            "{path} does not contain the ground colour"
-        );
+
+        for colour in ephemeral_design::DARK.colours {
+            let kebab = colour.name.to_owned();
+            let snake = colour.name.replace('-', "_");
+            let camel = {
+                let mut out = String::new();
+                let mut upper = false;
+                for character in colour.name.chars() {
+                    if character == '-' {
+                        upper = true;
+                    } else if upper {
+                        out.extend(character.to_uppercase());
+                        upper = false;
+                    } else {
+                        out.push(character);
+                    }
+                }
+                out
+            };
+
+            assert!(
+                contents.contains(&kebab) || contents.contains(&snake) || contents.contains(&camel),
+                "{path} is missing {}",
+                colour.name
+            );
+        }
     }
 }
 

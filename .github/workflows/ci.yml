@@ -272,6 +272,37 @@ jobs:
       - run: gradle assembleDebug --no-daemon
         working-directory: apps/android
 
+  # The iOS application is Swift, and Swift for iOS needs a Mac. Nothing in
+  # this repository could compile it, so until this job existed the only Swift
+  # here was a snippet in a document — which is to say, code nobody had ever
+  # put through a compiler.
+  #
+  # A type-check rather than an .ipa: an archive needs an Xcode project and a
+  # signing identity, and neither exists yet (see the roadmap). What this
+  # catches is everything a compiler catches, which on a SwiftUI screen is most
+  # of it. It runs against the real iOS SDK, with the real C header, through
+  # the module map the XCFramework carries.
+  ios:
+    name: The iOS application type-checks
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+
+      # The engine, for the simulator this checks against. Swift needs the
+      # module to import; it does not need it linked, but building it here also
+      # means the header and the library are checked against each other on the
+      # one platform where that pairing actually ships.
+      - name: The engine, for the simulator
+        run: |
+          rustup target add aarch64-apple-ios-sim
+          cargo build -p ephemeral-ffi --target aarch64-apple-ios-sim --release
+
+      - name: Type-check the application
+        run: apps/ios/typecheck.sh
+
   supply-chain:
     name: Supply chain
     runs-on: ubuntu-latest
@@ -314,6 +345,7 @@ jobs:
       - desktop
       - window
       - android
+      - ios
       - supply-chain
       - lockfile
     steps:

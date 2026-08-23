@@ -1,4 +1,4 @@
 # Names that are spelled with internal capitals because that is how they are
 # spelled, not because they are code. Without this, `doc_markdown` asks for
 # backticks around a company's name in a sentence about a company.
-doc-valid-idents = ["OpenAI", "..", "LM", "MacOS", "OAuth"]
+doc-valid-idents = ["OpenAI", "..", "LM", "MacOS", "OAuth", "SwiftUI", "UIKit"]
