@@ -249,6 +249,38 @@ boundary, add the test that proves it holds.
 provider. **CI never makes a live model call** ([ADR-0008](architecture/decisions/0008-agent-provider-abstraction.md));
 a test that needs one will not be merged.
 
+## Eight sentences at once
+
+The mock provider returns one fixed application no matter what you ask for, so
+every automated exercise of generation exercises the same CSV comparator.
+`scripts/many-apps` is what asks a *real* model for eight different things and
+writes down what came back:
+
+```bash
+scripts/many-apps                        # the mock, free and offline
+scripts/many-apps --provider openai      # whatever OPENAI_BASE_URL points at
+```
+
+For each intent in `scripts/many-apps.d/intents` it creates the application,
+generates it, grants exactly what it asked for, publishes its source, runs it
+once bare and once on real sample files, and writes `target/many-apps/report.md`.
+
+Two things about it are worth knowing before you point it at a model:
+
+- **It runs with a `HOME` of its own.** Generated applications ask to read
+  folders like `~/Downloads`, and the harness makes that folder inside its own
+  output directory and fills it with the sample files. A request that resolves
+  anywhere else is refused and says so in the report — pointing a model-written
+  program at your actual home is the one thing this product exists to prevent.
+- **It reports two numbers.** How many built and started, and how many then did
+  the job on the files they were handed. Only the second one means anything: an
+  application that starts, prints its usage and exits is a successful build and
+  a failed program. Against the mock, that number is one in eight.
+
+The same script runs in CI as `many-apps.yml`, dispatch-only, with the key in a
+repository secret. See [providers.md](providers.md) for what each provider
+sends where, including Groq.
+
 ## Style
 
 `cargo fmt` decides formatting; clippy runs with `-D warnings`. If a lint is

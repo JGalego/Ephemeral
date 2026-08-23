@@ -1,0 +1,7 @@
+order,customer,item,quantity,posted
+1001,Ana,notebook,3,2026-01-04
+1002,Bruno,,1,2026-01-05
+1003,,pencil,12,2026-01-05
+1004,Dana,eraser,,2026-01-06
+1005,Eli,ruler,2,
+1006,Fatima,folder,4,2026-01-07

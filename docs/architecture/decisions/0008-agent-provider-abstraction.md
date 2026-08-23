@@ -46,7 +46,10 @@ Binding rules:
 - **CI never makes a live model call.** Every test — unit, integration,
   security, end-to-end — runs against `MockProvider`, which returns fixed
   outputs for fixed inputs. A test that requires a real provider will not be
-  merged.
+  merged. The rule is about the checks that gate a commit; a dispatch-only
+  workflow that gates nothing and produces a document for a person to read
+  (`many-apps.yml`) is outside it, and is dispatch-only for the three reasons
+  above — it costs money, needs a credential, and needs the network.
 - **The agent is not a privileged actor.** It cannot grant a permission, widen a
   resource limit, delete an application, or emit the lifecycle events reserved
   to the user (ADR-0004). Enforced in the core, never in a prompt.

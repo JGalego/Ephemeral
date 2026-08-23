@@ -1,0 +1,23 @@
+# What to ask for. One application per line.
+#
+# Everything after `::` is passed to the application when it runs. `{in}` is
+# whichever folder it asked to read, as the application sees it from inside its
+# container — the harness fills that in from what the run actually mounted,
+# because the name depends on the path and is not worth predicting.
+#
+# A line without `::` is still generated and still started; it just runs with no
+# arguments, which for most of these prints their usage.
+#
+# The list is deliberately varied. Six of these want to read a file, one wants
+# to install a package and write one, and one needs nothing at all — a model
+# that only ever produces "read a CSV, print a table" would look perfect here if
+# the list were all CSVs.
+
+compare two CSV files and show me what changed :: {in}/before.csv {in}/after.csv
+count how many times each word appears in a text file :: {in}/notes.txt
+find the error lines in a log file and group them by hour :: {in}/app.log
+print a table of contents for a Markdown file :: {in}/handbook.md
+find the rows of a CSV that have a missing value, and say which column :: {in}/messy.csv
+turn a folder of JSON files into one CSV :: {in}/json
+show me how long the lines in a text file are, as a histogram :: {in}/notes.txt
+make a QR code image for a URL :: https://github.com/JGalego/Ephemeral

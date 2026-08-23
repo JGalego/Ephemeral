@@ -1,0 +1,549 @@
+#!/usr/bin/env python3
+"""Asks for a list of applications, builds them, runs them, and writes down what
+happened.
+
+Everything in this repository that exercises generation exercises it once, with
+the mock provider, on the one sentence the mock was written for. That answers
+"does the loop work". It does not answer the question anybody actually has about
+a product that turns a sentence into software, which is: **what does it do with
+eight different sentences, from a model that has never seen this codebase?**
+
+So this asks for eight, one after another, and produces a report a person reads.
+It is not a test and it does not pass or fail on quality — a model's output is
+not a thing to assert about. What it does assert about is everything around the
+model: that a plan validates, that the build-and-repair loop ends, that the
+permission requests are ones the harness can actually grant, that the container
+starts, and that the application prints something when given real files.
+
+    scripts/many-apps                          # the mock, no credential, no bill
+    scripts/many-apps --provider openai        # whatever OPENAI_BASE_URL points at
+
+Read `docs/providers.md` for what each provider sends where. This one sends the
+intents in `scripts/many-apps.d/intents` to whatever you point it at, eight
+times, and generation is the expensive call.
+
+## The fake home
+
+Generated applications ask to read folders, and the folder they ask for is
+usually `~/something`. Granting that on a real machine would point a
+model-written program at somebody's actual files, which is precisely the thing
+this product exists to avoid — so the harness runs with `HOME` set to a
+directory of its own, creates whatever folder each application asked for inside
+it, and fills that folder with the sample files from `many-apps.d/input`.
+
+An application that asks to read anything **outside** that directory is refused,
+loudly, in the report. That is not a hypothetical: it is the one request a model
+can make that would turn this harness into a way of exfiltrating a laptop.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+REPO = HERE.parent
+
+# `ephemeral permissions <app>` prints the exact command that allows each
+# request. Reading it back is deliberate: the alternative is this script
+# rebuilding permission strings out of prose, which is how a harness ends up
+# granting something adjacent to what was asked for.
+GRANT_LINE = re.compile(r"^\s*ephemeral grant (\S+) (\S+)\s*$")
+
+# `ephemeral run` says where each granted folder appears inside the container.
+# Paths handed to the application have to be those ones, not the host's.
+MOUNT_LINE = re.compile(r"which it sees as (\S+)")
+
+
+@dataclass
+class Ran:
+    """One invocation of a generated application."""
+
+    arguments: list[str]
+    output: str
+    finished: str
+
+
+@dataclass
+class Attempt:
+    """Everything that happened to one intent, in the order it happened."""
+
+    intent: str
+    wanted_arguments: str
+    app: str = ""
+    outcome: str = "not reached"
+    seconds: float = 0.0
+    generation: str = ""
+    requested: list[tuple[str, str]] = field(default_factory=list)
+    refused: list[str] = field(default_factory=list)
+    files: list[str] = field(default_factory=list)
+    runs: list[Ran] = field(default_factory=list)
+
+    @property
+    def worked(self) -> bool:
+        """Whether it got as far as a container that started."""
+        return self.outcome in ("ran", "started", "ran, but not on what it was given")
+
+    @property
+    def useful(self) -> bool:
+        """Whether it did the thing, on the files it was handed.
+
+        The distinction is the whole point of running these twice. An
+        application that starts, prints its usage and exits is a successful
+        build and a failed program, and a harness that scored those the same
+        would report a model as working perfectly while it wrote eight things
+        that could not read their own arguments.
+        """
+        return self.outcome == "ran"
+
+
+class Ephemeral:
+    """The command line, with the environment pinned to the harness's own."""
+
+    def __init__(self, binary: Path, state: Path, home: Path) -> None:
+        self.binary = binary
+        self.environment = os.environ | {
+            "EPHEMERAL_HOME": str(state),
+            "HOME": str(home),
+            # A report full of escape codes is a report nobody can read, and the
+            # CLI only strips them when it can tell nobody is looking. Here it
+            # cannot: some of these calls have a terminal behind them.
+            "NO_COLOR": "1",
+        }
+
+    def __call__(self, *arguments: str, timeout: int = 1800) -> tuple[int, str]:
+        """Runs one command. Returns its status and everything it said.
+
+        Never raises on a non-zero exit: a generation that fails is the result,
+        not an accident, and a harness that stopped at the first one would
+        report less the worse the model was.
+        """
+        try:
+            finished = subprocess.run(
+                [str(self.binary), *arguments],
+                capture_output=True,
+                env=self.environment,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            return 124, f"gave up after {timeout}s"
+
+        said = finished.stdout.decode("utf-8", "replace")
+        said += finished.stderr.decode("utf-8", "replace")
+        return finished.returncode, said
+
+
+def find_binary(given: str | None) -> Path:
+    """The `ephemeral` to drive, built if this checkout has not built one."""
+    if given:
+        return Path(given).resolve()
+
+    for profile in ("release", "debug"):
+        candidate = REPO / "target" / profile / "ephemeral"
+        if candidate.exists():
+            return candidate
+
+    print("No `ephemeral` built yet. Building one.")
+    subprocess.run(["cargo", "build", "-p", "ephemeral-cli"], cwd=REPO, check=True)
+    return REPO / "target" / "debug" / "ephemeral"
+
+
+def read_intents(path: Path) -> list[tuple[str, str]]:
+    """The list, as intent and the arguments to run it with."""
+    entries = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        intent, _, arguments = line.partition("::")
+        entries.append((intent.strip(), arguments.strip()))
+    return entries
+
+
+def created_id(said: str) -> str | None:
+    """The id `ephemeral create` printed."""
+    found = re.search(r"^\s+id\s+(\S+)\s*$", said, re.MULTILINE)
+    return found.group(1) if found else None
+
+
+def inside(path: Path, boundary: Path) -> bool:
+    """Whether a resolved path lies within the harness's own directory.
+
+    The check the whole harness rests on. A generated application may ask for
+    anything; what it may be *given* here is a folder under a home this script
+    made up. Resolved first, so a path that walks back out through a link is
+    judged by where it lands rather than by how it is written.
+    """
+    try:
+        return boundary.resolve() in path.resolve().parents or path.resolve() == boundary.resolve()
+    except OSError:
+        return False
+
+
+def scope_of(written: str, home: Path) -> Path | None:
+    """Where a `read:` or `write:` permission points on this machine.
+
+    The same resolution `ephemeral-runtime` does — `~` is `HOME`, which the
+    harness has pointed at itself. Anything that is not a path permission has no
+    scope and returns `None`.
+    """
+    head, separator, tail = written.partition(":")
+    if head not in ("read", "write") or not separator:
+        return None
+
+    tail = tail.removesuffix("/**").removesuffix("/*")
+    if tail.startswith("~/"):
+        return home.joinpath(*tail[2:].split("/"))
+    if tail == "~":
+        return home
+    return Path(tail)
+
+
+def seed(folder: Path, samples: Path) -> None:
+    """Puts the sample files where an application said it would look for them.
+
+    Copied rather than linked, and copied for every application separately: one
+    of these is going to write into the folder it was given, and the ninth
+    application should not inherit the eighth's mess.
+    """
+    folder.mkdir(parents=True, exist_ok=True)
+    for source in samples.iterdir():
+        target = folder / source.name
+        if source.is_dir():
+            shutil.copytree(source, target, dirs_exist_ok=True)
+        else:
+            shutil.copy2(source, target)
+
+
+def settle(ephemeral: Ephemeral, app: str, wait: int) -> str:
+    """Waits for an application to finish, and says how it went.
+
+    `ephemeral status` reconciles the record against the container and says
+    whether it exited cleanly, which is the only honest answer to "did it work"
+    — an application that prints a stack trace and exits 1 has still produced
+    output, and a harness that reported that as success would be lying in a
+    file somebody trusts.
+    """
+    for _ in range(wait):
+        code, said = ephemeral("status", app)
+        if code == 0 and "Running" not in said.replace("was Running", ""):
+            return said.strip().splitlines()[-1] if said.strip() else "finished"
+        time.sleep(1)
+
+    return f"still running after {wait}s"
+
+
+def run_once(
+    ephemeral: Ephemeral, app: str, arguments: list[str], wait: int
+) -> tuple[Ran, str | None]:
+    """Starts an application, waits for it, and collects what it printed."""
+    code, said = ephemeral("run", app, *(["--", *arguments] if arguments else []))
+
+    mount = None
+    found = MOUNT_LINE.search(said)
+    if found:
+        mount = found.group(1)
+
+    if code != 0:
+        return Ran(arguments, said.strip(), "would not start"), mount
+
+    finished = settle(ephemeral, app, wait)
+    _, logs = ephemeral("logs", app, "--lines", "60")
+
+    # Everything after the heading is the application's own output. The history
+    # above it is Ephemeral talking about the application, which belongs in the
+    # audit trail rather than in a report about what the application does.
+    _, _, printed = logs.partition("— output")
+    ephemeral("stop", app)
+
+    return Ran(arguments, printed.strip() or "(it printed nothing)", finished), mount
+
+
+def attempt(
+    ephemeral: Ephemeral,
+    intent: str,
+    arguments: str,
+    provider: str,
+    home: Path,
+    samples: Path,
+    into: Path,
+    wait: int,
+) -> Attempt:
+    """One intent, from a sentence to whatever it ends up being."""
+    record = Attempt(intent=intent, wanted_arguments=arguments)
+    started = time.monotonic()
+
+    code, said = ephemeral("create", intent)
+    app = created_id(said)
+    if code != 0 or not app:
+        record.outcome = "could not be recorded"
+        record.generation = said.strip()
+        record.seconds = time.monotonic() - started
+        return record
+
+    record.app = app
+    print(f"  {app}")
+
+    code, said = ephemeral("generate", app, "--provider", provider)
+    record.generation = said.strip()
+    record.seconds = time.monotonic() - started
+    if code != 0:
+        record.outcome = "was not built"
+        return record
+
+    # What it asked for, and what of that the harness is willing to give it.
+    _, permissions = ephemeral("permissions", app)
+    for line in permissions.splitlines():
+        found = GRANT_LINE.match(line)
+        if not found or found.group(1) != app:
+            continue
+
+        written = found.group(2)
+        folder = scope_of(written, home)
+
+        if folder is not None and not inside(folder, home):
+            record.refused.append(written)
+            continue
+
+        if folder is not None:
+            seed(folder, samples)
+
+        # Both halves of the model, because that is the model: an application's
+        # grant does nothing until Ephemeral itself is allowed to carry it out
+        # (ADR-0003). Granting only one of the two is how somebody spends an
+        # afternoon wondering why an allowed permission changed nothing.
+        ephemeral("grant", app, written, "--why", "the many-apps harness")
+        if folder is not None:
+            ephemeral("grant", "ephemeral", written, "--why", "the many-apps harness")
+        record.requested.append((written, "granted"))
+
+    for written in record.refused:
+        record.requested.append((written, "refused: outside the harness's own home"))
+
+    source = into / "source"
+    code, said = ephemeral("publish", app, str(source))
+    if code == 0 and source.exists():
+        record.files = sorted(
+            str(path.relative_to(source)) for path in source.rglob("*") if path.is_file()
+        )
+
+    # Bare first. It is how the application behaves when somebody runs it with
+    # no idea what it wants, which is a real thing that happens, and it is also
+    # what prints the mount names the second run needs.
+    bare, mount = run_once(ephemeral, app, [], wait)
+    record.runs.append(bare)
+
+    if arguments:
+        if "{in}" in arguments and mount is None:
+            record.runs.append(
+                Ran([], "", "not run with arguments: it mounted nothing to put them under")
+            )
+        else:
+            filled = [part.replace("{in}", mount or "") for part in arguments.split()]
+            with_arguments, _ = run_once(ephemeral, app, filled, wait)
+            record.runs.append(with_arguments)
+
+    last = record.runs[-1]
+    if not arguments:
+        record.outcome = "started"
+    elif "cleanly" in last.finished:
+        record.outcome = "ran"
+    else:
+        record.outcome = "ran, but not on what it was given"
+
+    record.seconds = time.monotonic() - started
+    return record
+
+
+def fenced(text: str, limit: int = 4000) -> str:
+    """Text in a code fence, shortened rather than allowed to fill the page."""
+    text = text.strip() or "(nothing)"
+    if len(text) > limit:
+        text = text[:limit] + f"\n… {len(text) - limit} more characters"
+    return "```\n" + text.replace("```", "'''") + "\n```"
+
+
+def report(attempts: list[Attempt], provider: str, model: str, into: Path) -> str:
+    """The whole run, as something a person reads top to bottom."""
+    worked = sum(1 for one in attempts if one.worked)
+    useful = sum(1 for one in attempts if one.useful)
+    lines = [
+        "# What came back",
+        "",
+        f"Provider `{provider}`" + (f", model `{model}`." if model else "."),
+        "",
+        f"- {worked} of {len(attempts)} built and started.",
+        f"- {useful} of {len(attempts)} then did the job on the files they were handed.",
+        "",
+        "The second number is the one worth reading. Everything that builds also "
+        "starts; what separates a working application from a plausible one is "
+        "whether it does anything when somebody hands it a real file.",
+        "",
+        "| Intent | Outcome | Time | Asked for |",
+        "|---|---|---|---|",
+    ]
+
+    for one in attempts:
+        asked = ", ".join(f"`{written}`" for written, _ in one.requested) or "nothing"
+        lines.append(f"| {one.intent} | {one.outcome} | {one.seconds:.0f}s | {asked} |")
+
+    for one in attempts:
+        lines += ["", "---", "", f"## {one.intent}", ""]
+        lines.append(f"- **{one.outcome}**, in {one.seconds:.0f} seconds")
+        if one.app:
+            lines.append(f"- `{one.app}`")
+        if one.files:
+            lines.append("- wrote " + ", ".join(f"`{name}`" for name in one.files))
+        lines += ["", "### What Ephemeral said while building it", "", fenced(one.generation)]
+
+        if one.requested:
+            lines += ["", "### What it asked to be allowed", ""]
+            for written, verdict in one.requested:
+                lines.append(f"- `{written}` — {verdict}")
+
+        for ran in one.runs:
+            shown = " ".join(ran.arguments) if ran.arguments else "no arguments"
+            lines += ["", f"### Run: {shown}", "", f"_{ran.finished}_", "", fenced(ran.output)]
+
+    # A report that only summarises is a report that ends the investigation.
+    # Picking one of these apart by hand is the part no harness can do, so the
+    # last thing it says is how to start.
+    example = next((one.app for one in attempts if one.useful), None)
+    example = example or next((one.app for one in attempts if one.app), "<app>")
+
+    lines += [
+        "",
+        "---",
+        "",
+        "## Taking one of them apart",
+        "",
+        f"Source for everything that built is under `{into.name}/`. The workspace",
+        "is still there, so any of these can be poked at directly — point",
+        "`EPHEMERAL_HOME` at the `state/` directory beside this file and:",
+        "",
+        "```console",
+        f"$ ephemeral inspect {example}          # what it is, and what it holds",
+        f"$ ephemeral permissions {example}      # and what it asked for",
+        f"$ ephemeral audit --app {example}      # every decision, in order",
+        f"$ ephemeral revoke {example} <what>    # then run it again and watch it fail",
+        f"$ ephemeral logs {example}             # what it printed last",
+        "```",
+        "",
+        "Revoking and re-running is the one worth doing. An application that",
+        "reads a folder should stop being able to read it the moment the grant",
+        "goes, and that is a claim about the sandbox rather than about the",
+        "model — the same claim on every one of these, whatever it was asked",
+        "to be.",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Generate a batch of applications and write down what happened.",
+    )
+    parser.add_argument(
+        "--provider",
+        default="mock",
+        help="mock, local, anthropic or openai. Default mock: no credential, no bill.",
+    )
+    parser.add_argument(
+        "--intents",
+        type=Path,
+        default=HERE / "many-apps.d" / "intents",
+        help="The list to ask for, one per line.",
+    )
+    parser.add_argument(
+        "--input",
+        type=Path,
+        default=HERE / "many-apps.d" / "input",
+        help="Sample files, copied into whatever folder each application asks to read.",
+    )
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=REPO / "target" / "many-apps",
+        help="Where the report, the sources and the workspace go.",
+    )
+    parser.add_argument("--binary", help="An `ephemeral` to drive, instead of this checkout's.")
+    parser.add_argument(
+        "--wait",
+        type=int,
+        default=30,
+        help="How long to let each application run before calling it unfinished.",
+    )
+    parser.add_argument(
+        "--keep",
+        action="store_true",
+        help="Keep the previous run's workspace instead of starting from nothing.",
+    )
+    arguments = parser.parse_args()
+
+    out = arguments.out.resolve()
+    if out.exists() and not arguments.keep:
+        shutil.rmtree(out)
+    out.mkdir(parents=True, exist_ok=True)
+
+    state = out / "state"
+    home = out / "home"
+    home.mkdir(parents=True, exist_ok=True)
+
+    ephemeral = Ephemeral(find_binary(arguments.binary), state, home)
+
+    # Ephemeral's own authority, granted once and explained in the audit log.
+    # Nothing here grants itself anything: this is a person's script running on
+    # a person's behalf, and it says so in every reason it records.
+    ephemeral("grant", "ephemeral", "docker", "--why", "the many-apps harness")
+    if arguments.provider != "mock":
+        ephemeral("grant", "ephemeral", "network", "--why", "the many-apps harness")
+        ephemeral("grant", "ephemeral", "credentials", "--why", "the many-apps harness")
+
+    entries = read_intents(arguments.intents)
+    print(f"{len(entries)} intent(s), provider {arguments.provider}\n")
+
+    attempts = []
+    for number, (intent, run_with) in enumerate(entries, start=1):
+        print(f"{number}/{len(entries)}  {intent}")
+        attempts.append(
+            attempt(
+                ephemeral,
+                intent,
+                run_with,
+                arguments.provider,
+                home,
+                arguments.input.resolve(),
+                out / "apps" / f"{number:02d}",
+                arguments.wait,
+            )
+        )
+        print(f"  {attempts[-1].outcome}, {attempts[-1].seconds:.0f}s\n")
+
+    written = out / "report.md"
+    written.write_text(
+        report(attempts, arguments.provider, os.environ.get("OPENAI_MODEL", ""), out / "apps"),
+        encoding="utf-8",
+    )
+
+    worked = sum(1 for one in attempts if one.worked)
+    useful = sum(1 for one in attempts if one.useful)
+    print(f"{worked}/{len(attempts)} built and started.")
+    print(f"{useful}/{len(attempts)} did the job on the files they were handed.")
+    print(f"Report: {written}")
+
+    # Non-zero when nothing worked at all, and only then. One application out of
+    # eight failing to build is information about a model; none of them building
+    # is information about this harness, and those deserve different exit codes.
+    return 0 if worked else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

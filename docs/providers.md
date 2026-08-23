@@ -112,6 +112,28 @@ before OpenAI renamed `max_tokens`: every request bounds its reply, and a bound
 sent under a name the service does not read is no bound at all. Set to anything
 other than those two names, it is refused rather than quietly defaulted past.
 
+### Groq, and anything else that copied the format
+
+Groq speaks this API, so it needs no code and no new provider — three variables
+and it is a different model:
+
+```console
+$ export OPENAI_BASE_URL=https://api.groq.com/openai/v1
+$ export OPENAI_API_KEY=gsk_...
+$ export OPENAI_MODEL=llama-3.3-70b-versatile
+$ ephemeral generate <app> --provider openai
+```
+
+The key comes from [console.groq.com](https://console.groq.com) → API Keys.
+Groq reads `max_completion_tokens`, which is the default, so
+`OPENAI_TOKEN_CEILING_FIELD` can be left alone. Its catalogue changes faster
+than a document can track — if a model id has been retired the request fails
+with the service's own message saying so, which is the right place to find out.
+
+The same three variables reach Together, Fireworks, OpenRouter, a company
+gateway, or a colleague's vLLM. None of them is more trusted than the others:
+what a model returns is validated identically no matter who served it.
+
 Whatever it points at, this provider sends your intent off the machine. That is
 the whole of the difference between it and `local`, which uses the same wire
 format ([ADR-0019](architecture/decisions/0019-openai-compatible-and-a-local-model.md)).
@@ -124,3 +146,18 @@ every provider's request building, response parsing and error mapping is tested
 as pure functions against recorded replies, and the part that is not tested is
 one shared module that hands a string to `curl`. That applies to `local` too:
 nothing in CI runs a model server either.
+
+What is not automated is *looking*. `scripts/many-apps` asks a real model for
+eight different applications, builds and runs each one, and writes a report —
+including what each asked to be allowed and what it printed when handed a real
+file. It is dispatch-only in CI (`.github/workflows/many-apps.yml`) and free to
+run locally against the mock:
+
+```console
+$ scripts/many-apps                       # the mock: one fixed app, eight times
+$ scripts/many-apps --provider openai     # whatever OPENAI_BASE_URL points at
+```
+
+Run against the mock it reports one application in eight doing the job, which is
+correct and is the point: the mock returns a CSV comparator whatever you ask it
+for, and seven of those eight sentences were not about CSVs.

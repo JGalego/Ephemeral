@@ -1,0 +1,116 @@
+name: Many apps
+
+# Asks a real model for eight applications, builds them, runs them, and uploads
+# a report.
+#
+# Everything else in this pipeline exercises generation through the mock, which
+# returns one fixed application for every sentence (ADR-0008). That is the right
+# thing for a check that gates a commit: it is free, offline and deterministic.
+# It is also the reason nobody in this repository has ever seen what happens when
+# eight *different* sentences meet a model that has never seen this codebase —
+# whether the plans validate, whether the repair round is enough, what the
+# applications ask to be allowed, and whether any of them work on a real file.
+#
+# This is that. It is the same `scripts/many-apps` anybody runs on their own
+# machine, so what CI reports and what somebody sees locally cannot drift.
+#
+# Deliberately dispatch-only, for the three reasons ADR-0008 gives for keeping
+# live calls out of CI: it costs money, it needs a credential, and it needs the
+# network. It is not a test and it gates nothing. What it produces is a document
+# for a person to read.
+
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: >
+          Which provider. `openai` reaches anything that speaks the chat
+          completions format, which is what `base_url` is for.
+        default: "openai"
+        type: choice
+        options: [openai, anthropic, mock]
+      base_url:
+        description: >
+          Where to send it, for the `openai` provider. Groq by default; OpenAI
+          itself is https://api.openai.com/v1.
+        default: "https://api.groq.com/openai/v1"
+        type: string
+      model:
+        description: >
+          Which model. Groq's catalogue changes — if this one is gone the run
+          fails with the provider's own list of what is not.
+        default: "llama-3.3-70b-versatile"
+        type: string
+      ceiling:
+        description: >
+          What the service calls the field that bounds a reply.
+          `max_completion_tokens` is current; `max_tokens` is what a service
+          that copied the format before OpenAI renamed it still reads.
+        default: "max_completion_tokens"
+        type: choice
+        options: [max_completion_tokens, max_tokens]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: many-apps-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    name: Eight applications, from a real model
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      # Read once, because the `secrets` context cannot be used in an `if:` and
+      # a job that quietly generates nothing is worse than one that says what is
+      # missing.
+      OPENAI_API_KEY: ${{ secrets.MODEL_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.MODEL_API_KEY }}
+      OPENAI_BASE_URL: ${{ inputs.base_url }}
+      OPENAI_MODEL: ${{ inputs.model }}
+      OPENAI_TOKEN_CEILING_FIELD: ${{ inputs.ceiling }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check there is a key to use
+        if: inputs.provider != 'mock'
+        run: |
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "::error::No MODEL_API_KEY secret. Settings -> Secrets and variables -> Actions."
+            echo "docs/providers.md says what each provider expects."
+            exit 1
+          fi
+          echo "A key is present. Sending to $OPENAI_BASE_URL as $OPENAI_MODEL."
+
+      # Release, not debug. Eight generations spend their time waiting on a
+      # model and their CPU on building eight container images; an unoptimised
+      # binary adds minutes to a job that is already paying by the token.
+      - name: Build the command line
+        run: cargo build --release -p ephemeral-cli
+
+      # Docker is on the runner. Ephemeral still has to be allowed to use it,
+      # which the harness grants and records — the two-tier model is not
+      # suspended because this is CI (ADR-0003).
+      - name: Ask for eight applications
+        run: scripts/many-apps --provider "${{ inputs.provider }}"
+
+      # Always: a run where six of eight failed is the run worth reading, and it
+      # is the one where the step above exits non-zero.
+      - name: The report
+        if: always()
+        run: cat target/many-apps/report.md >> "$GITHUB_STEP_SUMMARY" || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: many-apps
+          # The report, and the source of everything that built — the point of
+          # the run is being able to read what a model actually wrote. The
+          # harness's fake home is left out: it is eight copies of the sample
+          # files that are already in the repository.
+          path: |
+            target/many-apps/report.md
+            target/many-apps/apps/
+          if-no-files-found: warn

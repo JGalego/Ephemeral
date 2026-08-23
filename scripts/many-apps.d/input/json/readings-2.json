@@ -1,0 +1,14 @@
+[
+  {
+    "station": "lisbon",
+    "day": "2026-03-01",
+    "rainfall_mm": 3.1,
+    "high_c": 18.2
+  },
+  {
+    "station": "lisbon",
+    "day": "2026-03-02",
+    "rainfall_mm": 0.0,
+    "high_c": 21.0
+  }
+]

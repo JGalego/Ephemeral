@@ -1,0 +1,10 @@
+The cheapest software is the software you never have to maintain.
+Most tools are used once. We keep them anyway, and then we keep maintaining them.
+A tool that exists for an afternoon does not need a roadmap, a logo, or a release process.
+It needs to work this afternoon, and then it needs to be gone.
+The interesting question is not whether a program can be written quickly.
+The interesting question is what it is allowed to touch while it runs.
+Permission is the whole product. The code is an implementation detail of the permission.
+An application that can read everything is not an application, it is a risk with a user interface.
+Ask for what you need. Say why. Let somebody answer. Take no for an answer.
+Throw it away when you are finished with it.
