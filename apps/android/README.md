@@ -34,6 +34,21 @@ A machine that can build finishes the job — the same workspace, on a desktop.
 | `app/src/main/java/…/Credential.kt` | The model key, sealed by the Android keystore |
 | `crates/ephemeral-android` | The JNI bridge, in Rust, at the repository root |
 
+## Looking at it
+
+`tests/photograph.py` drives whatever device `adb` is talking to — a plugged-in
+phone as readily as an emulator — taps through the application and writes a
+numbered frame per step. It asserts nothing on purpose: you have to look.
+
+```bash
+adb devices                       # a phone on a wire, or a running emulator
+apps/android/tests/photograph.py  # frames into ./screens
+```
+
+`.github/workflows/screens.yml` runs exactly that against an emulator on a
+runner with KVM. An emulator is not a device; [the roadmap](../../docs/roadmap.md#phase-5--cross-platform)
+lists what running on real hardware would take.
+
 ## Building
 
 You need the Android SDK (platform 34, build-tools 34), an NDK, a JDK 17 or

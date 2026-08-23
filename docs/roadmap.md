@@ -13,7 +13,7 @@ rather than describes, and Phase 2 was
 [demonstrated rather than asserted](#not-a-claim-this-time-it-was-run).
 
 Phase 5 — Cross-platform — is next, and most of it exists: what is left there is
-signing, an iOS shell, and a run on a physical device.
+signing, an installable iOS build, and a run on a physical device.
 
 ### Done
 
@@ -408,7 +408,7 @@ consent model working as intended, not a missing button.
 | The JNI bridge driven from a real JVM on every commit, callback included | ✅ |
 | The Swift shell, type-checked against the iOS SDK on every commit | ✅ |
 | An iOS application somebody can install, which needs an Xcode project and an identity | |
-| A run on a physical device, which no machine in CI is | |
+| A run on a physical device, which needs a device cloud account or a phone on a wire | |
 | Building and running on mobile, which needs the control plane in [ADR-0007](architecture/decisions/0007-mobile-control-plane.md) | |
 
 **Done when:** somebody can download and run Ephemeral on their own machine
@@ -463,6 +463,35 @@ What that does **not** cover is the application's own screens. Nobody has run
 this on a device; there is no KVM in the container it was written in, so there
 was no emulator either. It is in exactly the position the desktop window was in
 before it was filmed, and it should be read that way.
+
+**A real device is reachable; it needs an account, not an invention.** "No
+machine in CI is a phone" was the reason this row gave for years, and it stopped
+being the whole truth the moment device clouds existed. The routes, honestly:
+
+- **A phone on a wire is the cheapest and the best.**
+  `apps/android/tests/photograph.py` drives whatever `adb` is talking to, so it
+  already works against a real handset plugged into a laptop — no account, no
+  secrets, no per-minute billing, and the frames come from the actual hardware.
+  This is the one to do first, and it needs nobody's permission.
+- **[Firebase Test Lab](https://firebase.google.com/docs/test-lab/usage-quotas-pricing)**
+  runs on real Android hardware and its free tier covers five physical-device
+  runs a day. Its Robo crawler walks an application by itself and returns
+  screenshots, video and crash logs, which is close to what this repository
+  already means by "looking". It needs a Google Cloud service account in
+  repository secrets.
+- **[AWS Device Farm](https://docs.aws.amazon.com/devicefarm/latest/developerguide/apps.html)**
+  runs both platforms on real hardware, and is the interesting one for iOS: it
+  re-signs an uploaded application with its own certificate and a wildcard
+  profile, so it needs no Apple Developer account and no device UDIDs. It does
+  need an `.ipa` built for a device rather than a simulator — which means the
+  Xcode project is the blocker there, not the identity.
+- **BrowserStack, Sauce Labs and LambdaTest** all rent real devices and all have
+  open-source plans. Same shape: credentials in secrets.
+
+Every one of them is a credential this repository does not hold and a third
+party in a pipeline that also signs releases — the same judgement as the
+signing identity, and the same answer: wire it when there is an account to wire,
+say plainly until then that nothing has run on a phone.
 
 **Signing is the remaining gap, and it is not a small one.** Until these builds
 are signed, macOS refuses to open the application and Windows warns before
