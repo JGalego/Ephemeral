@@ -75,14 +75,19 @@ Twenty minutes of setup, once, by somebody with a Google account:
    (`toolresults.googleapis.com`). Test Lab is a Cloud service wearing a
    Firebase badge, and both halves have to be switched on.
 3. **A service account** — Cloud console → *IAM & Admin* → *Service accounts* →
-   *Create*. Give it **Firebase Test Lab Admin** and **Storage Object Admin**:
-   the first runs the test, the second puts the APK into the bucket Test Lab
-   works from and reads the pictures back out of it afterwards.
+   *Create*. Give it the **Editor** role.
 
-   Object *Viewer* is not enough and the failure is late and unobvious — the
-   whole build succeeds, then the upload is refused with
-   `storage.objects.create denied`. Nothing here creates a bucket, though:
-   making one needs billing enabled, and the free plan does not have it.
+   Editor is broad, and it is what [Google's own Test Lab CI
+   instructions](https://firebase.google.com/docs/test-lab/android/continuous)
+   ask for. Narrower sets were tried here and each failed somewhere different
+   and late: Test Lab uploads the application into a bucket it owns, writes
+   results back, and reads tool-results resources, and no documented role
+   covers exactly that. Three runs were spent discovering it one 403 at a time.
+
+   The mitigation is not a narrower role, it is a narrower project. This
+   project holds nothing but device-test results, is linked to nothing, and
+   could be deleted tomorrow without losing anything. Keep it that way and
+   Editor costs little; put anything else in it and Editor is too much.
 4. **A JSON key** for that account — *Keys* → *Add key* → *JSON*. This is a
    long-lived credential. It belongs in repository secrets and nowhere else:
    not in the tree, not in a commit, not in a paste.

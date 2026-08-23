@@ -106,40 +106,32 @@ jobs:
           gcloud config set project "$PROJECT" --quiet
           rm -f "$RUNNER_TEMP/key.json"
 
-      # Guessing at roles is how the last two attempts went. This asks
-      # instead: who am I, which project am I in, and what am I actually
-      # allowed to do there. The most common cause of a 403 that survives
-      # adding the right role is that the role was added in a different
-      # project from the one being used — a service account's email carries
-      # the project it lives in, so that mismatch can simply be checked.
-      - name: Who this is, and what it may do
+      # Asked, not guessed — but only things this account can actually be
+      # expected to answer. The first version of this called
+      # `get-iam-policy` and `buckets list`, neither of which a Test Lab
+      # service account needs permission for, so it printed two 403s that
+      # said nothing about the 403 being investigated.
+      #
+      # What is left is the one mismatch that produces exactly this symptom
+      # and survives adding the correct role: a service account created in a
+      # different project from the one the run targets. Roles granted in one
+      # mean nothing in the other, and a service account's email says which
+      # project it lives in, so this can be checked rather than wondered about.
+      - name: Who this is
         run: |
           account=$(gcloud config get account 2>/dev/null)
-          echo "Signed in as: $account"
-          echo "Project set to: $PROJECT"
-
-          # name@PROJECT.iam.gserviceaccount.com
           lives_in=$(echo "$account" | sed -n 's/.*@\(.*\)\.iam\.gserviceaccount\.com/\1/p')
-          echo "Account belongs to project: ${lives_in:-unknown}"
+
+          echo "Signed in as:  $account"
+          echo "Targeting:     $PROJECT"
+          echo "Account is in: ${lives_in:-unknown}"
 
           if [ -n "$lives_in" ] && [ "$lives_in" != "$PROJECT" ]; then
-            echo "::error::The service account lives in '$lives_in' but the run targets '$PROJECT'."
-            echo "Roles granted in one project mean nothing in the other. Either set"
-            echo "FIREBASE_PROJECT_ID to '$lives_in', or make the key in '$PROJECT'."
+            echo "::error::The account lives in '$lives_in'; the run targets '$PROJECT'."
+            echo "Roles granted in one project mean nothing in the other."
+            echo "Either set FIREBASE_PROJECT_ID to '$lives_in', or make a key in '$PROJECT'."
+            exit 1
           fi
-
-          echo
-          echo "Roles it holds on $PROJECT:"
-          gcloud projects get-iam-policy "$PROJECT" \
-            --flatten="bindings[].members" \
-            --filter="bindings.members:$account" \
-            --format="value(bindings.role)" \
-            || echo "(could not read the policy — the account may not be allowed to)"
-
-          echo
-          echo "Can it write to storage in this project?"
-          gcloud storage buckets list --limit=5 --format="value(name)" \
-            || echo "(cannot even list buckets, which is itself the answer)"
 
       - name: Run it on a phone
         run: |
@@ -170,11 +162,13 @@ jobs:
           # said in the words that fix it. Both were found by somebody hitting
           # them: a 403 on upload reads as though Test Lab is broken, and a
           # retired device id reads as though the command is wrong.
-          if [ "$outcome" -ne 0 ] && grep -q "storage.objects.create" run.log; then
-            echo "::error::The service account may not write to Test Lab's bucket."
-            echo "Add the 'Storage Object Admin' role to it in the Cloud console:"
-            echo "  IAM & Admin -> IAM -> edit $(gcloud config get account) -> add role"
-            echo "Object Viewer is not enough: the APK has to be uploaded before it runs."
+          if [ "$outcome" -ne 0 ] && grep -qE "storage.objects|PERMISSION_DENIED|403" run.log; then
+            echo "::error::The service account is not allowed to do that."
+            echo "Give it the Editor role, which is what Google's own CI"
+            echo "instructions for Test Lab ask for:"
+            echo "  Cloud console -> IAM & Admin -> IAM -> edit"
+            echo "  $(gcloud config get account) -> add role -> Editor"
+            echo "Narrower roles were tried and each fails somewhere different and late."
           fi
 
           if [ "$outcome" -ne 0 ] && grep -qiE "model|INVALID_ARGUMENT" run.log; then
