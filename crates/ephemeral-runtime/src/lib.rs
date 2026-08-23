@@ -101,6 +101,21 @@ pub enum RuntimeError {
         reason: String,
     },
 
+    /// The application asked for something it was not granted.
+    ///
+    /// Distinct from [`RuntimeError::CannotEnforce`], which is Ephemeral unable
+    /// to apply a control it promised. This is the sandbox working: the
+    /// application wanted a capability, was not given one, and was not started.
+    /// The two read very differently to somebody deciding whether to trust what
+    /// they are looking at.
+    #[error("{app} asked for something it was not granted, and was not started: {reason}")]
+    Ungranted {
+        /// Which application.
+        app: AppId,
+        /// What it asked for, in the runtime's own words.
+        reason: String,
+    },
+
     /// The application is not in a state where this makes sense.
     #[error("{app} is not running")]
     NotRunning {

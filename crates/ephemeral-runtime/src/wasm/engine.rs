@@ -17,18 +17,96 @@ use super::Capabilities;
 /// What a module did, and what it said while doing it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Confined {
-    /// Whether it finished on its own terms.
-    pub succeeded: bool,
+    /// How it exited.
+    ///
+    /// Carried rather than reduced to a boolean, because a program's exit code
+    /// is a thing it chose to say. When [`Confined::halted`] is set this is the
+    /// code the equivalent container would have reported, so a caller can treat
+    /// both runtimes' answers the same way.
+    pub exit_code: i32,
 
     /// What it wrote to standard output.
     pub output: String,
 
     /// What it wrote to standard error.
     pub diagnostics: String,
+
+    /// Which bound stopped it, if one did.
+    ///
+    /// `None` means it reached its own end — well or badly, but on its own
+    /// terms. Anything else means Ephemeral ended it.
+    pub halted: Option<Halt>,
 }
 
-/// Why a module could not be run, or could not be allowed to continue.
+impl Confined {
+    /// Whether it did what it was asked, on its own terms.
+    #[must_use]
+    pub fn succeeded(&self) -> bool {
+        self.exit_code == 0 && self.halted.is_none()
+    }
+}
+
+/// Why Ephemeral ended a module rather than letting it finish.
+///
+/// Being stopped is an outcome, not a failure to run, so it travels in
+/// [`Confined`] rather than in [`WasmError`]. That is not a nicety: a module
+/// that printed something useful and *then* looped forever has its output kept
+/// this way, and an error would have thrown away the only thing that explains
+/// what happened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Halt {
+    /// It used its whole processing allowance.
+    Processing,
+
+    /// It asked for more memory than it was allowed.
+    Memory,
+
+    /// It did something WebAssembly does not permit — divided by zero, read
+    /// past the end of its own memory, reached an `unreachable`.
+    Fault,
+}
+
+impl Halt {
+    /// What to tell a person, in words that do not blame them.
+    #[must_use]
+    pub fn explain(self) -> &'static str {
+        match self {
+            Self::Processing => {
+                "It used more processing than it was allowed and was stopped. \
+                 Nothing was left running."
+            }
+            Self::Memory => {
+                "It asked for more memory than it was allowed and was stopped. \
+                 Nothing was left running."
+            }
+            Self::Fault => "It crashed. Nothing was left running.",
+        }
+    }
+
+    /// The exit code to report, matching what a container would have reported.
+    ///
+    /// 124 is what `timeout` exits with and 137 is a kill after running out of
+    /// memory, which is what the Docker runtime surfaces for the same two
+    /// events. Everything above the runtime layer therefore needs no special
+    /// case for which sandbox an application happened to run in.
+    #[must_use]
+    pub fn exit_code(self) -> i32 {
+        match self {
+            Self::Processing => 124,
+            Self::Memory => 137,
+            Self::Fault => 134,
+        }
+    }
+}
+
+/// Why a module could not be run at all.
+///
+/// Every variant here means **nothing executed**. A module that ran and failed,
+/// or ran and was stopped, is a [`Confined`] — for the same reason a failing
+/// test is an answer rather than a fault.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum WasmError {
     /// The bytes are not a WebAssembly module this engine can load.
     #[error("that is not a WebAssembly module this build can run: {0}")]
@@ -43,10 +121,6 @@ pub enum WasmError {
     #[error("the application asked for something it was not granted, and will not be started: {0}")]
     Ungranted(String),
 
-    /// It ran, and was stopped for exceeding a bound.
-    #[error("the application was stopped: {0}")]
-    Stopped(String),
-
     /// The host could not set something up.
     #[error("the sandbox could not be prepared: {0}")]
     CannotPrepare(String),
@@ -57,10 +131,10 @@ pub enum WasmError {
 /// # Errors
 ///
 /// [`WasmError::Ungranted`] when the module imports something it was not given,
-/// [`WasmError::Stopped`] when it exceeds a bound, and
-/// [`WasmError::NotAModule`] when the bytes do not load. A module that runs and
-/// exits non-zero is **not** an error — that is a [`Confined`] with `succeeded`
-/// false, for the same reason a failing test is an answer rather than a fault.
+/// and [`WasmError::NotAModule`] when the bytes do not load. Both mean nothing
+/// ran. A module that runs and exits non-zero, or that is stopped for exceeding
+/// a bound, is **not** an error — that is a [`Confined`] with `succeeded` false
+/// and, in the second case, a [`Halt`].
 pub fn run(wasm: &[u8], capabilities: &Capabilities) -> Result<Confined, WasmError> {
     let mut config = Config::default();
     // Metered from the start. An unmetered store runs until the process is
@@ -102,7 +176,7 @@ pub fn run(wasm: &[u8], capabilities: &Capabilities) -> Result<Confined, WasmErr
     let instance = linker
         .instantiate(&mut store, &module)
         .and_then(|pre| pre.start(&mut store))
-        .map_err(|error| classify(&error))?;
+        .map_err(|error| refusal(&error))?;
 
     let start = instance
         .get_typed_func::<(), ()>(&store, "_start")
@@ -115,27 +189,40 @@ pub fn run(wasm: &[u8], capabilities: &Capabilities) -> Result<Confined, WasmErr
     let outcome = start.call(&mut store, ());
     let (output, diagnostics) = captured.take();
 
-    match outcome {
-        Ok(()) => Ok(Confined {
-            succeeded: true,
+    let Err(error) = outcome else {
+        return Ok(Confined {
+            exit_code: 0,
             output,
             diagnostics,
-        }),
-        Err(error) => {
-            // An exit code is how a WASI program says it finished, well or
-            // badly. That is a result rather than a malfunction, and treating
-            // it as an error would report every failing test as a broken
-            // sandbox.
-            if let Some(status) = error.i32_exit_status() {
-                return Ok(Confined {
-                    succeeded: status == 0,
-                    output,
-                    diagnostics,
-                });
-            }
-            Err(classify(&error))
-        }
+            halted: None,
+        });
+    };
+
+    // An exit code is how a WASI program says it finished, well or badly. That
+    // is a result rather than a malfunction, and treating it as an error would
+    // report every failing test as a broken sandbox.
+    if let Some(status) = error.i32_exit_status() {
+        return Ok(Confined {
+            exit_code: status,
+            output,
+            diagnostics,
+            halted: None,
+        });
     }
+
+    // Compilation is lazy, so an unresolved import can surface here rather than
+    // at instantiation. It is the same refusal wherever it is discovered.
+    if let Some(refused) = ungranted(&error) {
+        return Err(refused);
+    }
+
+    let stopped = halt(&error);
+    Ok(Confined {
+        exit_code: stopped.exit_code(),
+        output,
+        diagnostics,
+        halted: Some(stopped),
+    })
 }
 
 /// Everything one run's store holds.
@@ -149,32 +236,46 @@ struct Sandboxed {
     limits: StoreLimits,
 }
 
-/// Whether a failure was the sandbox holding or the module misbehaving.
+/// The refusal a failure represents, if it is one.
 ///
-/// Separated because the two need different words: one is Ephemeral refusing,
-/// and the other is an application that did something wrong. Presenting a
-/// refusal as a crash would teach somebody to distrust the sandbox.
-fn classify(error: &wasmi::Error) -> WasmError {
+/// Kept apart from [`halt`] because the two need different words: one is
+/// Ephemeral refusing, and the other is an application that did something
+/// wrong. Presenting a refusal as a crash would teach somebody to distrust the
+/// sandbox.
+fn ungranted(error: &wasmi::Error) -> Option<WasmError> {
+    let said = error.to_string();
+    if said.contains("unknown import") || said.contains("cannot find") {
+        return Some(WasmError::Ungranted(said));
+    }
+    None
+}
+
+/// A failure before the program ever started, classified.
+fn refusal(error: &wasmi::Error) -> WasmError {
+    ungranted(error).unwrap_or_else(|| WasmError::CannotPrepare(error.to_string()))
+}
+
+/// Which bound a running module hit.
+///
+/// Matched on the interpreter's own words, which is unlovely and is what is
+/// available: wasmi reports a trap as a message rather than as a code. The
+/// default is [`Halt::Fault`] — an unrecognised stop is a crash rather than a
+/// success, so a message this function has never seen fails closed.
+fn halt(error: &wasmi::Error) -> Halt {
     let said = error.to_string();
 
-    if said.contains("unknown import") || said.contains("cannot find") {
-        return WasmError::Ungranted(said);
+    if said.contains("fuel") {
+        return Halt::Processing;
     }
-    if said.contains("fuel") || said.contains("out of fuel") {
-        return WasmError::Stopped(
-            "it used more processing than it was allowed. Nothing was left running.".to_owned(),
-        );
-    }
-    if said.contains("out of bounds")
-        || said.contains("memory")
-            && (said.contains("limit") || said.contains("grow") || said.contains("allocat"))
-    {
-        return WasmError::Stopped(
-            "it asked for more memory than it was allowed. Nothing was left running.".to_owned(),
-        );
+    // What wasmi says when the store's limiter refuses an allocation. Reading
+    // past the end of one's own memory is *not* this: that is a program bug,
+    // and calling it "you were given too little memory" would send somebody
+    // raising a limit that was never the problem.
+    if said.contains("growth operation limited") {
+        return Halt::Memory;
     }
 
-    WasmError::Stopped(said)
+    Halt::Fault
 }
 
 /// The WASI context, holding exactly what was granted.

@@ -194,6 +194,16 @@ impl Egress {
             Self::Anywhere => "unrestricted network access".to_owned(),
         }
     }
+
+    /// Whether this policy lets the application reach anything at all.
+    ///
+    /// An allow-list counts. A runtime that cannot filter by destination
+    /// cannot honour one, and the honest answer to "may it reach the network"
+    /// is yes — the question of *how much* is what it cannot enforce.
+    #[must_use]
+    pub fn is_permitted(&self) -> bool {
+        !matches!(self, Self::Denied)
+    }
 }
 
 /// A port the application listens on, and where it is published.

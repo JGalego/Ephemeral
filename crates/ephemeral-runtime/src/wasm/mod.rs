@@ -44,8 +44,12 @@ use std::time::Duration;
 use crate::spec::{ContainerSpec, Egress};
 
 mod engine;
+mod program;
+mod runtime;
 
-pub use engine::{Confined, WasmError, run};
+pub use engine::{Confined, Halt, WasmError, run};
+pub use program::{PROGRAM_DIRECTORY, Program};
+pub use runtime::WasmRuntime;
 
 /// What a module is allowed to do, derived from a [`ContainerSpec`].
 ///
@@ -176,7 +180,7 @@ mod tests {
 
         let outcome = run(&wasm, &granted(1_000_000)).expect("it runs");
 
-        assert!(outcome.succeeded);
+        assert!(outcome.succeeded());
         assert!(outcome.output.is_empty());
     }
 
@@ -230,17 +234,44 @@ mod tests {
     fn a_module_that_loops_forever_is_stopped() {
         let wasm = module(r#"(module (func (export "_start") (loop $forever (br $forever))))"#);
 
-        let stopped =
-            run(&wasm, &granted(100_000)).expect_err("it must not be allowed to run forever");
+        let stopped = run(&wasm, &granted(100_000)).expect("being stopped is an outcome");
 
+        assert!(!stopped.succeeded());
+        assert_eq!(stopped.halted, Some(Halt::Processing));
         assert!(
-            matches!(stopped, WasmError::Stopped(_)),
-            "expected it to be stopped, got {stopped}"
+            Halt::Processing
+                .explain()
+                .contains("Nothing was left running"),
+            "and it says so in words somebody can read"
         );
-        assert!(
-            stopped.to_string().contains("Nothing was left running"),
-            "and to say so in words somebody can read: {stopped}"
+    }
+
+    /// Whatever a module said before it was stopped comes back.
+    ///
+    /// The reason being stopped is an outcome rather than an error: a program
+    /// that reported its progress and then ran away is one whose output is the
+    /// only thing that explains where it got to, and an error would have
+    /// discarded it.
+    #[test]
+    fn what_it_said_before_it_was_stopped_is_not_thrown_away() {
+        let wasm = module(
+            r#"(module
+                 (import "wasi_snapshot_preview1" "fd_write"
+                   (func $write (param i32 i32 i32 i32) (result i32)))
+                 (memory (export "memory") 1)
+                 (data (i32.const 8) "got this far\n")
+                 (func (export "_start")
+                   (i32.store (i32.const 0) (i32.const 8))
+                   (i32.store (i32.const 4) (i32.const 13))
+                   (drop (call $write
+                     (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 20)))
+                   (loop $forever (br $forever))))"#,
         );
+
+        let stopped = run(&wasm, &granted(200_000)).expect("being stopped is an outcome");
+
+        assert_eq!(stopped.halted, Some(Halt::Processing));
+        assert_eq!(stopped.output, "got this far\n");
     }
 
     /// A module that allocates without end is stopped, and the phone survives.
@@ -248,8 +279,8 @@ mod tests {
     /// The bound this asserts was declared by [`Capabilities::memory`] for a
     /// while before anything applied it — a limit in a struct field is a
     /// promise, and this is the test that makes it a fact. One page is 64 KiB,
-    /// so a ceiling of one page and a request for a thousand more is the
-    /// smallest honest version of "it asked for the machine".
+    /// so a ceiling of one page and a request for more is the smallest honest
+    /// version of "it asked for the machine".
     #[test]
     fn a_module_that_allocates_without_end_is_stopped() {
         let wasm = module(
@@ -268,12 +299,10 @@ mod tests {
                 ..granted(100_000_000)
             },
         )
-        .expect_err("it must not be allowed to take the machine");
+        .expect("being stopped is an outcome");
 
-        assert!(
-            matches!(stopped, WasmError::Stopped(_)),
-            "expected it to be stopped, got {stopped}"
-        );
+        assert!(!stopped.succeeded());
+        assert_eq!(stopped.halted, Some(Halt::Memory));
     }
 
     /// And the same ceiling does not stop a module that stays under it. A bound
@@ -296,7 +325,8 @@ mod tests {
         )
         .expect("two pages is inside a four page ceiling");
 
-        assert!(outcome.succeeded);
+        assert!(outcome.succeeded());
+        assert_eq!(outcome.halted, None, "nothing stopped it");
     }
 
     /// Output is captured rather than reaching the host's own streams. On a
@@ -321,6 +351,33 @@ mod tests {
         let outcome = run(&wasm, &granted(1_000_000)).expect("it runs");
 
         assert_eq!(outcome.output, "hi\n");
+    }
+
+    /// A module that crashes is a crash, not a bound being hit, and not a
+    /// success. An unrecognised stop has to land here rather than anywhere
+    /// more comfortable, because the comfortable answers are all wrong.
+    #[test]
+    fn a_module_that_crashes_says_so() {
+        let wasm = module(r#"(module (func (export "_start") (unreachable)))"#);
+
+        let crashed = run(&wasm, &granted(1_000_000)).expect("a crash is an outcome");
+
+        assert!(!crashed.succeeded());
+        assert_eq!(crashed.halted, Some(Halt::Fault));
+    }
+
+    /// The exit codes a stopped module reports are the ones a container would
+    /// have reported for the same event, so that nothing above the runtime
+    /// needs to know which sandbox an application ran in.
+    #[test]
+    fn being_stopped_reports_the_exit_code_a_container_would_have() {
+        assert_eq!(
+            Halt::Processing.exit_code(),
+            124,
+            "what `timeout` exits with"
+        );
+        assert_eq!(Halt::Memory.exit_code(), 137, "a kill after running out");
+        assert_ne!(Halt::Fault.exit_code(), 0, "and a crash is never a success");
     }
 
     /// A specification that grants nothing produces capabilities that permit
