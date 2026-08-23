@@ -115,6 +115,10 @@ jobs:
       # the emulator died on startup, and a step that hangs until the job
       # timeout tells you nothing about why — it just costs forty minutes.
       - name: Boot it
+        env:
+          # The emulator looks for its AVD under one of these, and the runner
+          # image sets only the other.
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
         run: |
           set -uo pipefail
           emulator -avd ephemeral -no-window -no-audio -no-boot-anim \
@@ -122,14 +126,24 @@ jobs:
             -camera-back none -camera-front none \
             -netdelay none -netspeed full > screens/emulator.log 2>&1 &
 
+          # Fifteen minutes, because seven was a guess and it was wrong: a cold
+          # boot of a fresh AVD on a two-core runner with a software GPU is
+          # slow, and the first run to hit this limit had not failed — it was
+          # still coming up. Progress is printed on the way, so a log that ends
+          # here says whether anything was happening.
           waited=0
-          until adb shell getprop sys.boot_completed 2>/dev/null | grep -q 1; do
-            sleep 5
-            waited=$((waited + 5))
-            if [ "$waited" -ge 420 ]; then
-              echo "::error::The emulator did not finish booting in seven minutes."
-              adb devices || true
-              tail -60 screens/emulator.log || true
+          until timeout 20 adb shell getprop sys.boot_completed 2>/dev/null | grep -q 1; do
+            sleep 10
+            waited=$((waited + 10))
+
+            if [ $((waited % 60)) -eq 0 ]; then
+              echo "  ${waited}s: $(timeout 10 adb devices | tail -n +2 | tr '\n' ' ')"
+            fi
+
+            if [ "$waited" -ge 900 ]; then
+              echo "::error::The emulator did not finish booting in fifteen minutes."
+              timeout 20 adb devices || true
+              tail -80 screens/emulator.log || true
               exit 1
             fi
           done
@@ -172,9 +186,14 @@ jobs:
           sleep 4
           adb exec-out screencap -p > screens/04-one-application.png
 
+      # Bounded, because `adb` waits for a device that may never have existed —
+      # which turned one failed boot into a job that sat there until the
+      # forty-five minute timeout, saying nothing.
       - name: What it said while doing it
         if: always()
-        run: adb logcat -d -s Ephemeral:* AndroidRuntime:E > screens/logcat.txt || true
+        run: |
+          timeout 60 adb logcat -d -s Ephemeral:* AndroidRuntime:E \
+            > screens/logcat.txt 2>&1 || echo "(no device to ask)" > screens/logcat.txt
 
       - uses: actions/upload-artifact@v4
         if: always()
