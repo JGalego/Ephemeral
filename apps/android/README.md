@@ -75,7 +75,20 @@ Twenty minutes of setup, once, by somebody with a Google account:
    (`toolresults.googleapis.com`). Test Lab is a Cloud service wearing a
    Firebase badge, and both halves have to be switched on.
 3. **A service account** — Cloud console → *IAM & Admin* → *Service accounts* →
-   *Create*. Give it the **Editor** role.
+   *Create*. Name it `github-device-tests`. Give it the **Editor** role.
+
+   Finding that role in the console is harder than it should be: typing
+   "Editor" into the role picker returns dozens of per-service editors and not
+   the plain one, which lives under the **Basic** category because Google
+   discourages it. The unambiguous way is [Cloud
+   Shell](https://console.cloud.google.com) — the `>_` button in the console's
+   top bar, which needs nothing installed:
+
+   ```bash
+   gcloud projects add-iam-policy-binding YOUR_PROJECT_ID \
+     --member="serviceAccount:github-device-tests@YOUR_PROJECT_ID.iam.gserviceaccount.com" \
+     --role="roles/editor"
+   ```
 
    Editor is broad, and it is what [Google's own Test Lab CI
    instructions](https://firebase.google.com/docs/test-lab/android/continuous)
