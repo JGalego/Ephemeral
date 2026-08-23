@@ -41,6 +41,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Made first, because the step that saves the log runs even when an
+      # earlier one failed — and it failed, on nothing but a missing directory.
+      - run: mkdir -p screens
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -70,14 +74,35 @@ jobs:
       # that also signs releases.
       - name: An emulator
         run: |
-          set -euo pipefail
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
-            "platform-tools" "emulator" \
-            "system-images;android-34;google_apis;x86_64" > /dev/null
-          echo "no" | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd \
-            --name ephemeral --package "system-images;android-34;google_apis;x86_64" \
-            --device "pixel_6" --force
+          set -eu
+
+          # Found rather than assumed: the runner image keeps its command-line
+          # tools under a versioned directory, and `latest` is not always one
+          # of them.
+          sdkmanager="$(command -v sdkmanager || true)"
+          if [ -z "$sdkmanager" ]; then
+            sdkmanager="$(ls "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -1)"
+          fi
+          if [ -z "$sdkmanager" ]; then
+            echo "No sdkmanager under $ANDROID_HOME:"
+            ls -R "$ANDROID_HOME/cmdline-tools" 2>/dev/null || true
+            exit 1
+          fi
+          echo "Using $sdkmanager"
+          avdmanager="$(dirname "$sdkmanager")/avdmanager"
+
+          # `yes |` deliberately without pipefail: `yes` is killed by SIGPIPE
+          # the moment sdkmanager stops reading, which is a non-zero exit for
+          # a pipeline that did exactly what it was meant to. That, and not
+          # anything about Android, is what failed the first time this ran.
+          yes | "$sdkmanager" --licenses > /dev/null || true
+
+          "$sdkmanager" "platform-tools" "emulator" \
+            "system-images;android-34;google_apis;x86_64"
+
+          echo "no" | "$avdmanager" create avd --name ephemeral \
+            --package "system-images;android-34;google_apis;x86_64" --force
+
           echo "$ANDROID_HOME/emulator" >> "$GITHUB_PATH"
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
 
@@ -108,7 +133,6 @@ jobs:
       - name: Photograph it
         run: |
           set -euo pipefail
-          mkdir -p screens
           adb exec-out screencap -p > screens/01-nothing-yet.png
 
           # Type an intent and press Create, through the input system rather
