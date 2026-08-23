@@ -204,7 +204,7 @@ fn summarise(
 /// A permission already covered by a wider grant is not asked about again, and
 /// neither is one already refused: being asked twice teaches people to stop
 /// reading, and re-asking a denial makes "no" mean "not yet".
-fn outstanding(workspace: &Workspace, manifest: &AppManifest) -> Vec<AppPermission> {
+pub(crate) fn outstanding(workspace: &Workspace, manifest: &AppManifest) -> Vec<AppPermission> {
     let subject = Principal::app(manifest.id.clone());
 
     manifest

@@ -147,6 +147,36 @@ pub(crate) fn meta(value: &str) -> Result<MetaPermission> {
     })
 }
 
+/// How an application permission is written on the command line.
+///
+/// The inverse of [`app`], and it exists so that a screen listing what an
+/// application has asked for can print the command that allows it. Before this,
+/// `ephemeral generate` ended by saying `ephemeral permissions <app>` shows what
+/// it wants — and that command showed only what it *had*. The request was
+/// visible once, in the output of the command that created it, and after that
+/// the only way to find the exact words was `ephemeral review`.
+///
+/// `None` for a capability this version has no word for: [`AppPermission`] is
+/// non-exhaustive, and printing a command that does not parse would be worse
+/// than printing none.
+pub(crate) fn written(permission: &AppPermission) -> Option<String> {
+    // `as_written`, not `display_path`: `read:~/Downloads` and
+    // `read:~/Downloads/**` are different scopes, and offering the first for a
+    // request for the second is offering a command that runs and does not help.
+    Some(match permission {
+        AppPermission::FilesystemRead { scope } => format!("read:{}", scope.as_written()),
+        AppPermission::FilesystemWrite { scope } => format!("write:{}", scope.as_written()),
+        AppPermission::NetworkOutbound { scope } => format!("net:{}", scope.as_written()),
+        AppPermission::NetworkInbound { port } => format!("port:{port}"),
+        AppPermission::ReadEnvironment { name } => format!("env:{name}"),
+        AppPermission::ExecuteProcesses => "execute".to_owned(),
+        AppPermission::Camera => "camera".to_owned(),
+        AppPermission::Microphone => "microphone".to_owned(),
+        AppPermission::Location => "location".to_owned(),
+        _ => return None,
+    })
+}
+
 /// Splits `head:tail`, taking care not to split a Windows drive letter or a
 /// `host:port` off the wrong colon.
 fn split(value: &str) -> (&str, Option<&str>) {
@@ -265,6 +295,44 @@ mod tests {
         assert!(app("docker").is_err());
         assert!(app("self-update").is_err());
         assert!(meta("port:8080").is_err());
+    }
+
+    /// Everything an application can ask for can be written back as the command
+    /// that allows it, and parsing that command returns what it was written
+    /// from.
+    ///
+    /// One direction alone is not enough. A written form that is merely
+    /// non-empty can still be a *different* permission — which is exactly the
+    /// mistake this pair was written after: a folder printed without its `**`
+    /// grants one path instead of a subtree, so the command works, the grant
+    /// appears in the ledger, and the application still cannot read anything.
+    #[test]
+    fn everything_an_app_can_ask_for_can_be_written_back() {
+        for permission in [
+            AppPermission::read(scope("~/Downloads/**")),
+            AppPermission::read(scope("~/Downloads/one.csv")),
+            AppPermission::write(scope("~/reports/**")),
+            AppPermission::outbound(HostScope::parse("api.example.com").unwrap()),
+            AppPermission::outbound(HostScope::parse("*.example.com:443").unwrap()),
+            AppPermission::outbound(HostScope::parse("*").unwrap()),
+            AppPermission::NetworkInbound { port: 8080 },
+            AppPermission::ReadEnvironment {
+                name: "API_KEY".to_owned(),
+            },
+            AppPermission::ExecuteProcesses,
+            AppPermission::Camera,
+            AppPermission::Microphone,
+            AppPermission::Location,
+        ] {
+            let text =
+                written(&permission).unwrap_or_else(|| panic!("{permission:?} cannot be written"));
+
+            assert_eq!(
+                app(&text).unwrap(),
+                permission,
+                "{permission:?} written as {text:?} parses back as something else"
+            );
+        }
     }
 
     /// A typo must be an error. Silently ignoring one would grant something

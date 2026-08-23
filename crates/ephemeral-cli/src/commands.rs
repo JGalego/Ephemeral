@@ -265,11 +265,64 @@ pub(crate) fn permissions(home: &Path, reference: &str) -> Result<()> {
     // Shown alongside an application's, because the question "what can this do"
     // has two answers and only one of them is on the application's page. It is
     // Ephemeral's authority that decides whether any of the other is real.
-    if subject.as_app().is_some() {
+    if let Some(id) = subject.as_app() {
+        let manifest = workspace
+            .apps()
+            .load(id)
+            .with_context(|| format!("no application called {reference}"))?;
+        print_requests(&workspace, &manifest);
         print_ephemerals_authority(&workspace);
     }
 
     Ok(())
+}
+
+/// What an application has asked for and not been given, with the exact words
+/// that would allow it.
+///
+/// `ephemeral generate` ends by saying this command shows what an application
+/// wants. It did not: it showed what an application *held*, so the one screen
+/// pointed at for the answer was the one screen without it. A request seen once,
+/// in the output of the command that produced it, is a request nobody can find
+/// again.
+///
+/// The command is printed rather than described, because the alternative is
+/// somebody translating "read the files in ~/Downloads" back into a scope by
+/// hand — and getting the `**` wrong, which grants a real permission that covers
+/// nothing the application asked for.
+fn print_requests(workspace: &Workspace, manifest: &AppManifest) {
+    let requests = crate::review::outstanding(workspace, manifest);
+    if requests.is_empty() {
+        return;
+    }
+
+    println!();
+    println!("{}", output::dim("Wants, and has not been given"));
+    for permission in &requests {
+        println!(
+            "  {} {}",
+            output::risk_named(permission.risk().as_str()),
+            permission.describe()
+        );
+        if let Some(reason) = manifest.reason_for(permission) {
+            println!("        {}", output::dim(reason));
+        }
+        if let Some(written) = parse::written(permission) {
+            println!(
+                "        {}",
+                output::dim(&format!("ephemeral grant {} {written}", manifest.id))
+            );
+        }
+    }
+
+    println!();
+    println!(
+        "{}",
+        output::dim(&format!(
+            "`ephemeral review {}` asks about these one at a time, with what each one means.",
+            manifest.id
+        ))
+    );
 }
 
 fn print_permissions(workspace: &Workspace, subject: &Principal) {
