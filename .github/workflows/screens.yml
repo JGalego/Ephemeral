@@ -29,9 +29,14 @@ on:
 permissions:
   contents: read
 
+# Deliberately not cancel-in-progress. This takes twenty minutes, and on a
+# branch anybody is working on, cancelling it whenever the next commit lands
+# means it never once reaches the end — which is exactly what happened: two
+# runs in a row were killed at the boot step by a push that touched nothing
+# Android at all.
 concurrency:
   group: screens-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   android:
@@ -106,19 +111,34 @@ jobs:
           echo "$ANDROID_HOME/emulator" >> "$GITHUB_PATH"
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
 
+      # Every wait here is bounded. `adb wait-for-device` blocks forever when
+      # the emulator died on startup, and a step that hangs until the job
+      # timeout tells you nothing about why — it just costs forty minutes.
       - name: Boot it
         run: |
-          set -euo pipefail
+          set -uo pipefail
           emulator -avd ephemeral -no-window -no-audio -no-boot-anim \
-            -gpu swiftshader_indirect -no-snapshot -accel on &
-          adb wait-for-device
-          # `wait-for-device` returns as soon as adb can talk to it, which is
-          # long before there is anything on screen.
-          until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; do
-            sleep 3
+            -no-snapshot -gpu swiftshader_indirect -accel on \
+            -camera-back none -camera-front none \
+            -netdelay none -netspeed full > screens/emulator.log 2>&1 &
+
+          waited=0
+          until adb shell getprop sys.boot_completed 2>/dev/null | grep -q 1; do
+            sleep 5
+            waited=$((waited + 5))
+            if [ "$waited" -ge 420 ]; then
+              echo "::error::The emulator did not finish booting in seven minutes."
+              adb devices || true
+              tail -60 screens/emulator.log || true
+              exit 1
+            fi
           done
+
+          echo "Booted after ${waited}s."
           adb shell wm dismiss-keyguard || true
-          echo "Booted."
+          adb shell settings put global window_animation_scale 0 || true
+          adb shell settings put global transition_animation_scale 0 || true
+          adb shell settings put global animator_duration_scale 0 || true
 
       - name: Install and open it
         run: |
