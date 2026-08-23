@@ -7,6 +7,12 @@ Ephemeral's permission model decides what an application *may* do. The sandbox i
 where that decision becomes a fact about a running process. This page is the
 list of what the sandbox holds, and — as importantly — what it does not.
 
+There are two of them. Most of this page is about **the container**, which is
+what a desktop with Docker uses and what the tables below describe. The second
+is **WebAssembly**, which is what runs where there is no daemon — a phone above
+all — and which holds by a different mechanism. It has its own section at the
+end, and the one rule below governs both.
+
 ## The one rule everything else follows from
 
 **An application's confinement is built from what its owner granted, never from
@@ -147,6 +153,43 @@ deliberately the least commitment available, since nothing about it decides
 whether Ephemeral eventually has a background service, and a desktop shell can
 host the same sweep unchanged.
 
+## The other sandbox: WebAssembly
+
+Where there is no container runtime, an application runs as a WebAssembly
+module inside Ephemeral itself
+([ADR-0021](architecture/decisions/0021-webassembly-is-the-runtime-a-phone-can-have.md)).
+This is not the weaker option with a label on it. It is a different shape of
+argument.
+
+A process starts with the whole machine, and confining it means taking things
+away — a list of removals that is only as good as its completeness. A
+WebAssembly module starts with **nothing**. It has no syscalls. It cannot name
+a file, open a socket, read the clock or learn its own process id unless the
+host hands it a function that does so. Forgetting to add something yields
+*less* access rather than more.
+
+| Control | What it does |
+|---|---|
+| Preopened directories | The only directories that exist. A file descriptor can only be derived from one already held, so a module given none can open nothing at all. |
+| No sockets | Not blocked — absent. There is no networking in this WASI implementation to import, so a module asking for one fails to start rather than failing at its first request. |
+| Fuel | Executed instructions, not seconds. It cannot be escaped by sleeping, blocking or being descheduled, and it is the same bound on a fast phone and a slow one. |
+| Memory ceiling | Applied per linear memory by the store. Growth past it traps rather than returning a failure the application might ignore. |
+| Unresolved imports | A module that imports anything the host did not provide **never instantiates**. This is not a check Ephemeral performs; there is nothing for the import to bind to. |
+
+Two consequences worth stating plainly:
+
+- **It is stricter than the container about the network.** An egress grant
+  cannot be honoured here at all, so an application that was granted one is
+  refused with an explanation rather than started without it.
+- **A user interface costs no permission.** An application whose interface is
+  `web` writes a page and the host renders it — there is no port, no server and
+  no socket. The usual arrangement needs a network permission, and that same
+  permission then lets the application talk to anybody.
+
+What it does not have is anything to generate for it yet: an application must
+be a compiled `.wasm` module, or a script whose interpreter is installed. See
+[roadmap.md](roadmap.md).
+
 ## What is not here yet
 
 - **An egress proxy**, which is what would make a hostname allow-list
@@ -157,6 +200,8 @@ host the same sweep unchanged.
   not built ([ADR-0015](architecture/decisions/0015-defer-the-native-runtime.md)):
   the version reachable without new dependencies in the trust base would confine
   almost nothing, and an application declaring it is refused rather than run
-  unconfined.
+  unconfined. WebAssembly covers most of what it was wanted for, and confines.
+- **An interpreter for the WebAssembly runtime.** Without one it runs compiled
+  modules only, and nothing generates those yet.
 
 See [roadmap.md](roadmap.md).

@@ -71,6 +71,20 @@ applied.
 that could be built without new dependencies in the trust base would be a
 sandbox in name only, and nothing generated needs it yet.
 
+A **WebAssembly runtime** is built, and answers the same question differently
+([ADR-0021](architecture/decisions/0021-webassembly-is-the-runtime-a-phone-can-have.md)).
+A module starts with nothing rather than with the whole machine, so confinement
+is its resting state instead of a list of removals that might be incomplete.
+Four bounds, each with a test that tries to break it: preopened directories, no
+sockets in the WASI implementation at all, fuel counted in instructions, and a
+memory ceiling the store enforces. It runs on every platform, which is the
+point — including the ones with no daemon to have.
+
+What it does **not** yet have is anything to run. An application must either be
+a compiled `.wasm` module or a script whose interpreter is installed, and
+nothing generates the first while no interpreter ships for the second. See
+*What is missing before a phone generates something it can run*, below.
+
 **Done when:** an application can be built from its own source, run, stopped,
 archived, restored and deleted through the CLI. The build path exists and is
 tested; what it has no source to build is supplied by Phase 2, so this closes
@@ -652,6 +666,37 @@ recording is not a person — nothing here has been *used*, only watched.
 The release workflow produces checksums, which say a file is intact and
 deliberately do not claim who made it.
 
+## What is missing before a phone generates something it can run
+
+A handset can now describe an application, generate it, decide its permissions,
+draw a form from what it declares, run it, and render a page it wrote. Every
+part of that is built and tested. One link is open, and it is worth stating
+plainly rather than discovering.
+
+**There is no interpreter.** `Program::locate` resolves an application to
+something runnable in two ways. A `.wasm` file is the application itself, which
+is the fast path and needs a toolchain to produce. Anything else is a script,
+and its extension chooses an interpreter from `interpreters/` — `main.js` wants
+`javascript.wasm`, `main.py` wants `python.wasm`. Neither file exists, and
+neither is committed here: a megabyte of unreviewable binary in a repository is
+the one thing this project has been most careful not to accumulate, in the one
+place where what the bytes do is the entire question.
+
+So the sequence is:
+
+1. **Pin an interpreter.** Which build, from where, verified how. That is a
+   supply-chain decision and belongs in an ADR — the alternatives are
+   downloading one on first use against a pinned digest, building one in CI and
+   attaching it to a release, or shipping one inside the Android package.
+2. **Then teach planning to choose the WebAssembly runtime** where it is the one
+   available. Doing this first would be worse than doing nothing: applications
+   would generate cleanly and then fail with "the JavaScript interpreter is not
+   installed", which is a less useful sentence than today's honest "this needs a
+   computer with Docker".
+
+Until then a phone generates applications for containers, says so, and runs
+WebAssembly modules put there by other means — which is what the tests do.
+
 ## Things deliberately not being built yet
 
 Not everything absent is an oversight. These are decided-against-for-now, with
@@ -661,9 +706,6 @@ the reasoning recorded:
   as explicit capability contracts. Not in the MVP.
 - **Plugins.** The seams exist; the plugin system does not.
 - **Cloud sync.** Desktop is local-first, and stays useful without a server.
-- **A WebAssembly runtime.** The most likely future addition to the runtime
-  trait, and the reason the trait exists — but today's ecosystem cannot run the
-  general case.
 - **A central Ephemeral registry.** Git hosting already distributes recipes, and
   a curated registry implies a safety judgement the project is not in a position
   to make ([ADR-0012](architecture/decisions/0012-sharing-distributes-recipes.md)).

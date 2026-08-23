@@ -22,20 +22,37 @@ it, and a readable example of what the rest of this page is asking for.
 model for the source, and writes that source to the device. The permission
 requests the application makes are recorded, and a person answers them.
 
-**It does not build or run what it generated.** That needs a sandbox, and a
-phone does not have one that a third-party application may use. Running
-generated code outside a sandbox is the specific thing Ephemeral exists to
-prevent, so it is not done unsandboxed on a phone as a convenience.
+**It runs WebAssembly.** `ephemeral_run` executes an application as a
+WebAssembly module in your process, under exactly what the person granted. A
+module starts with no syscalls at all — it cannot name a file, open a socket or
+read the clock unless the host hands it a function that does — so confinement
+here is not subtracted from something that began with the whole device. Four
+bounds hold it: the directories it was granted, no sockets whatsoever, fuel
+counted in instructions, and a memory ceiling. See
+[ADR-0021](architecture/decisions/0021-webassembly-is-the-runtime-a-phone-can-have.md).
 
-An application generated on a phone is therefore real source on the device that
-nothing there can execute. That is a deliberate stop, not an unfinished feature,
-and **your interface has to say so** — somebody who taps "create" and is left
-watching a spinner for a build that will never happen has been misled by your
-app, not by this library. A desktop or a control plane
-([ADR-0007](architecture/decisions/0007-mobile-control-plane.md)) finishes the
+An application whose interface is `web` writes a page rather than serving one,
+and the host renders it. That is why showing somebody a user interface on a
+phone costs no network permission: there is no port and no server, only output.
+Render it with scripts disabled and network loads blocked — your app holds
+`INTERNET` because generating needs it, and a web view inherits that.
+
+**It does not build or repair.** Both mean a container: building is a
+Dockerfile, and repairing is building again with the failure in hand. A phone
+has no daemon to do either with, so an application generated *for a container*
+is real source on the device that nothing there can execute — a deliberate stop,
+and **your interface has to say so**. A desktop or a control plane
+([ADR-0007](architecture/decisions/0007-mobile-control-plane.md)) finishes that
 job.
 
-The reasoning is in
+**Nothing yet generates WebAssembly.** An application must be a compiled
+`.wasm` module, or a script whose interpreter is installed under
+`interpreters/` — and no interpreter ships with Ephemeral yet. `ephemeral_run`
+says exactly which one is missing and where it goes. Until that is settled, what
+a phone generates is for containers; what it runs is what was put there by other
+means. The sequence is in [the roadmap](roadmap.md).
+
+The reasoning for generating through your transport is in
 [ADR-0017](architecture/decisions/0017-mobile-generates-through-a-host-transport.md).
 
 ## What you get
@@ -272,6 +289,13 @@ not exist — so allowing an application something here records the decision and
 grants no authority. The page says so outright rather than by omission: the
 capability comes back with `"effective": false` and what Ephemeral is missing.
 
-That costs nothing today, because a phone generates and does not run. It is what
-the adapter has to fix before one does, and the C ABI test asserts the current
-behaviour so that fixing it is a visible change rather than a quiet one.
+This now costs something. A phone runs applications, so a capability recorded
+as allowed and reported `"effective": false` is a real gap between what somebody
+decided and what happens — and it is the platform adapter that has to close it.
+The C ABI test asserts the current behaviour so that closing it is a visible
+change rather than a quiet one.
+
+What holds in the meantime is the direction of the error. A permission that is
+recorded but not effective produces *less* access, never more: the sandbox is
+built from what the ledger says was granted, and a grant Ephemeral has no
+authority to act on contributes nothing to it.
