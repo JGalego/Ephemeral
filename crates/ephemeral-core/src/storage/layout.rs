@@ -50,6 +50,14 @@ pub const APPS_DIR: &str = "apps";
 /// The directory holding deleted applications until they are purged.
 pub const TRASH_DIR: &str = "trash";
 
+/// The directory holding interpreters, shared by every application.
+///
+/// Shared rather than per-application because an interpreter is large and is
+/// the same bytes for everyone who needs it. Being shared is also why nothing
+/// generated ever writes here: an application that could replace the
+/// interpreter could replace it for every other application too.
+pub const INTERPRETERS_DIR: &str = "interpreters";
+
 /// Where Ephemeral keeps everything on this device.
 ///
 /// Constructing a layout touches no filesystem — it only computes paths — so
@@ -82,6 +90,16 @@ impl StorageLayout {
     #[must_use]
     pub fn trash_dir(&self) -> PathBuf {
         self.root.join(TRASH_DIR)
+    }
+
+    /// Where interpreters live.
+    ///
+    /// Outside `apps/`, so that granting an application access to its own
+    /// directory never reaches one, and so that deleting an application never
+    /// takes an interpreter with it.
+    #[must_use]
+    pub fn interpreters_dir(&self) -> PathBuf {
+        self.root.join(INTERPRETERS_DIR)
     }
 
     /// Where the audit log lives.

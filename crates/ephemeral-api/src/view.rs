@@ -929,6 +929,7 @@ mod tests {
         let mut manifest = manifest();
         manifest.runtime = Some(ephemeral_core::manifest::RuntimeSpec {
             kind: ephemeral_core::manifest::RuntimeKind::Docker,
+            program: None,
             image: Some("python:3.12-slim".to_owned()),
             version: None,
             entrypoint: vec!["python".to_owned(), "/app/csvdiff.py".to_owned()],

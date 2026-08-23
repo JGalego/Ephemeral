@@ -198,6 +198,16 @@ pub struct RuntimeSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
 
+    /// The file to execute, for the WebAssembly runtime.
+    ///
+    /// Named relative to the application's own source directory, and never
+    /// absolute: a manifest that could point at a path outside the application
+    /// would be a manifest that chooses what runs. A name ending in `.wasm` is
+    /// the application itself; anything else is a script, and the extension
+    /// says which interpreter runs it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program: Option<String>,
+
     /// The language or platform version the application targets, such as
     /// `python-3.12`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -239,6 +249,7 @@ impl RuntimeSpec {
         Self {
             kind: RuntimeKind::Docker,
             image: Some(image.into()),
+            program: None,
             version: None,
             entrypoint: Vec::new(),
             interface: AppInterface::Web,
@@ -253,6 +264,26 @@ impl RuntimeSpec {
         Self {
             kind: RuntimeKind::Docker,
             image: Some(image.into()),
+            program: None,
+            version: None,
+            entrypoint,
+            interface: AppInterface::Job,
+            port: None,
+            inputs: Vec::new(),
+        }
+    }
+
+    /// A WebAssembly one-off job.
+    ///
+    /// The shape of everything a phone can run: it takes arguments, it does
+    /// something, it prints an answer and it stops. `program` names the file to
+    /// execute inside the application's own source.
+    #[must_use]
+    pub fn wasm_job(program: impl Into<String>, entrypoint: Vec<String>) -> Self {
+        Self {
+            kind: RuntimeKind::Wasm,
+            image: None,
+            program: Some(program.into()),
             version: None,
             entrypoint,
             interface: AppInterface::Job,

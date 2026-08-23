@@ -287,6 +287,7 @@ fn apply_success(
     manifest.runtime = Some(RuntimeSpec {
         kind: outcome.app.plan.runtime,
         image: Some(outcome.app.plan.image.clone()),
+        program: None,
         version: None,
         entrypoint: outcome.app.entrypoint.clone(),
         interface: outcome.app.plan.interface,

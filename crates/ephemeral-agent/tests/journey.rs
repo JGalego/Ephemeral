@@ -100,6 +100,7 @@ fn a_sentence_becomes_a_ready_application() {
 
     manifest.runtime = Some(ephemeral_core::manifest::RuntimeSpec {
         kind: outcome.app.plan.runtime,
+        program: None,
         image: Some(outcome.app.plan.image.clone()),
         version: None,
         entrypoint: outcome.app.entrypoint.clone(),

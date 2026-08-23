@@ -48,7 +48,7 @@ mod program;
 mod runtime;
 
 pub use engine::{Confined, Halt, WasmError, run};
-pub use program::{PROGRAM_DIRECTORY, Program};
+pub use program::{NoProgram, PROGRAM_DIRECTORY, Program, languages};
 pub use runtime::WasmRuntime;
 
 /// What a module is allowed to do, derived from a [`ContainerSpec`].

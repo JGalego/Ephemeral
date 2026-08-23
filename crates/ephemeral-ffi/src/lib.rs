@@ -791,6 +791,7 @@ fn generate(ephemeral: &Ephemeral, id: &str) -> Result<*mut c_char, String> {
     manifest.runtime = Some(ephemeral_core::manifest::RuntimeSpec {
         kind: plan.result.runtime,
         image: Some(plan.result.image.clone()),
+        program: None,
         version: None,
         entrypoint: generated.result.entrypoint.clone(),
         interface: plan.result.interface,

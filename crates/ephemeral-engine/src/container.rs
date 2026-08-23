@@ -1229,6 +1229,7 @@ mod tests {
         let mut manifest = built();
         manifest.runtime = Some(RuntimeSpec {
             kind: RuntimeKind::Native,
+            program: None,
             image: None,
             version: None,
             entrypoint: vec![],

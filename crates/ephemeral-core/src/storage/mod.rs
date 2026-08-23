@@ -18,7 +18,9 @@ mod file;
 #[cfg(feature = "fs")]
 mod workspace;
 
-pub use layout::{APPS_DIR, AUDIT_FILE, AppPaths, MANIFEST_FILE, StorageLayout, TRASH_DIR};
+pub use layout::{
+    APPS_DIR, AUDIT_FILE, AppPaths, INTERPRETERS_DIR, MANIFEST_FILE, StorageLayout, TRASH_DIR,
+};
 
 #[cfg(feature = "fs")]
 pub use file::FileStore;
