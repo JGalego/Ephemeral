@@ -1,0 +1,140 @@
+name: Screens
+
+# Photographs the Android application, running.
+#
+# Nobody has ever seen these screens. The engine is tested to death, the JNI
+# bridge is driven from a real JVM on every commit, and the Kotlin now compiles
+# on every commit too — but "it compiles" is not "somebody looked at it", and
+# the desktop window taught this repository exactly what lives in that gap: the
+# first film of it found six bugs no test had.
+#
+# There is no phone here and there is no phone in CI. An emulator is not a
+# device and this workflow does not pretend otherwise — what it produces is a
+# picture of the real application, drawn by the real Android framework, which
+# is the closest thing to looking that a repository can automate.
+#
+# Deliberately outside the required checks. It needs KVM and it takes minutes,
+# and a screenshot is something a person reviews rather than something that
+# passes or fails.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "apps/android/**"
+      - "crates/ephemeral-design/**"
+      - ".github/workflows/screens.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: screens-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    name: The Android application, running
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.14.3
+
+      - name: Build the application
+        run: gradle assembleDebug --no-daemon
+        working-directory: apps/android
+
+      # An emulator needs hardware virtualisation to be usable. The runner has
+      # it; the container this repository is often worked in does not, which is
+      # the whole reason these screens had never been seen.
+      - name: Check for KVM
+        run: |
+          if [ ! -e /dev/kvm ]; then
+            echo "No /dev/kvm on this runner, so an emulator would take hours."
+            exit 1
+          fi
+          echo "KVM is available."
+
+      # Driven through the SDK's own tools rather than a third-party action.
+      # A screenshot is not worth adding somebody else's code to the pipeline
+      # that also signs releases.
+      - name: An emulator
+        run: |
+          set -euo pipefail
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platform-tools" "emulator" \
+            "system-images;android-34;google_apis;x86_64" > /dev/null
+          echo "no" | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd \
+            --name ephemeral --package "system-images;android-34;google_apis;x86_64" \
+            --device "pixel_6" --force
+          echo "$ANDROID_HOME/emulator" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+
+      - name: Boot it
+        run: |
+          set -euo pipefail
+          emulator -avd ephemeral -no-window -no-audio -no-boot-anim \
+            -gpu swiftshader_indirect -no-snapshot -accel on &
+          adb wait-for-device
+          # `wait-for-device` returns as soon as adb can talk to it, which is
+          # long before there is anything on screen.
+          until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; do
+            sleep 3
+          done
+          adb shell wm dismiss-keyguard || true
+          echo "Booted."
+
+      - name: Install and open it
+        run: |
+          set -euo pipefail
+          adb install -r apps/android/app/build/outputs/apk/debug/app-debug.apk
+          adb shell am start -n io.github.jgalego.ephemeral/.MainActivity
+          sleep 8
+
+      # Two screens: the list with nothing in it, and the list with something
+      # in it. The second needs an application, and creating one writes no code
+      # and calls no model — which is precisely why the phone can do it.
+      - name: Photograph it
+        run: |
+          set -euo pipefail
+          mkdir -p screens
+          adb exec-out screencap -p > screens/01-nothing-yet.png
+
+          # Type an intent and press Create, through the input system rather
+          # than through a test hook: what is photographed has to be what a
+          # person would get.
+          adb shell input tap 540 2150 || true
+          adb shell input text "compare%stwo%sCSV%sfiles"
+          sleep 1
+          adb exec-out screencap -p > screens/02-asking-for-one.png
+
+          adb shell input keyevent 111 || true
+          adb shell input tap 980 2150 || true
+          sleep 4
+          adb exec-out screencap -p > screens/03-the-list.png
+
+          adb shell input tap 540 260 || true
+          sleep 4
+          adb exec-out screencap -p > screens/04-one-application.png
+
+      - name: What it said while doing it
+        if: always()
+        run: adb logcat -d -s Ephemeral:* AndroidRuntime:E > screens/logcat.txt || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-screens
+          path: screens/
+          if-no-files-found: warn
