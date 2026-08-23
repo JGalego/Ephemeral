@@ -408,7 +408,7 @@ consent model working as intended, not a missing button.
 | The JNI bridge driven from a real JVM on every commit, callback included | ✅ |
 | The Swift shell, type-checked against the iOS SDK on every commit | ✅ |
 | An iOS application somebody can install, which needs an Xcode project and an identity | |
-| A run on a physical device, which needs a device cloud account or a phone on a wire | |
+| A run on a physical device — a Pixel 8, through Firebase Test Lab | ✅ |
 | Building and running on mobile, which needs the control plane in [ADR-0007](architecture/decisions/0007-mobile-control-plane.md) | |
 
 **Done when:** somebody can download and run Ephemeral on their own machine
@@ -464,9 +464,33 @@ this on a device; there is no KVM in the container it was written in, so there
 was no emulator either. It is in exactly the position the desktop window was in
 before it was filmed, and it should be read that way.
 
-**A real device is reachable; it needs an account, not an invention.** "No
-machine in CI is a phone" was the reason this row gave for years, and it stopped
-being the whole truth the moment device clouds existed. The routes, honestly:
+**It has run on a phone, and the phone found the bug.** A Pixel 8 through
+Firebase Test Lab, via `.github/workflows/device.yml` — and the first thing it
+did was refuse to start.
+
+Android tags heap pointers in the top byte on arm64. The hardware ignores those
+bits when dereferencing; a signed 64-bit integer does not, so a tagged pointer
+is a *negative* `jlong` and `jlong::try_from` refused roughly every allocation
+the JNI bridge tried to hand to Java. **The application could not start on any
+modern 64-bit phone**, and had never been able to. It started perfectly on the
+x86-64 emulator, which does not tag pointers, so every screenshot taken that
+day was of an application that would not run on a real device. `close` had the
+same fault in reverse and leaked the session rather than freeing it.
+
+Nothing short of real hardware was going to ask that question — and the answer
+was legible only because six silent failure paths in `open` had been given six
+distinct sentences an hour earlier. The screen said "The session does not fit
+in a Java long", for five minutes, on video. Both directions are one
+bit-preserving pair of functions now, with a unit test that asserts `try_from`
+refuses the very pointer that has to work.
+
+The second run is what a working application looks like: eleven screens,
+create, the page, the list, and — with no model key present — "Add a model key
+first", said rather than hung. No fatal exceptions in the log.
+
+**Getting there needed an account, not an invention.** "No machine in CI is a
+phone" was the reason this row gave for years, and it stopped being the whole
+truth the moment device clouds existed. The routes, for anyone repeating it:
 
 - **A phone on a wire is the cheapest and the best.**
   `apps/android/tests/photograph.py` drives whatever `adb` is talking to, so it

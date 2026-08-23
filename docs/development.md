@@ -211,6 +211,14 @@ had:
   screen, because a crash looks exactly like a screenshot from outside the
   process
 
+A fifth came from a real phone, which is a different machine from an emulator
+in one way that mattered: **the application could not start on any modern
+64-bit Android device.** Android tags heap pointers in the top byte on arm64,
+which makes them negative as signed integers, and the JNI bridge converted its
+session handle with `try_from`. The emulator is x86-64 and tags nothing, so it
+worked there and nowhere else. `.github/workflows/device.yml` is how that was
+found; `apps/android/README.md` has the setup.
+
 Read both the way the desktop window was read before somebody filmed it.
 
 ## Testing
