@@ -74,13 +74,28 @@ jobs:
       # An emulator needs hardware virtualisation to be usable. The runner has
       # it; the container this repository is often worked in does not, which is
       # the whole reason these screens had never been seen.
-      - name: Check for KVM
+      #
+      # Existing is not the same as being usable. `/dev/kvm` is present on the
+      # runner and owned by a group the job's user is not in, so the emulator
+      # started, ran for fifteen minutes, and then said "x86_64 emulation
+      # currently requires hardware acceleration!" — while a check that only
+      # asked whether the file was there reported everything was fine.
+      - name: Make KVM usable
         run: |
-          if [ ! -e /dev/kvm ]; then
-            echo "No /dev/kvm on this runner, so an emulator would take hours."
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm-for-this-job.rules > /dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Check KVM is usable
+        run: |
+          ls -l /dev/kvm || true
+          if [ ! -w /dev/kvm ]; then
+            echo "::error::/dev/kvm is not writable by $(id -un), so the emulator cannot accelerate."
+            id
             exit 1
           fi
-          echo "KVM is available."
+          echo "KVM is available and writable."
 
       # Driven through the SDK's own tools rather than a third-party action.
       # A screenshot is not worth adding somebody else's code to the pipeline
