@@ -165,6 +165,16 @@ class MainActivity : Activity() {
 private class Applications(context: Context) : ArrayAdapter<Summary>(
     context,
     R.layout.row_application,
+    // Not optional, and not obvious. Without the third argument `ArrayAdapter`
+    // takes the layout itself to *be* a TextView and calls `setText` on it, so
+    // a card made of a LinearLayout throws "ArrayAdapter requires the resource
+    // ID to be a TextView" the first time `getView` runs.
+    //
+    // Which is to say: the list crashed the moment it had one application in
+    // it. The application compiled, CI was green, and every screenshot until
+    // this one had been of an empty list — a photograph of the phone with one
+    // application recorded is what found it.
+    R.id.purpose,
 ) {
     override fun getView(position: Int, recycled: View?, parent: ViewGroup): View {
         val view = super.getView(position, recycled, parent)

@@ -94,6 +94,10 @@ def main() -> None:
 
     taken = 0
 
+    def running() -> bool:
+        """Whether the application is still the thing on screen."""
+        return PACKAGE in str(adb("shell", "dumpsys", "window", "windows"))
+
     def shot(what: str, settle: float = 1.5) -> None:
         nonlocal taken
         time.sleep(settle)
@@ -101,6 +105,16 @@ def main() -> None:
         name = out / f"{taken:02d}-{what}.png"
         name.write_bytes(bytes(adb("exec-out", "screencap", "-p", binary=True)))
         print(f"  {name.name}")
+
+        # A photograph of the launcher is not a photograph of this application,
+        # and it is what a crash looks like from out here. One run ended with
+        # four frames, the last of them somebody's home screen, and the reason
+        # was in logcat rather than in any of them.
+        if not running():
+            print(f"{name.name} is not the application: it is no longer on screen.")
+            print("Its own account of why:")
+            print(str(adb("logcat", "-d", "-s", "AndroidRuntime:E"))[-4000:])
+            raise SystemExit(1)
 
     adb("shell", "am", "force-stop", PACKAGE)
     adb("shell", "am", "start", "-n", f"{PACKAGE}/.MainActivity")
