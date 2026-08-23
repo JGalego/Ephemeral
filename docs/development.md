@@ -192,6 +192,25 @@ not a device, but it is the real application drawn by the real framework, which
 is more than a compiler can say. For iOS there is nothing yet: it needs an
 Xcode project and a Mac.
 
+The first four runs of that workflow found four things, none of which any test
+had:
+
+- the application saying `dlopen failed: library "libephemeral_android.so" not
+  found`, because CI built the APK and never cross-compiled the engine into it
+  (it handled that gracefully, which was worth seeing too)
+- the same sentence twice, one line apart, because `explanation` is the state's
+  description plus its reason and there was no reason yet — fixed in the
+  service layer, since the window had silently made the opposite choice and iOS
+  would have made a third
+- **the list crashing the moment it contained one application**: `ArrayAdapter`
+  treats a bare layout as a `TextView` unless you name the view id, so the card
+  layout threw the first time `getView` ran. The application compiled, CI was
+  green, and every screenshot until then had been of an empty list — which
+  never calls `getView`
+- the walkthrough itself reporting success after photographing somebody's home
+  screen, because a crash looks exactly like a screenshot from outside the
+  process
+
 Read both the way the desktop window was read before somebody filmed it.
 
 ## Testing

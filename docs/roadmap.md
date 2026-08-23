@@ -482,12 +482,32 @@ one where it did until somebody's machine refuses to open it. There is
 deliberately no self-signed fallback: an unsigned build that says so is more
 honest than a signed one nobody can trace.
 
-**The phone's screens can now be photographed.** `.github/workflows/screens.yml`
-builds the application, boots an emulator on a runner that has KVM, taps
-through it and uploads the frames. An emulator is not a device and this does
-not close the row below; what it closes is that nothing had ever drawn these
-screens at all. It runs outside the required checks, because a screenshot is
-something a person reviews rather than something that passes.
+**The phone's screens have been photographed, and it went exactly like the
+window.** `.github/workflows/screens.yml` builds the engine and the
+application, boots an emulator on a runner that has KVM, and runs
+`apps/android/tests/photograph.py`, which taps controls found by resource id
+rather than by coordinate. An emulator is not a device and this does not close
+the row below; what it closes is that nothing had ever drawn these screens at
+all.
+
+Getting there took four attempts and none of the failures were Android's: a
+`yes |` pipeline killed by SIGPIPE under `pipefail`, runs cancelling each other
+through their own concurrency group, `avdmanager` writing the AVD where
+`emulator` does not look, and `/dev/kvm` existing while being unwritable by the
+job — a check that asked whether the file was there had reported everything was
+fine. Every one of them was read out of a log rather than guessed at, which is
+the only reason there were four rather than one a week.
+
+Then the photographs found four more, in the application itself. The best of
+them: **the list crashed the moment it contained one application.**
+`ArrayAdapter` treats a bare layout as a `TextView` unless you name the view id
+inside it, so the card the new design introduced threw the first time a row was
+drawn. It compiled, CI was green, and every screenshot until that one had been
+of an empty list — which never draws a row. The others are in
+[development.md](development.md#the-phone-applications).
+
+It runs outside the required checks, because a screenshot is something a person
+reviews rather than something that passes.
 
 ### Phase 6 — Hardening
 
