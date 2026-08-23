@@ -448,6 +448,39 @@ pub extern "system" fn Java_io_github_jgalego_ephemeral_Native_arguments<'local>
     })
 }
 
+/// Runs an application on this device, and says what it did.
+///
+/// The call that makes a handset something other than a remote control. It
+/// blocks for as long as the application runs, which is why nothing in the
+/// Kotlin above it may reach this from a thread that draws.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_jgalego_ephemeral_Native_run<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    session: jlong,
+    id: JString<'local>,
+    arguments: JString<'local>,
+) -> jstring {
+    guarded(ptr::null_mut(), || {
+        let Some(open) = opened(session) else {
+            return ptr::null_mut();
+        };
+        let (Some(id), Some(arguments)) = (text(&mut env, &id), text(&mut env, &arguments)) else {
+            return ptr::null_mut();
+        };
+        let (Ok(id), Ok(arguments)) = (CString::new(id), CString::new(arguments)) else {
+            return ptr::null_mut();
+        };
+
+        // SAFETY: live handle, NUL-terminated strings borrowed for the call.
+        let produced = unsafe {
+            ephemeral_ffi::ephemeral_run(open.ephemeral, id.as_ptr(), arguments.as_ptr())
+        };
+        handed_back(&mut env, produced)
+    })
+}
+
 /// Why the last call failed, or null.
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]

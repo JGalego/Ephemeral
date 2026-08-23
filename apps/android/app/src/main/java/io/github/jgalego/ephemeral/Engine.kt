@@ -215,6 +215,22 @@ internal object Engine {
         return (0 until built.length()).map(built::getString)
     }
 
+    /**
+     * Runs an application on this device and says what it did.
+     *
+     * Only from [submit]'s worker thread: it blocks for as long as the
+     * application runs, and thirty seconds of a frozen screen is worse than any
+     * answer is good.
+     */
+    fun run(id: String, arguments: List<String>): Ran {
+        val given = JSONArray()
+        for (argument in arguments) {
+            given.put(argument)
+        }
+
+        return Ran.from(JSONObject(demand(Native.run(session, id, given.toString()))))
+    }
+
     /** Records a choice of service and hands it to the engine. */
     fun choose(context: Context, choice: Choice) {
         val application = context.applicationContext

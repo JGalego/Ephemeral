@@ -54,6 +54,14 @@ internal object Native {
      */
     external fun arguments(session: Long, id: String, answers: String): String?
 
+    /**
+     * Runs an application on this device and says what it did, as JSON.
+     *
+     * Blocks for as long as the application runs, which is why only [Engine]'s
+     * worker thread may reach it.
+     */
+    external fun run(session: Long, id: String, arguments: String): String?
+
     /** Why the last call failed, or null. */
     external fun lastError(session: Long): String?
 

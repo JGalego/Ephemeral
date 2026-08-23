@@ -8,13 +8,18 @@
 //! ## What a phone can and cannot do
 //!
 //! It can **create** an application, **plan** it, and **generate** it: that is a
-//! description, an HTTPS request, and some parsing. It cannot **build**, **run**
-//! or **repair** one, because those need a sandbox no phone has ([ADR-0007]).
+//! description, an HTTPS request, and some parsing. It can also **run** one, as
+//! WebAssembly, in this process — see [`ephemeral_run`] and [ADR-0021].
 //!
-//! An application generated here is therefore real and versioned, with its
-//! source written and its requested permissions recorded, and its lifecycle
-//! stops at "generated, not built" — a state the machine already models. A
-//! machine that can build finishes the job.
+//! It cannot **build** or **repair**. Both mean a container: building is a
+//! Dockerfile and repairing is building again with the failure in hand, and a
+//! phone has no daemon to do either with. An application generated here for a
+//! container is therefore real and versioned, with its source written and its
+//! requested permissions recorded, and its lifecycle stops at "generated, not
+//! built" — a state the machine already models. A machine that can build
+//! finishes the job.
+//!
+//! [ADR-0021]: https://github.com/JGalego/Ephemeral/blob/main/docs/architecture/decisions/0021-webassembly-is-the-runtime-a-phone-can-have.md
 //!
 //! ## The host supplies the network and the credential
 //!

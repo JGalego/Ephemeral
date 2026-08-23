@@ -34,6 +34,8 @@ final class Native {
 
     static native String arguments(long session, String id, String answers);
 
+    static native String run(long session, String id, String arguments);
+
     static native String lastError(long session);
 
     static native String create(long session, String intent);

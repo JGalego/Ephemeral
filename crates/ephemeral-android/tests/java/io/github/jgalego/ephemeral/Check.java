@@ -114,6 +114,20 @@ public final class Check {
             "and an unknown application is refused rather than guessed at"
         );
 
+        // Running crosses the bridge too. This application was created and
+        // never generated, so there is nothing to run — what matters is that
+        // the method binds by name and signature at call time and that the
+        // refusal comes back as words. A method nothing exercises here is a
+        // method that fails on a phone and nowhere else.
+        require(
+            Native.run(session, id, "[]") == null,
+            "an application with nothing to run is refused"
+        );
+        require(
+            Native.lastError(session) != null && Native.lastError(session).contains("generate"),
+            "and is told what to do about it"
+        );
+
         // A host whose transport throws is a host with a bug. It must not
         // become Ephemeral's crash: an exception left pending across a JNI
         // return poisons every later call.

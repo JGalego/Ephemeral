@@ -228,23 +228,57 @@ class DetailActivity : Activity() {
 
         Engine.submit(this, { Engine.arguments(application, answers) }) { outcome ->
             outcome
-                .onSuccess(::wouldRun)
+                .onSuccess(::runNow)
                 .onFailure { say(it.message) }
         }
     }
 
     /**
-     * What would happen, said plainly, because it cannot happen here yet.
+     * Runs it, here, on this device.
      *
-     * A phone has no container runtime, so an application generated on one is
-     * written and not built (ADR-0007). Showing the command the form produced
-     * is worth doing anyway: it is the proof that the form and the application
-     * agree, and it is what somebody would run on a machine that can.
+     * This screen used to show the command the form produced and explain that a
+     * phone could not run it. That was true of a phone with only a container
+     * runtime to reach for, and it is not true any more (ADR-0021).
+     *
+     * Off the drawing thread, through [Engine.submit], because a run blocks for
+     * as long as the application takes and thirty seconds of a frozen screen is
+     * worse than any answer is good.
      */
-    private fun wouldRun(arguments: List<String>) {
+    private fun runNow(arguments: List<String>) {
+        say(getString(R.string.running))
+
+        Engine.submit(this, { Engine.run(application, arguments) }) { outcome ->
+            outcome
+                .onSuccess(::showWhatItDid)
+                .onFailure { say(it.message) }
+        }
+    }
+
+    /**
+     * What the application did, in its own words.
+     *
+     * A non-zero exit is shown as a failure *and* keeps the output. A program
+     * that failed has usually just explained why, and replacing that with
+     * "something went wrong" throws away the only thing that says what.
+     */
+    private fun showWhatItDid(ran: Ran) {
+        val said = StringBuilder()
+
+        if (ran.refused.isNotEmpty()) {
+            said.append(getString(R.string.not_given, ran.refused.joinToString("\n")))
+            said.append("\n\n")
+        }
+        said.append(ran.output.ifBlank { getString(R.string.nothing_printed) })
+
         AlertDialog.Builder(this)
-            .setTitle(R.string.run_it)
-            .setMessage(getString(R.string.cannot_run_here, arguments.joinToString(" ")))
+            .setTitle(
+                if (ran.succeeded) {
+                    getString(R.string.it_ran)
+                } else {
+                    getString(R.string.it_failed, ran.exitCode)
+                },
+            )
+            .setMessage(said.toString())
             .setPositiveButton(R.string.close, null)
             .show()
     }

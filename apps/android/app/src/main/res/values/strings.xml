@@ -28,7 +28,11 @@
     <string name="a_folder">A folder it can reach</string>
     <string name="run_it">Run it</string>
     <string name="close">Close</string>
-    <string name="cannot_run_here">This is what your answers mean:\n\n%1$s\n\nA phone writes applications but cannot run them — that needs a container runtime, which is why running happens on a machine that has one.</string>
+    <string name="running">Running it…</string>
+    <string name="it_ran">It ran</string>
+    <string name="it_failed">It failed (%1$d)</string>
+    <string name="nothing_printed">It ran and printed nothing.</string>
+    <string name="not_given">Some of what you allowed was not given to it:\n\n%1$s</string>
     <string name="model_title">Model</string>
     <string name="model_base_url">Base URL</string>
     <string name="model_model">Model name</string>

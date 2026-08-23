@@ -145,3 +145,37 @@ data class Choice(
         }
     }
 }
+
+/**
+ * What one run produced.
+ *
+ * An application that ran and failed is not an error: it is this, with
+ * [succeeded] false and the program's own words in [output]. Drawing a
+ * non-zero exit as "something went wrong" and hiding the output would throw
+ * away the only thing that says what.
+ */
+data class Ran(
+    val succeeded: Boolean,
+    val exitCode: Int,
+    val output: String,
+    /**
+     * Access somebody granted that the runtime will not give effect to.
+     *
+     * Shown rather than swallowed. Somebody who allowed an application to read
+     * a folder and watched it fail to find the folder is owed the reason, and
+     * the reason is us.
+     */
+    val refused: List<String>,
+) {
+    companion object {
+        fun from(json: JSONObject): Ran {
+            val refused = json.optJSONArray("refused") ?: JSONArray()
+            return Ran(
+                succeeded = json.optBoolean("succeeded"),
+                exitCode = json.optInt("exit_code"),
+                output = json.optString("output"),
+                refused = (0 until refused.length()).map { refused.optString(it) },
+            )
+        }
+    }
+}
