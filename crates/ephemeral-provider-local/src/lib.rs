@@ -79,11 +79,24 @@ pub const MODEL_VARIABLE: &str = "EPHEMERAL_LOCAL_MODEL";
 /// speaks the same protocol.
 pub const API_KEY_VARIABLE: &str = "EPHEMERAL_LOCAL_API_KEY";
 
+/// The environment variable that sets how large a reply may be.
+///
+/// Worth setting here more often than for a hosted model: a model small enough
+/// to run on a laptop usually has a context window to match, and asking for
+/// more than it has is a refusal rather than a shorter answer.
+pub const MAX_TOKENS_VARIABLE: &str = "EPHEMERAL_LOCAL_MAX_TOKENS";
+
 /// Generates applications with a model server on this machine.
 pub struct LocalProvider {
     api_key: Option<String>,
     model: String,
     endpoint: String,
+    /// How large a reply this may ask for.
+    ///
+    /// It matters more here than anywhere else: a model small enough to run on
+    /// a laptop usually has a context window to match, and the default is sized
+    /// for a hosted one.
+    max_tokens: u32,
     transport: Box<dyn Transport>,
 }
 
@@ -125,8 +138,18 @@ impl LocalProvider {
             // did not choose, which is the one mistake this provider exists to
             // make impossible; it is refused instead, by name.
             endpoint: wire::endpoint_from(&base),
+            max_tokens: from_environment(MAX_TOKENS_VARIABLE)
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(wire::DEFAULT_MAX_TOKENS),
             transport,
         }
+    }
+
+    /// The same, asking for replies of at most `tokens`.
+    #[must_use]
+    pub fn with_max_tokens(mut self, tokens: u32) -> Self {
+        self.max_tokens = tokens;
+        self
     }
 
     /// The same, with a particular model.
@@ -184,11 +207,11 @@ impl LocalProvider {
         // through it. The guarantee is on the request, not on the diagnosis.
         self.stays_on_this_machine()?;
 
-        let response = self.transport.send(&HttpRequest {
-            endpoint: &self.endpoint,
-            headers: wire::headers(self.api_key.as_deref()),
-            body: request,
-        })?;
+        let response = self.transport.send(&HttpRequest::post(
+            &self.endpoint,
+            wire::headers(self.api_key.as_deref()),
+            request,
+        ))?;
         let usage = wire::usage_from(&response);
         let text = wire::text_from(NAME, &response)?;
 
@@ -209,15 +232,44 @@ impl AgentProvider for LocalProvider {
         self.stays_on_this_machine()
     }
 
+    fn models(&self) -> Result<Vec<ephemeral_agent::Model>, AgentError> {
+        // The loopback check first, as on every other request. A listing is
+        // still a request, and a provider whose promise is "this does not leave
+        // the machine" may not make an exception for the convenient one.
+        self.stays_on_this_machine()?;
+
+        let listing = wire::models_endpoint_from(
+            self.endpoint
+                .strip_suffix(wire::PATH)
+                .unwrap_or(&self.endpoint),
+        );
+
+        let response = self.transport.send(&HttpRequest::get(
+            &listing,
+            wire::headers(self.api_key.as_deref()),
+        ))?;
+
+        Ok(wire::models_from(&response))
+    }
+
     fn plan(&self, intent: &str) -> Result<Attempt<Plan>, AgentError> {
-        let (value, usage) = self.ask(&wire::plan_request(&self.model, Ceiling::Legacy, intent))?;
+        let (value, usage) = self.ask(&wire::plan_request(
+            &self.model,
+            Ceiling::Legacy,
+            self.max_tokens,
+            intent,
+        ))?;
 
         Ok(Attempt::new(dialogue::plan_from(NAME, &value)?, usage))
     }
 
     fn generate(&self, plan: &Plan) -> Result<Attempt<GeneratedApp>, AgentError> {
-        let (value, usage) =
-            self.ask(&wire::generate_request(&self.model, Ceiling::Legacy, plan))?;
+        let (value, usage) = self.ask(&wire::generate_request(
+            &self.model,
+            Ceiling::Legacy,
+            self.max_tokens,
+            plan,
+        ))?;
 
         Ok(Attempt::new(dialogue::app_from(NAME, &value, plan)?, usage))
     }
@@ -231,6 +283,7 @@ impl AgentProvider for LocalProvider {
         let (value, usage) = self.ask(&wire::repair_request(
             &self.model,
             Ceiling::Legacy,
+            self.max_tokens,
             files,
             failure,
         ))?;
@@ -315,6 +368,7 @@ mod tests {
             api_key: None,
             model: DEFAULT_MODEL.to_owned(),
             endpoint: wire::endpoint_from(BASE_URL),
+            max_tokens: wire::DEFAULT_MAX_TOKENS,
             transport,
         }
     }

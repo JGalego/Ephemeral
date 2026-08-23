@@ -18,6 +18,61 @@ use ephemeral_core::manifest::GenerationBudget;
 
 use crate::plan::{GeneratedApp, Plan, PlanError, RepairAttempt, SourceFile};
 
+/// One model a service says it has.
+///
+/// Two fields, because two is what a person choosing needs: the name to send,
+/// and something readable to pick from. Services disagree about whether the
+/// second exists — Anthropic has `display_name`, Groq has `name`, plain OpenAI
+/// has neither — so it falls back to the id rather than being absent.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Model {
+    /// What to put in a request. The only part that has to be exact.
+    pub id: String,
+
+    /// What to show somebody. The id, when the service offers nothing better.
+    pub name: String,
+
+    /// The largest reply this model will accept a request for, when the service
+    /// says.
+    ///
+    /// Worth carrying because it is the setting most likely to be wrong and the
+    /// hardest to guess. A model with a 16k window refuses a request for 32k
+    /// outright, with a message about a field nobody set — showing the number
+    /// next to the name turns that into something a person can see coming.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ceiling: Option<u32>,
+}
+
+impl Model {
+    /// A model known only by its id.
+    #[must_use]
+    pub fn named(id: impl Into<String>) -> Self {
+        let id = id.into();
+        Self {
+            name: id.clone(),
+            id,
+            ceiling: None,
+        }
+    }
+
+    /// A model with a name of its own.
+    #[must_use]
+    pub fn called(id: impl Into<String>, name: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            ceiling: None,
+        }
+    }
+
+    /// The same, knowing how large a reply it will accept.
+    #[must_use]
+    pub fn holding(mut self, ceiling: Option<u32>) -> Self {
+        self.ceiling = ceiling;
+        self
+    }
+}
+
 /// What a model cost.
 ///
 /// Tracked so the budget in every manifest is enforced rather than declared.
@@ -217,6 +272,24 @@ pub trait AgentProvider {
         files: &[SourceFile],
         failure: &str,
     ) -> Result<Attempt<RepairAttempt>, AgentError>;
+
+    /// What this service says it can be asked for.
+    ///
+    /// Unlike [`Self::availability`], this *does* reach the network — that is
+    /// the point of it. It is the one call that answers, together, the two
+    /// questions somebody has before spending anything: can I reach this
+    /// service with the credential I have, and what may I name as a model.
+    /// Answering them separately would mean two ways to be almost-configured.
+    ///
+    /// A service that will not list its models can still generate. A client
+    /// showing this should say what failed rather than treating it as proof
+    /// that nothing will work.
+    ///
+    /// # Errors
+    ///
+    /// [`AgentError`] as above — most usefully the service's own words when a
+    /// credential is wrong, which is the failure this exists to surface early.
+    fn models(&self) -> Result<Vec<Model>, AgentError>;
 }
 
 #[cfg(test)]

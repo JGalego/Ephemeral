@@ -10,13 +10,14 @@ import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
-import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ListView
-import android.widget.Spinner
+import android.widget.RadioButton
+import android.widget.RadioGroup
+import android.widget.ScrollView
 import android.widget.TextView
 
 /** Everything recorded so far, and the box you describe the next thing in. */
@@ -108,12 +109,12 @@ class MainActivity : Activity() {
     }
 
     /**
-     * Which service generates, and the key to reach it with.
+     * Which service generates, the key to reach it with, and a button that
+     * says whether any of it works.
      *
-     * One dialog rather than two, because they are one decision: a key is for a
-     * particular service, and choosing a service without being able to say
-     * which key goes with it is how somebody sends an Anthropic key to Groq and
-     * gets an error about authentication that explains nothing.
+     * One dialog rather than three, because they are one decision: a key
+     * belongs to a particular service, and a model name only means something
+     * once a service is chosen.
      *
      * The list of services comes from the engine. Writing it here would put a
      * list of providers in an app that ships on a different schedule from the
@@ -130,33 +131,39 @@ class MainActivity : Activity() {
         val chosen = Choice.read(this)
         var selected = providers.indexOfFirst { it.name == chosen?.provider }.coerceAtLeast(0)
 
-        val service = Spinner(this).apply {
-            // `this.adapter`, spelled out: MainActivity has a field of that
-            // name too, and a reader should not have to work out which one an
-            // implicit receiver picked.
-            this.adapter = ArrayAdapter(
-                this@MainActivity,
-                android.R.layout.simple_spinner_dropdown_item,
-                providers.map { it.name },
-            )
-            setSelection(selected)
+        val explains = TextView(this).apply {
+            setTextColor(getColor(R.color.ink_quiet))
         }
 
-        val explains = TextView(this).apply {
-            text = providers[selected].what
-            setTextColor(getColor(R.color.ink_quiet))
+        // Radio buttons rather than a spinner, and each with a name of its own.
+        //
+        // Not a style preference. `--robo-directives` can click a control by
+        // resource name and cannot operate a spinner at all, so with a spinner
+        // here every automated run on a real phone could only ever exercise
+        // whichever provider happened to be the default. A provider with no id
+        // in `ids.xml` still appears and can still be chosen by hand; it just
+        // cannot be named in a directive.
+        val services = RadioGroup(this).apply {
+            orientation = RadioGroup.VERTICAL
+            providers.forEachIndexed { index, provider ->
+                addView(
+                    RadioButton(this@MainActivity).apply {
+                        id = idFor(provider.name) ?: View.generateViewId()
+                        text = provider.name
+                        isChecked = index == selected
+                    },
+                )
+            }
         }
 
         val baseUrl = EditText(this).apply {
             id = R.id.base_url
-            hint = getString(R.string.model_base_url)
             setSingleLine()
             setText(chosen?.baseUrl.orEmpty())
         }
 
         val model = EditText(this).apply {
             id = R.id.model
-            hint = getString(R.string.model_model)
             setSingleLine()
             setText(chosen?.model.orEmpty())
         }
@@ -167,6 +174,25 @@ class MainActivity : Activity() {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
             setSingleLine()
         }
+
+        val said = TextView(this).apply {
+            visibility = View.GONE
+        }
+
+        // The connection test. It is the only control here that can tell
+        // somebody the difference between "configured" and "working", and
+        // before it existed the first thing that could was a failed generation
+        // — after the intent had been sent and a bill had started.
+        val check = Button(this).apply {
+            id = R.id.check
+            text = getString(R.string.model_check)
+        }
+
+        fun current() = Choice(
+            provider = providers[selected].name,
+            baseUrl = baseUrl.text.toString().trim(),
+            model = model.text.toString().trim(),
+        )
 
         // Only what the chosen service actually reads. A model box on the mock
         // is a box that does nothing, and a person who fills one in and sees no
@@ -182,41 +208,72 @@ class MainActivity : Activity() {
         }
         showWhatApplies()
 
-        service.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                selected = position
-                showWhatApplies()
+        services.setOnCheckedChangeListener { group, checked ->
+            selected = group.indexOfChild(group.findViewById(checked)).coerceAtLeast(0)
+            showWhatApplies()
+        }
+
+        check.setOnClickListener {
+            said.visibility = View.VISIBLE
+            said.text = getString(R.string.model_checking)
+            said.setTextColor(getColor(R.color.ink_quiet))
+
+            // Saved first, and the key with it: the check has to test what
+            // generation would do, which means the settings that are about to
+            // be used rather than the ones the engine still holds.
+            val typed = key.text.toString().trim()
+            if (typed.isNotEmpty()) {
+                Credential.save(this, typed)
+            }
+            Engine.choose(this, current())
+            if (typed.isNotEmpty()) {
+                Engine.refreshCredential(this)
             }
 
-            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+            Engine.submit(this, Engine::models) { outcome ->
+                outcome
+                    .onSuccess { models ->
+                        said.setTextColor(getColor(R.color.low))
+                        said.text = resources.getQuantityString(
+                            R.plurals.models_reached,
+                            models.size,
+                            models.size,
+                        )
+                        // What it can be asked for, now that it has been asked.
+                        // A name typed from memory is the second most common
+                        // way to be almost-configured; this is the list that
+                        // makes typing unnecessary.
+                        offerModels(model, models)
+                    }
+                    // The service's own words. Ephemeral paraphrasing "invalid
+                    // api key" would be a worse sentence about a problem it
+                    // cannot diagnose.
+                    .onFailure { failure ->
+                        said.setTextColor(getColor(R.color.critical))
+                        said.text = failure.message ?: getString(R.string.model_unreachable)
+                    }
+            }
         }
 
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            // The dialog supplies its own horizontal inset; this is the
-            // breathing room between that and the fields.
             val margin = (16 * resources.displayMetrics.density).toInt()
             setPadding(margin, margin, margin, 0)
-            addView(service)
+            addView(services)
             addView(explains)
             addView(baseUrl)
             addView(model)
             addView(key)
+            addView(check)
+            addView(said)
         }
 
         val dialog = AlertDialog.Builder(this)
             .setTitle(R.string.model_title)
             .setMessage(R.string.credential_explains)
-            .setView(layout)
+            .setView(ScrollView(this).apply { addView(layout) })
             .setPositiveButton(R.string.save) { _, _ ->
-                Engine.choose(
-                    this,
-                    Choice(
-                        provider = providers[selected].name,
-                        baseUrl = baseUrl.text.toString().trim(),
-                        model = model.text.toString().trim(),
-                    ),
-                )
+                Engine.choose(this, current())
 
                 val typed = key.text.toString().trim()
                 if (typed.isNotEmpty()) {
@@ -236,6 +293,43 @@ class MainActivity : Activity() {
         }
 
         dialog.show()
+    }
+
+    /**
+     * Lets somebody pick a model from what the service actually has.
+     *
+     * Offered rather than imposed: the box stays typeable, because a service
+     * may know models it does not list, and a picker that refused an unlisted
+     * name would be a picker that decides what you may run.
+     */
+    private fun offerModels(field: EditText, models: List<Model>) {
+        if (models.isEmpty()) {
+            return
+        }
+
+        field.setOnClickListener {
+            AlertDialog.Builder(this)
+                .setTitle(R.string.model_pick)
+                .setItems(models.map(Model::label).toTypedArray()) { _, which ->
+                    field.setText(models[which].id)
+                }
+                .show()
+        }
+        field.hint = getString(R.string.model_tap_to_pick)
+    }
+
+    /**
+     * The stable id for a provider, when this build has one.
+     *
+     * Only exists so an automated run can name a control. A provider the engine
+     * has and this list does not is still shown and still choosable — it simply
+     * gets a generated id, which no directive can address.
+     */
+    private fun idFor(provider: String): Int? = when (provider) {
+        "mock" -> R.id.provider_mock
+        "anthropic" -> R.id.provider_anthropic
+        "openai" -> R.id.provider_openai
+        else -> null
     }
 
     private fun report(failure: Throwable) {

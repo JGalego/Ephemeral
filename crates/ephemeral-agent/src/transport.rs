@@ -58,6 +58,33 @@ pub trait Transport: Send + Sync {
     fn send(&self, request: &HttpRequest<'_>) -> Result<Value, AgentError>;
 }
 
+/// Which HTTP method one request uses.
+///
+/// Two, because two is what generation needs: a `POST` to ask a model for
+/// something, and a `GET` to ask a service what models it has. A transport that
+/// could only `POST` is a transport that cannot answer "can I reach you, and
+/// what can I ask for" — which is the one question a person needs answered
+/// before they spend anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Method {
+    /// Asking for something. Carries a body.
+    Post,
+
+    /// Reading something. Carries no body, and none is sent.
+    Get,
+}
+
+impl Method {
+    /// The word that goes on the wire.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Post => "POST",
+            Self::Get => "GET",
+        }
+    }
+}
+
 /// One request, as the provider composed it.
 ///
 /// Headers rather than a bare credential, because providers do not agree on how
@@ -67,6 +94,9 @@ pub trait Transport: Send + Sync {
 /// did, until there was a second one.
 #[derive(Debug, Clone)]
 pub struct HttpRequest<'a> {
+    /// How to ask.
+    pub method: Method,
+
     /// Where it goes.
     pub endpoint: &'a str,
 
@@ -78,8 +108,32 @@ pub struct HttpRequest<'a> {
     /// writes them to a configuration document on stdin.
     pub headers: Vec<(String, String)>,
 
-    /// The JSON body.
+    /// The JSON body. Ignored, and not sent, for a [`Method::Get`].
     pub body: &'a Value,
+}
+
+impl<'a> HttpRequest<'a> {
+    /// A request that asks a model for something.
+    #[must_use]
+    pub fn post(endpoint: &'a str, headers: Vec<(String, String)>, body: &'a Value) -> Self {
+        Self {
+            method: Method::Post,
+            endpoint,
+            headers,
+            body,
+        }
+    }
+
+    /// A request that reads something, with no body.
+    #[must_use]
+    pub fn get(endpoint: &'a str, headers: Vec<(String, String)>) -> Self {
+        Self {
+            method: Method::Get,
+            endpoint,
+            headers,
+            body: &Value::Null,
+        }
+    }
 }
 
 #[cfg(feature = "curl")]
@@ -134,8 +188,14 @@ impl Transport for Curl {
 /// claim — and so that a reader can see there is nothing sensitive in it.
 #[cfg(feature = "curl")]
 #[must_use]
-pub fn arguments(endpoint: &str) -> Vec<String> {
+pub fn arguments(method: Method, endpoint: &str) -> Vec<String> {
     vec![
+        // Named rather than inferred. `curl` decides the method from whether it
+        // was given data, which means a GET that acquired a body would silently
+        // become a POST — and a POST whose body was empty would silently become
+        // a GET.
+        "--request".to_owned(),
+        method.as_str().to_owned(),
         // Read the rest of the configuration, including the credential, from
         // stdin. Nothing sensitive is an argument.
         "--config".to_owned(),
@@ -157,7 +217,7 @@ pub fn arguments(endpoint: &str) -> Vec<String> {
 ///
 /// Kept separate from [`arguments`] and never logged. The API key is in here
 /// and nowhere else.
-fn configuration(headers: &[(String, String)], body: &str) -> String {
+fn configuration(method: Method, headers: &[(String, String)], body: &str) -> String {
     // `--data-raw` rather than `--data`, so a body beginning with `@` is never
     // read as a filename. A model-influenced request body that could name a
     // local file would be a fine way to exfiltrate one.
@@ -167,7 +227,9 @@ fn configuration(headers: &[(String, String)], body: &str) -> String {
     for (name, value) in headers {
         let _ = writeln!(document, "header = \"{name}: {value}\"");
     }
-    let _ = writeln!(document, "data-raw = {}", quote(body));
+    if method == Method::Post {
+        let _ = writeln!(document, "data-raw = {}", quote(body));
+    }
     document
 }
 
@@ -204,7 +266,7 @@ fn quote(value: &str) -> String {
 /// [`AgentError::Unavailable`] if `curl` is not there, and
 /// [`AgentError::Failed`] if the request fails or the reply is not JSON.
 pub fn send(provider: &str, request: &HttpRequest<'_>) -> Result<Value, AgentError> {
-    let args = arguments(request.endpoint);
+    let args = arguments(request.method, request.endpoint);
 
     let mut child = Command::new("curl")
         .args(&args)
@@ -220,7 +282,7 @@ pub fn send(provider: &str, request: &HttpRequest<'_>) -> Result<Value, AgentErr
             ),
         })?;
 
-    let configuration = configuration(&request.headers, &request.body.to_string());
+    let configuration = configuration(request.method, &request.headers, &request.body.to_string());
 
     child
         .stdin
@@ -296,7 +358,7 @@ mod tests {
     /// The property that makes a recorded command safe to log or show.
     #[test]
     fn no_secret_reaches_the_argument_vector() {
-        let args = arguments(TEST_ENDPOINT);
+        let args = arguments(Method::Post, TEST_ENDPOINT);
         let flattened = args.join(" ");
 
         assert!(!flattened.contains("sk-"), "{flattened}");
@@ -312,7 +374,7 @@ mod tests {
     /// it by never returning to be counted.
     #[test]
     fn every_request_is_bounded_in_time() {
-        let args = arguments(TEST_ENDPOINT);
+        let args = arguments(Method::Post, TEST_ENDPOINT);
 
         assert!(
             args.windows(2)
@@ -326,7 +388,7 @@ mod tests {
     #[test]
     fn an_error_response_is_a_failure_rather_than_a_body() {
         assert!(
-            arguments(TEST_ENDPOINT)
+            arguments(Method::Post, TEST_ENDPOINT)
                 .iter()
                 .any(|arg| arg == "--fail-with-body")
         );
@@ -337,7 +399,11 @@ mod tests {
     #[test]
     fn a_json_body_survives_quoting() {
         let body = json!({ "text": "she said \"hi\"\nand left\\" }).to_string();
-        let configuration = configuration(&[("x-api-key".to_owned(), "sk-test".to_owned())], &body);
+        let configuration = configuration(
+            Method::Post,
+            &[("x-api-key".to_owned(), "sk-test".to_owned())],
+            &body,
+        );
 
         let quoted = configuration
             .lines()
@@ -376,6 +442,7 @@ mod tests {
     #[test]
     fn a_body_is_never_read_as_a_filename() {
         let configuration = configuration(
+            Method::Post,
             &[("x-api-key".to_owned(), "sk-test".to_owned())],
             "@/etc/passwd",
         );
@@ -387,6 +454,7 @@ mod tests {
     #[test]
     fn the_credential_and_the_version_travel_in_the_configuration() {
         let configuration = configuration(
+            Method::Post,
             &[
                 ("x-api-key".to_owned(), "sk-test-value".to_owned()),
                 ("anthropic-version".to_owned(), "2023-06-01".to_owned()),

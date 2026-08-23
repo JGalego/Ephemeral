@@ -597,6 +597,31 @@ pub fn provider(name: &str) -> Result<Box<dyn AgentProvider>> {
     }
 }
 
+/// What a provider says it can be asked for, and whether it can be reached.
+///
+/// The two questions are one call because they have one answer. Somebody about
+/// to spend money on generation wants to know that the credential works and
+/// that the model name they are about to use exists; asking those separately
+/// gives two ways to be almost-configured, and the second failure arrives after
+/// the first token has been paid for.
+///
+/// Unlike generating, this reaches the network — so it needs the same authority
+/// generating does, and asks for it in the same words.
+///
+/// # Errors
+///
+/// If Ephemeral has not been allowed to reach a hosted provider, if there is no
+/// provider by that name, or if the service refuses. A refusal carries the
+/// service's own words, which is the point: "invalid api key" from the vendor
+/// beats anything this crate could invent.
+pub fn models(workspace: &Workspace, provider_name: &str) -> Result<Vec<ephemeral_agent::Model>> {
+    for required in provider_authority(provider_name) {
+        ephemeral_api::authority::require(workspace.ledger(), &required).map_err(Error::msg)?;
+    }
+
+    provider(provider_name)?.models().map_err(Into::into)
+}
+
 /// Writes generated source to disk and builds it in a container.
 struct DockerBuilder<'a> {
     runtime: &'a DockerRuntime,

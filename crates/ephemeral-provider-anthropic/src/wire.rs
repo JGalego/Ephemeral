@@ -11,6 +11,7 @@
 //!
 //! [ADR-0008]: https://github.com/JGalego/Ephemeral/blob/main/docs/architecture/decisions/0008-agent-provider-abstraction.md
 
+use ephemeral_agent::Model;
 use ephemeral_agent::{
     AgentError,
     plan::{Plan, SourceFile},
@@ -28,6 +29,9 @@ pub const BASE_URL: &str = "https://api.anthropic.com";
 
 /// The path a request is sent to, under whatever base URL is in use.
 pub const PATH: &str = "/v1/messages";
+
+/// Where this API lists the models it has.
+pub const MODELS_PATH: &str = "/v1/models";
 
 /// Where requests go, for a service whose base URL is `base`.
 ///
@@ -59,33 +63,42 @@ pub const DEFAULT_MODEL: &str = "claude-sonnet-5";
 /// a longer wait before *anything* arrives — see
 /// [`ephemeral_agent::transport`]'s timeout, which has to be large enough for a reply
 /// this size. The two move together.
-pub(crate) const MAX_TOKENS: u32 = 32_000;
+pub const DEFAULT_MAX_TOKENS: u32 = 32_000;
 
 /// The ceiling has to leave room for reasoning *and* an application, because
 /// both are spent from it. Checked at compile time rather than by a test, since
 /// it is a fact about a constant and not about behaviour.
 const _: () = assert!(
-    MAX_TOKENS >= 32_000,
+    DEFAULT_MAX_TOKENS >= 32_000,
     "a whole application plus the model's own reasoning does not fit"
 );
 
 /// The request that asks for a plan.
 #[must_use]
-pub fn plan_request(model: &str, intent: &str) -> Value {
-    body(model, &ephemeral_agent::dialogue::plan_prompt(intent))
+pub fn plan_request(model: &str, tokens: u32, intent: &str) -> Value {
+    body(
+        model,
+        tokens,
+        &ephemeral_agent::dialogue::plan_prompt(intent),
+    )
 }
 
 /// The request that asks for the application itself.
 #[must_use]
-pub fn generate_request(model: &str, plan: &Plan) -> Value {
-    body(model, &ephemeral_agent::dialogue::generate_prompt(plan))
+pub fn generate_request(model: &str, tokens: u32, plan: &Plan) -> Value {
+    body(
+        model,
+        tokens,
+        &ephemeral_agent::dialogue::generate_prompt(plan),
+    )
 }
 
 /// The request that asks for a fix.
 #[must_use]
-pub fn repair_request(model: &str, files: &[SourceFile], failure: &str) -> Value {
+pub fn repair_request(model: &str, tokens: u32, files: &[SourceFile], failure: &str) -> Value {
     body(
         model,
+        tokens,
         &ephemeral_agent::dialogue::repair_prompt(files, failure),
     )
 }
@@ -104,11 +117,42 @@ pub fn headers(api_key: &str) -> Vec<(String, String)> {
     ]
 }
 
+/// Where a service lists what it has, for a base URL of `base`.
+#[must_use]
+pub fn models_endpoint_from(base: &str) -> String {
+    format!("{}{MODELS_PATH}", base.trim_end_matches('/'))
+}
+
+/// The models in a listing reply.
+///
+/// Anthropic returns `{"data":[{"id":…,"display_name":…}]}`. Anything absent is
+/// skipped rather than guessed at: a model with no id cannot be asked for, and
+/// inventing one would produce a picker entry that fails on selection.
+#[must_use]
+pub fn models_from(response: &Value) -> Vec<Model> {
+    response["data"]
+        .as_array()
+        .map(|listed| {
+            listed
+                .iter()
+                .filter_map(|model| {
+                    let id = model["id"].as_str()?;
+                    Ok::<Model, ()>(match model["display_name"].as_str() {
+                        Some(name) if !name.is_empty() => Model::called(id, name),
+                        _ => Model::named(id),
+                    })
+                    .ok()
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// The common envelope.
-fn body(model: &str, prompt: &str) -> Value {
+fn body(model: &str, tokens: u32, prompt: &str) -> Value {
     json!({
         "model": model,
-        "max_tokens": MAX_TOKENS,
+        "max_tokens": tokens,
         "system": ephemeral_agent::dialogue::SYSTEM,
         "messages": [{ "role": "user", "content": prompt }],
     })
@@ -203,11 +247,11 @@ mod tests {
         };
 
         for request in [
-            plan_request(DEFAULT_MODEL, "compare two CSV files"),
-            generate_request(DEFAULT_MODEL, &plan),
-            repair_request(DEFAULT_MODEL, &[], "boom"),
+            plan_request(DEFAULT_MODEL, DEFAULT_MAX_TOKENS, "compare two CSV files"),
+            generate_request(DEFAULT_MODEL, DEFAULT_MAX_TOKENS, &plan),
+            repair_request(DEFAULT_MODEL, DEFAULT_MAX_TOKENS, &[], "boom"),
         ] {
-            assert_eq!(request["max_tokens"], MAX_TOKENS);
+            assert_eq!(request["max_tokens"], DEFAULT_MAX_TOKENS);
             assert_eq!(request["model"], DEFAULT_MODEL);
             assert!(request["system"].as_str().is_some_and(|s| !s.is_empty()));
         }

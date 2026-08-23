@@ -5,6 +5,11 @@
         <item quantity="other">%d questions waiting</item>
     </plurals>
 
+    <plurals name="models_reached">
+        <item quantity="one">Reached it. %d model.</item>
+        <item quantity="other">Reached it. %d models.</item>
+    </plurals>
+
     <plurals name="granted">
         <item quantity="one">%d permission granted</item>
         <item quantity="other">%d permissions granted</item>

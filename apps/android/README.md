@@ -129,11 +129,13 @@ interesting to photograph. Turning on the **generate** input puts the
 
 Three things are worth knowing before you do:
 
-- **Which service is a setting.** *Model* in the app's menu chooses one —
-  Anthropic, anything that speaks the chat completions format (Groq, Together,
-  OpenRouter, a company gateway), or the mock. `MODEL_API_KEY` has to match
-  whichever is chosen. Robo picks whatever the app was last set to, so set it
-  before the run, or add a `click:` directive for the picker.
+- **Which service is a setting**, and the run sets it. A rack phone is a fresh
+  install every time, so whatever the workflow's `service`, `base_url` and
+  `model` inputs say is the whole of what it knows — there is no "set it
+  beforehand". `MODEL_API_KEY` has to match whichever service is named.
+- **The run presses Check connection first**, so a wrong key or a retired model
+  appears in the video as a sentence in the app rather than as a generation that
+  quietly does nothing.
 - **Generating is not building.** A phone plans the application and writes its
   source. It cannot build or run it: that needs a container runtime, which is
   why a phone is a control plane and not a second desktop ([ADR-0007]).
@@ -207,9 +209,21 @@ not install.
 ## The model, and its key
 
 *Model* in the menu chooses the service, its base URL and its model name, and
-takes the key for it. One screen rather than two, because it is one decision: a
-key belongs to a particular service, and a key saved without one is a key sent
-to whichever company happens to be the default.
+takes the key for it. One screen rather than three, because it is one decision:
+a key belongs to a particular service, and a model name only means something
+once a service is chosen.
+
+**Check connection** asks that service what models it has. That single call
+answers both questions somebody has before spending anything — whether the
+credential works, and what may be named as a model — and it fills the model box
+from what came back, so a name never has to be typed from memory. A failure
+shows the service's own words.
+
+The services are radio buttons rather than a spinner, and each carries a
+resource id. That is not a style preference: `--robo-directives` addresses
+controls by name and cannot operate a spinner at all, so with a spinner every
+automated run on a real phone could only ever exercise whichever provider was
+the default.
 
 The list of services is read from the engine ([ADR-0020]) rather than written
 into the app. An app ships on its own schedule; a list of providers hardcoded in

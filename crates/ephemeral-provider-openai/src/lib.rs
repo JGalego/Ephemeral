@@ -55,6 +55,14 @@ pub const BASE_URL_VARIABLE: &str = "OPENAI_BASE_URL";
 /// The environment variable that names the model.
 pub const MODEL_VARIABLE: &str = "OPENAI_MODEL";
 
+/// The environment variable that sets how large a reply may be.
+///
+/// A number, not a dialect — [`CEILING_VARIABLE`] is the field's *name*, this is
+/// its value. Needed because a model with a 16k context window refuses a
+/// request for 32k outright, and until this existed that model could not be
+/// used at all.
+pub const MAX_TOKENS_VARIABLE: &str = "OPENAI_MAX_TOKENS";
+
 /// The environment variable that names the field carrying the response ceiling.
 ///
 /// An escape hatch for a service that speaks this format but predates OpenAI
@@ -75,6 +83,12 @@ pub struct OpenAiProvider {
     /// silently not applied is an unbounded reply, and an unbounded reply is
     /// the one thing every provider here is built to prevent.
     ceiling: Result<Ceiling, String>,
+    /// How large a reply this may ask for.
+    ///
+    /// A setting, not a constant, because a model's context window is a
+    /// property of the model and asking for more than it has is a refusal
+    /// rather than a truncation.
+    max_tokens: u32,
     transport: Box<dyn Transport>,
 }
 
@@ -123,6 +137,9 @@ impl OpenAiProvider {
             model: from_environment(MODEL_VARIABLE)
                 .unwrap_or_else(|| wire::DEFAULT_MODEL.to_owned()),
             endpoint: wire::endpoint_from(&base),
+            max_tokens: from_environment(MAX_TOKENS_VARIABLE)
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(wire::DEFAULT_MAX_TOKENS),
             ceiling: from_environment(CEILING_VARIABLE).map_or(Ok(Ceiling::Current), |field| {
                 match field.as_str() {
                     "max_completion_tokens" => Ok(Ceiling::Current),
@@ -149,6 +166,18 @@ impl OpenAiProvider {
     #[must_use]
     pub fn with_model(mut self, model: impl Into<String>) -> Self {
         self.model = model.into();
+        self
+    }
+
+    /// The same, asking for replies of at most `tokens`.
+    ///
+    /// Lower it for a model with a small context window. It is a trade: the
+    /// reply has to hold the model's own reasoning *and* a whole application,
+    /// and one that runs out produces half a JSON object, which parses as
+    /// nothing. Better a refusal you chose than a model you cannot use.
+    #[must_use]
+    pub fn with_max_tokens(mut self, tokens: u32) -> Self {
+        self.max_tokens = tokens;
         self
     }
 
@@ -205,16 +234,28 @@ impl OpenAiProvider {
             })
     }
 
+    /// Where this service lists its models.
+    ///
+    /// Derived from the endpoint in use rather than from the environment, so
+    /// "check the connection" checks the one the requests will go to.
+    fn listing(&self) -> String {
+        wire::models_endpoint_from(
+            self.endpoint
+                .strip_suffix(wire::PATH)
+                .unwrap_or(wire::BASE_URL),
+        )
+    }
+
     /// One round trip: send, read the text, read the JSON in it.
     fn ask(
         &self,
         request: &serde_json::Value,
     ) -> Result<(serde_json::Value, ephemeral_agent::Usage), AgentError> {
-        let response = self.transport.send(&HttpRequest {
-            endpoint: &self.endpoint,
-            headers: wire::headers(Some(self.key()?)),
-            body: request,
-        })?;
+        let response = self.transport.send(&HttpRequest::post(
+            &self.endpoint,
+            wire::headers(Some(self.key()?)),
+            request,
+        ))?;
         let usage = wire::usage_from(&response);
         let text = wire::text_from(NAME, &response)?;
 
@@ -235,15 +276,24 @@ impl AgentProvider for OpenAiProvider {
         self.ceiling().map(|_| ())
     }
 
+    fn models(&self) -> Result<Vec<ephemeral_agent::Model>, AgentError> {
+        let response = self.transport.send(&HttpRequest::get(
+            &self.listing(),
+            wire::headers(Some(self.key()?)),
+        ))?;
+
+        Ok(wire::models_from(&response))
+    }
+
     fn plan(&self, intent: &str) -> Result<Attempt<Plan>, AgentError> {
-        let request = wire::plan_request(&self.model, self.ceiling()?, intent);
+        let request = wire::plan_request(&self.model, self.ceiling()?, self.max_tokens, intent);
         let (value, usage) = self.ask(&request)?;
 
         Ok(Attempt::new(dialogue::plan_from(NAME, &value)?, usage))
     }
 
     fn generate(&self, plan: &Plan) -> Result<Attempt<GeneratedApp>, AgentError> {
-        let request = wire::generate_request(&self.model, self.ceiling()?, plan);
+        let request = wire::generate_request(&self.model, self.ceiling()?, self.max_tokens, plan);
         let (value, usage) = self.ask(&request)?;
 
         Ok(Attempt::new(dialogue::app_from(NAME, &value, plan)?, usage))
@@ -255,7 +305,13 @@ impl AgentProvider for OpenAiProvider {
         files: &[SourceFile],
         failure: &str,
     ) -> Result<Attempt<RepairAttempt>, AgentError> {
-        let request = wire::repair_request(&self.model, self.ceiling()?, files, failure);
+        let request = wire::repair_request(
+            &self.model,
+            self.ceiling()?,
+            self.max_tokens,
+            files,
+            failure,
+        );
         let (value, usage) = self.ask(&request)?;
 
         Ok(Attempt::new(dialogue::repair_from(NAME, &value)?, usage))
@@ -341,6 +397,7 @@ mod tests {
             model: wire::DEFAULT_MODEL.to_owned(),
             endpoint: wire::endpoint_from(wire::BASE_URL),
             ceiling: Ok(Ceiling::Current),
+            max_tokens: wire::DEFAULT_MAX_TOKENS,
             transport,
         }
     }

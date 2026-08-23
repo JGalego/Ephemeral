@@ -30,6 +30,8 @@ final class Native {
 
     static native String providers();
 
+    static native String models(long session);
+
     static native String lastError(long session);
 
     static native String create(long session, String intent);

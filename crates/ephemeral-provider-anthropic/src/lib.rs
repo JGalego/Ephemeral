@@ -49,6 +49,9 @@ pub const API_KEY_VARIABLE: &str = "ANTHROPIC_API_KEY";
 /// Anthropic itself.
 pub const BASE_URL_VARIABLE: &str = "ANTHROPIC_BASE_URL";
 
+/// The environment variable that sets how large a reply may be.
+pub const MAX_TOKENS_VARIABLE: &str = "ANTHROPIC_MAX_TOKENS";
+
 /// The environment variable that names the model.
 ///
 /// This used to be the one hosted provider whose model was fixed, on the
@@ -63,6 +66,10 @@ pub struct AnthropicProvider {
     api_key: Option<String>,
     model: String,
     endpoint: String,
+    /// How large a reply this may ask for. A setting, not a constant: a model's
+    /// context window is a property of the model, and asking for more than it
+    /// has is a refusal rather than a truncation.
+    max_tokens: u32,
     transport: Box<dyn ephemeral_agent::transport::Transport>,
 }
 
@@ -125,6 +132,9 @@ impl AnthropicProvider {
                 || wire::ENDPOINT.to_owned(),
                 |base| wire::endpoint_from(&base),
             ),
+            max_tokens: from_environment(MAX_TOKENS_VARIABLE)
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(wire::DEFAULT_MAX_TOKENS),
             transport,
         }
     }
@@ -144,6 +154,16 @@ impl AnthropicProvider {
     #[must_use]
     pub fn with_model(mut self, model: impl Into<String>) -> Self {
         self.model = model.into();
+        self
+    }
+
+    /// The same, asking for replies of at most `tokens`.
+    ///
+    /// Lower it for a model with a small context window. It is a trade: the
+    /// reply has to hold the model's own reasoning *and* a whole application.
+    #[must_use]
+    pub fn with_max_tokens(mut self, tokens: u32) -> Self {
+        self.max_tokens = tokens;
         self
     }
 
@@ -178,11 +198,11 @@ impl AnthropicProvider {
     ) -> Result<(serde_json::Value, ephemeral_agent::Usage), AgentError> {
         let response = self
             .transport
-            .send(&ephemeral_agent::transport::HttpRequest {
-                endpoint: &self.endpoint,
-                headers: wire::headers(self.key()?),
-                body: request,
-            })?;
+            .send(&ephemeral_agent::transport::HttpRequest::post(
+                &self.endpoint,
+                wire::headers(self.key()?),
+                request,
+            ))?;
         let usage = wire::usage_from(&response);
         let text = wire::text_from(&response)?;
 
@@ -202,14 +222,35 @@ impl AgentProvider for AnthropicProvider {
         self.key().map(|_| ())
     }
 
+    fn models(&self) -> Result<Vec<ephemeral_agent::Model>, AgentError> {
+        // Built from the same base URL the requests go to, so "check the
+        // connection" checks the connection that will actually be used rather
+        // than a different one that happens to be up.
+        let listing = wire::models_endpoint_from(
+            self.endpoint
+                .strip_suffix(wire::PATH)
+                .unwrap_or(wire::BASE_URL),
+        );
+
+        let response = self
+            .transport
+            .send(&ephemeral_agent::transport::HttpRequest::get(
+                &listing,
+                wire::headers(self.key()?),
+            ))?;
+
+        Ok(wire::models_from(&response))
+    }
+
     fn plan(&self, intent: &str) -> Result<Attempt<Plan>, AgentError> {
-        let (value, usage) = self.ask(&wire::plan_request(&self.model, intent))?;
+        let (value, usage) = self.ask(&wire::plan_request(&self.model, self.max_tokens, intent))?;
 
         Ok(Attempt::new(dialogue::plan_from(NAME, &value)?, usage))
     }
 
     fn generate(&self, plan: &Plan) -> Result<Attempt<GeneratedApp>, AgentError> {
-        let (value, usage) = self.ask(&wire::generate_request(&self.model, plan))?;
+        let (value, usage) =
+            self.ask(&wire::generate_request(&self.model, self.max_tokens, plan))?;
 
         Ok(Attempt::new(dialogue::app_from(NAME, &value, plan)?, usage))
     }
@@ -220,7 +261,12 @@ impl AgentProvider for AnthropicProvider {
         files: &[SourceFile],
         failure: &str,
     ) -> Result<Attempt<RepairAttempt>, AgentError> {
-        let (value, usage) = self.ask(&wire::repair_request(&self.model, files, failure))?;
+        let (value, usage) = self.ask(&wire::repair_request(
+            &self.model,
+            self.max_tokens,
+            files,
+            failure,
+        ))?;
 
         Ok(Attempt::new(dialogue::repair_from(NAME, &value)?, usage))
     }
@@ -272,6 +318,7 @@ mod tests {
             api_key: None,
             model: wire::DEFAULT_MODEL.to_owned(),
             endpoint: wire::ENDPOINT.to_owned(),
+            max_tokens: wire::DEFAULT_MAX_TOKENS,
             transport: Box::new(Forbidden),
         }
     }

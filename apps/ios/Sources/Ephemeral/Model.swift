@@ -39,6 +39,29 @@ struct Provider: Identifiable, Hashable {
     func configures(_ field: String) -> Bool { configurable.contains(field) }
 }
 
+/// One model a service says it can be asked for.
+struct AvailableModel: Identifiable, Hashable {
+    var id: String { name }
+
+    let name: String
+    let label: String
+    /// The largest reply this model will accept a request for, when the service
+    /// says. The setting most likely to be wrong and the hardest to guess.
+    let ceiling: Int?
+
+    init(_ json: [String: Any]) {
+        name = json["id"] as? String ?? ""
+        label = (json["name"] as? String)?.nilIfEmpty ?? name
+        ceiling = json["ceiling"] as? Int
+    }
+
+    /// What to show in a picker.
+    var shown: String {
+        guard let ceiling else { return label }
+        return "\(label)  (\(ceiling) tokens)"
+    }
+}
+
 /// What somebody chose.
 struct Choice: Equatable {
     var provider: String

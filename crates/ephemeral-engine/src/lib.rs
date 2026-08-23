@@ -41,7 +41,7 @@ pub use container::{
     Orphan, Reconciled, Started, Sweep, orphans, output, pause, reconcile, remove_orphans, resume,
     start, stop, sweep,
 };
-pub use generation::{Generated, PROVIDERS, Requested, generate, provider_authority};
+pub use generation::{Generated, PROVIDERS, Requested, generate, models, provider_authority};
 pub use sandbox::{Confinement, specification};
 
 /// One thing checked about this machine, and what to do if it is wrong.

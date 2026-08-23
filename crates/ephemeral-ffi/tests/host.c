@@ -70,6 +70,14 @@ static const char *const OPENAI_GENERATE_REPLY =
     "\\\"test_command\\\":[\\\"true\\\"]}"
     "\"}}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":4}}";
 
+/* What a listing looks like. Two models, one of which cannot write anything. */
+static const char *const MODELS_REPLY =
+    "{\"object\":\"list\",\"data\":["
+    "{\"id\":\"llama-3.3-70b-versatile\",\"name\":\"Llama 3.3 70B\","
+    "\"max_completion_tokens\":32768,\"output_modalities\":[\"text\"]},"
+    "{\"id\":\"whisper-large-v3\",\"output_modalities\":[\"transcription\"]}"
+    "]}";
+
 /* Everything the host owns, handed to Ephemeral as an opaque context. */
 struct host {
   int calls;
@@ -92,7 +100,12 @@ static char *host_send(void *context, const char *endpoint,
   /* The contract says these are readable for the duration of the call. */
   assert(endpoint != NULL);
   assert(headers_json != NULL);
-  assert(request_json != NULL && strstr(request_json, "\"model\"") != NULL);
+  /* A completion names a model; a listing is a GET and carries no body at all,
+     which is `null` by the time it reaches here. */
+  assert(request_json != NULL);
+  if (strstr(endpoint, "/models") == NULL) {
+    assert(strstr(request_json, "\"model\"") != NULL);
+  }
 
   /* Recorded rather than judged. Which endpoint and which headers are right
      depends on which service was chosen, and that is the thing under test —
@@ -102,7 +115,11 @@ static char *host_send(void *context, const char *endpoint,
   snprintf(host->headers, sizeof(host->headers), "%s", headers_json);
 
   const char *reply;
-  if (host->openai) {
+  if (strstr(endpoint, "/models") != NULL) {
+    /* A listing, which is a different shape from a completion — the whole
+       reason a provider owns its parsing and a transport owns none of it. */
+    reply = MODELS_REPLY;
+  } else if (host->openai) {
     reply = (host->calls % 2 == 0) ? OPENAI_PLAN_REPLY : OPENAI_GENERATE_REPLY;
   } else {
     reply = (host->calls == 0) ? PLAN_REPLY : GENERATE_REPLY;
@@ -293,6 +310,20 @@ int main(int argc, char **argv) {
         "carrying the credential the way that service wants it");
   check(strstr(host.headers, "x-api-key") == NULL,
         "and not the way the other one does");
+
+  /* The connection test. The fake host answers every request from a script, so
+     what is checked here is that the call goes out at all, reaches the right
+     service, and comes back as a list — not what any real service would say. */
+  host.calls = 0;
+  char *listed = ephemeral_models(handle);
+  check(listed != NULL, "a host can ask what the service offers");
+  if (listed != NULL) {
+    check(strstr(listed, "\"id\"") != NULL, "and gets models back");
+    ephemeral_string_free(listed);
+  }
+  check(strstr(host.endpoint, "api.groq.com") != NULL &&
+            strstr(host.endpoint, "/models") != NULL,
+        "asking the service that was chosen, at its listing endpoint");
 
   /* A name nobody has is refused, and the previous choice stands. Quietly
      falling back would send the next generation to a company the person did

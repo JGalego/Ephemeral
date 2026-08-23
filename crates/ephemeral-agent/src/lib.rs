@@ -41,4 +41,4 @@ pub mod transport;
 pub use build::{Builder, Cancellation, Elapsed, Outcome, RealClock, Round, Run, generate};
 pub use mock::MockProvider;
 pub use plan::{GeneratedApp, Plan, RepairAttempt, SourceFile};
-pub use provider::{AgentError, AgentProvider, Attempt, Usage};
+pub use provider::{AgentError, AgentProvider, Attempt, Model, Usage};

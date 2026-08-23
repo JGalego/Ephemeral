@@ -27,6 +27,11 @@
     <string name="model_model">Model name</string>
     <string name="model_saved">Generating with %1$s.</string>
     <string name="model_none">This build has no providers, which should not be possible.</string>
+    <string name="model_check">Check connection</string>
+    <string name="model_checking">Asking…</string>
+    <string name="model_unreachable">It could not be reached, and said nothing about why.</string>
+    <string name="model_pick">Models it has</string>
+    <string name="model_tap_to_pick">Model name — check the connection to choose from a list</string>
     <string name="credential_title">Model key</string>
     <string name="credential_hint">API key</string>
     <string name="credential_explains">Kept in this phone\'s keystore, sent only to the model provider, and never written to Ephemeral\'s files or its log.</string>

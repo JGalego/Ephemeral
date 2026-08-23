@@ -267,6 +267,20 @@ impl AgentProvider for MockProvider {
         NAME
     }
 
+    /// One model, which is one more than nothing and reaches no network.
+    ///
+    /// The mock exists so the whole flow can be seen working with no account
+    /// anywhere, and "check the connection" is part of that flow. Answering
+    /// with an empty list would make the one provider that always works look
+    /// like the one that is broken.
+    fn models(&self) -> Result<Vec<crate::Model>, AgentError> {
+        self.availability()?;
+        Ok(vec![crate::Model::called(
+            NAME,
+            "The fixed example application",
+        )])
+    }
+
     fn availability(&self) -> Result<(), AgentError> {
         if self.behaviour == Behaviour::Unavailable {
             return Err(AgentError::Unavailable {

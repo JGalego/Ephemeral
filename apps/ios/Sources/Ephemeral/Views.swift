@@ -462,6 +462,9 @@ struct ModelSheet: View {
     @State private var choice = Choice.stored ?? Choice(provider: "anthropic")
     @State private var key = ""
     @State private var said: String?
+    @State private var checking = false
+    @State private var reachable = true
+    @State private var offered: [AvailableModel] = []
 
     private var chosen: Provider? {
         providers.first { $0.name == choice.provider }
@@ -512,10 +515,35 @@ struct ModelSheet: View {
                             .font(.footnote)
                             .foregroundStyle(Palette.inkQuiet)
                         }
+
+                        // The one control that can tell somebody the difference
+                        // between configured and working. Before it existed,
+                        // the first thing that could was a failed generation —
+                        // after the intent had been sent and a bill had started.
+                        Button(checking ? "Asking…" : "Check connection", action: check)
+                            .disabled(checking)
+                            .tint(Palette.accent)
+
+                        // Offered rather than imposed: the box above stays
+                        // typeable, because a service may know models it does
+                        // not list, and a picker that refused an unlisted name
+                        // would be a picker that decides what you may run.
+                        if !offered.isEmpty, chosen.configures("model") {
+                            Picker("Model", selection: $choice.model) {
+                                Text("—").tag("")
+                                ForEach(offered) { model in
+                                    Text(model.shown).tag(model.name)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .tint(Palette.accent)
+                        }
                     }
 
                     if let said {
-                        Text(said).font(.footnote).foregroundStyle(Palette.low)
+                        Text(said)
+                            .font(.footnote)
+                            .foregroundStyle(reachable ? Palette.low : Palette.critical)
                     }
 
                     Spacer()
@@ -531,6 +559,7 @@ struct ModelSheet: View {
                     Button("Forget key") {
                         Credential.forget()
                         said = "Key forgotten."
+                        reachable = true
                         key = ""
                     }
                     .tint(Palette.inkQuiet)
@@ -557,22 +586,55 @@ struct ModelSheet: View {
             .foregroundStyle(Palette.ink)
     }
 
-    private func save() {
-        // The service first. A key stored against a service nobody chose is a
-        // key sent to the wrong company on the very next generation.
+    /// Asks the service what it has, which is also whether it can be reached.
+    private func check() {
+        checking = true
+        said = nil
+
+        // Saved first, and the key with it: the check has to test what
+        // generation would do, which means the settings about to be used rather
+        // than the ones the engine still holds.
+        apply()
+
         Engine.shared.submit {
-            try Engine.shared.choose(choice)
-            if !key.trimmed.isEmpty, Credential.save(key.trimmed) {
-                try Engine.shared.useCredential(key.trimmed)
-            }
+            try Engine.shared.models()
         } then: { outcome in
+            checking = false
             switch outcome {
-            case .success:
-                said = "Generating with \(choice.provider)."
-                key = ""
+            case .success(let models):
+                offered = models
+                reachable = true
+                said = models.isEmpty
+                    ? "Reached it, and it listed no models."
+                    : "Reached it. \(models.count) model\(models.count == 1 ? "" : "s")."
+            // The service's own words. Ephemeral paraphrasing "invalid api key"
+            // would be a worse sentence about a problem it cannot diagnose.
             case .failure(let why):
+                reachable = false
                 said = why.localizedDescription
             }
         }
+    }
+
+    private func save() {
+        apply()
+        Engine.shared.submit {} then: { _ in
+            said = "Generating with \(choice.provider)."
+            reachable = true
+        }
+    }
+
+    /// Records the service and, if one was typed, the key.
+    ///
+    /// The service first. A key stored against a service nobody chose is a key
+    /// sent to the wrong company on the very next generation.
+    private func apply() {
+        let typed = key.trimmed
+        Engine.shared.submit {
+            try Engine.shared.choose(choice)
+            if !typed.isEmpty, Credential.save(typed) {
+                try Engine.shared.useCredential(typed)
+            }
+        } then: { _ in }
     }
 }

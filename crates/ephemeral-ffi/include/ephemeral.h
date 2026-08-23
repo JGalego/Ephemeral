@@ -116,6 +116,25 @@ int32_t ephemeral_set_provider(EphemeralHandle *handle,
 char *ephemeral_provider(EphemeralHandle *handle);
 
 /*
+ * What the chosen service says it can be asked for:
+ *
+ *     [{"id": "openai/gpt-oss-120b", "name": "GPT OSS 120B", "ceiling": 65536}, …]
+ *
+ * This is the connection test as well as the model list, because they have one
+ * answer. It calls your send function against the endpoint and credential
+ * generation would use, so a wrong key, a base URL pointing at nothing, or a
+ * retired model all surface here rather than in the middle of a generation
+ * somebody is paying for.
+ *
+ * `ceiling` is the largest reply that model will accept a request for, when the
+ * service publishes it. Worth showing: a model with a 16k window refuses a
+ * request for more, with a message about a field the person never typed.
+ *
+ * NULL on failure, with the service's own words in ephemeral_last_error.
+ */
+char *ephemeral_models(EphemeralHandle *handle);
+
+/*
  * Every provider this build can be pointed at, as a JSON array:
  *
  *     [{"name": "openai", "what": "…", "needs_credential": true,

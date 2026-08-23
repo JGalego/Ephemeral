@@ -402,6 +402,37 @@ pub unsafe extern "C" fn ephemeral_provider(handle: *mut Ephemeral) -> *mut c_ch
     })
 }
 
+/// What the chosen service says it can be asked for.
+///
+/// The connection test, and the model list, in one call — because they have one
+/// answer. It uses the endpoint and the credential generation would use, so a
+/// wrong key, a base URL pointing at nothing or a retired model all show up
+/// here rather than in the middle of a generation somebody is paying for.
+///
+/// Returns a JSON array of `{"id","name","ceiling"}`, or null on failure with
+/// the service's own words in [`ephemeral_last_error`]. Free with
+/// [`ephemeral_string_free`].
+///
+/// # Safety
+///
+/// `handle` must come from [`ephemeral_open`].
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ephemeral_models(handle: *mut Ephemeral) -> *mut c_char {
+    let Some(ephemeral) = (unsafe { handle.as_ref() }) else {
+        return std::ptr::null_mut();
+    };
+
+    guard(ephemeral, || {
+        let listed = ephemeral
+            .provider()?
+            .models()
+            .map_err(|error| error.to_string())?;
+
+        json(&listed)
+    })
+}
+
 /// Every provider this build can be pointed at, with what each one needs.
 ///
 /// A host builds its picker from this rather than from a list of its own: an

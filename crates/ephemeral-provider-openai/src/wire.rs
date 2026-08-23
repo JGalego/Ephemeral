@@ -16,6 +16,7 @@
 //! [ADR-0008]: https://github.com/JGalego/Ephemeral/blob/main/docs/architecture/decisions/0008-agent-provider-abstraction.md
 //! [ADR-0019]: https://github.com/JGalego/Ephemeral/blob/main/docs/architecture/decisions/0019-openai-compatible-and-a-local-model.md
 
+use ephemeral_agent::Model;
 use ephemeral_agent::{
     AgentError,
     plan::{Plan, SourceFile},
@@ -27,6 +28,9 @@ pub const BASE_URL: &str = "https://api.openai.com/v1";
 
 /// The path appended to a base URL.
 pub const PATH: &str = "/chat/completions";
+
+/// Where this API lists the models it has.
+pub const MODELS_PATH: &str = "/models";
 
 /// The model used unless one is named.
 pub const DEFAULT_MODEL: &str = "gpt-5";
@@ -42,13 +46,23 @@ pub const DEFAULT_MODEL: &str = "gpt-5";
 /// longer silence before anything arrives at all — see the transport's
 /// timeout, which has to be large enough for a reply this size. The two move
 /// together.
-pub(crate) const MAX_TOKENS: u32 = 32_000;
+/// The default, which is not the only possible value.
+///
+/// It was a constant, and that decided which models Ephemeral could use. A
+/// model whose context window is smaller than this refuses the request outright
+/// — Groq's `qwen3.6-27b` answers "`max_completion_tokens` must be less than or
+/// equal to 16384" — and no amount of configuring anything could get past it.
+/// A number that picks your models for you is the same mistake as a provider
+/// that picks your vendor.
+pub const DEFAULT_MAX_TOKENS: u32 = 32_000;
 
-/// The ceiling has to leave room for reasoning *and* an application, because
+/// The default has to leave room for reasoning *and* an application, because
 /// both are spent from it. Checked at compile time rather than by a test, since
-/// it is a fact about a constant and not about behaviour.
+/// it is a fact about a constant and not about behaviour. Somebody who lowers
+/// it for a smaller model is making a trade knowingly; the default should not
+/// make it for them.
 const _: () = assert!(
-    MAX_TOKENS >= 32_000,
+    DEFAULT_MAX_TOKENS >= 32_000,
     "a whole application plus the model's own reasoning does not fit"
 );
 
@@ -92,32 +106,96 @@ pub fn endpoint_from(base: &str) -> String {
     format!("{}{PATH}", base.trim_end_matches('/'))
 }
 
+/// Where a service lists what it has, for a base URL of `base`.
+#[must_use]
+pub fn models_endpoint_from(base: &str) -> String {
+    format!("{}{MODELS_PATH}", base.trim_end_matches('/'))
+}
+
+/// The models in a listing reply.
+///
+/// `{"data":[{"id":…}]}` is the whole of what this format promises. Everything
+/// past that is a service being helpful in its own way, and is read when it is
+/// there rather than required:
+///
+/// - `name` — Groq's readable label. Plain OpenAI has none, so the id is shown.
+/// - `output_modalities` — what the model produces. A service that says a model
+///   emits speech or a transcription is telling you it cannot write an
+///   application, and offering it in a picker is offering a choice that fails
+///   later, in a way nobody could have predicted from the name. Groq lists
+///   thirteen models and three of them are like this.
+///
+/// A model that says nothing about its modalities is kept. Silence is not a
+/// claim, and filtering on an absent field would empty the list for every
+/// service that does not publish one.
+#[must_use]
+pub fn models_from(response: &Value) -> Vec<Model> {
+    response["data"]
+        .as_array()
+        .map(|listed| listed.iter().filter_map(one_model).collect())
+        .unwrap_or_default()
+}
+
+fn one_model(model: &Value) -> Option<Model> {
+    let id = model["id"].as_str()?;
+
+    if let Some(produces) = model["output_modalities"].as_array()
+        && !produces.iter().any(|kind| kind.as_str() == Some("text"))
+    {
+        return None;
+    }
+
+    // `max_completion_tokens` when the service publishes it, the context window
+    // otherwise: the second is an upper bound on the first and a better guess
+    // than nothing. Plain OpenAI publishes neither, so this is usually absent.
+    let ceiling = model["max_completion_tokens"]
+        .as_u64()
+        .or_else(|| model["context_window"].as_u64())
+        .and_then(|value| u32::try_from(value).ok());
+
+    let listed = match model["name"].as_str() {
+        Some(name) if !name.is_empty() => Model::called(id, name),
+        _ => Model::named(id),
+    };
+
+    Some(listed.holding(ceiling))
+}
+
 /// The request that asks for a plan.
 #[must_use]
-pub fn plan_request(model: &str, ceiling: Ceiling, intent: &str) -> Value {
+pub fn plan_request(model: &str, ceiling: Ceiling, tokens: u32, intent: &str) -> Value {
     body(
         model,
         ceiling,
+        tokens,
         &ephemeral_agent::dialogue::plan_prompt(intent),
     )
 }
 
 /// The request that asks for the application itself.
 #[must_use]
-pub fn generate_request(model: &str, ceiling: Ceiling, plan: &Plan) -> Value {
+pub fn generate_request(model: &str, ceiling: Ceiling, tokens: u32, plan: &Plan) -> Value {
     body(
         model,
         ceiling,
+        tokens,
         &ephemeral_agent::dialogue::generate_prompt(plan),
     )
 }
 
 /// The request that asks for a fix.
 #[must_use]
-pub fn repair_request(model: &str, ceiling: Ceiling, files: &[SourceFile], failure: &str) -> Value {
+pub fn repair_request(
+    model: &str,
+    ceiling: Ceiling,
+    tokens: u32,
+    files: &[SourceFile],
+    failure: &str,
+) -> Value {
     body(
         model,
         ceiling,
+        tokens,
         &ephemeral_agent::dialogue::repair_prompt(files, failure),
     )
 }
@@ -144,7 +222,7 @@ pub fn headers(api_key: Option<&str>) -> Vec<(String, String)> {
 /// field of its own, which is the whole structural difference from Anthropic's
 /// envelope. `system` is also the role every server that copied this format
 /// understands, including the ones that predate OpenAI's `developer`.
-fn body(model: &str, ceiling: Ceiling, prompt: &str) -> Value {
+fn body(model: &str, ceiling: Ceiling, tokens: u32, prompt: &str) -> Value {
     let mut body = json!({
         "model": model,
         "messages": [
@@ -156,7 +234,7 @@ fn body(model: &str, ceiling: Ceiling, prompt: &str) -> Value {
     // Inserted rather than written into the literal above, because which field
     // this is depends on the dialect and there is only ever one of it.
     if let Some(object) = body.as_object_mut() {
-        object.insert(ceiling.field().to_owned(), json!(MAX_TOKENS));
+        object.insert(ceiling.field().to_owned(), json!(tokens));
     }
 
     body
@@ -281,11 +359,22 @@ mod tests {
         let plan = a_plan();
 
         for request in [
-            plan_request(DEFAULT_MODEL, Ceiling::Current, "compare two CSV files"),
-            generate_request(DEFAULT_MODEL, Ceiling::Current, &plan),
-            repair_request(DEFAULT_MODEL, Ceiling::Current, &[], "boom"),
+            plan_request(
+                DEFAULT_MODEL,
+                Ceiling::Current,
+                DEFAULT_MAX_TOKENS,
+                "compare two CSV files",
+            ),
+            generate_request(DEFAULT_MODEL, Ceiling::Current, DEFAULT_MAX_TOKENS, &plan),
+            repair_request(
+                DEFAULT_MODEL,
+                Ceiling::Current,
+                DEFAULT_MAX_TOKENS,
+                &[],
+                "boom",
+            ),
         ] {
-            assert_eq!(request["max_completion_tokens"], MAX_TOKENS);
+            assert_eq!(request["max_completion_tokens"], DEFAULT_MAX_TOKENS);
             assert_eq!(request["model"], DEFAULT_MODEL);
         }
     }
@@ -295,9 +384,9 @@ mod tests {
     /// is one it ignores.
     #[test]
     fn the_older_dialect_bounds_its_response_too() {
-        let request = plan_request("qwen2.5-coder", Ceiling::Legacy, "x");
+        let request = plan_request("qwen2.5-coder", Ceiling::Legacy, DEFAULT_MAX_TOKENS, "x");
 
-        assert_eq!(request["max_tokens"], MAX_TOKENS);
+        assert_eq!(request["max_tokens"], DEFAULT_MAX_TOKENS);
         assert!(
             request.get("max_completion_tokens").is_none(),
             "sending both is a request OpenAI rejects: {request}"
@@ -309,7 +398,7 @@ mod tests {
     /// cannot run in the sandbox.
     #[test]
     fn every_request_carries_the_system_instruction() {
-        let request = plan_request(DEFAULT_MODEL, Ceiling::Current, "x");
+        let request = plan_request(DEFAULT_MODEL, Ceiling::Current, DEFAULT_MAX_TOKENS, "x");
         let messages = request["messages"].as_array().expect("messages");
 
         assert_eq!(messages[0]["role"], "system");
@@ -321,7 +410,12 @@ mod tests {
     /// exactly what a request built by any other provider asks for.
     #[test]
     fn the_prompts_are_the_shared_ones() {
-        let request = generate_request(DEFAULT_MODEL, Ceiling::Current, &a_plan());
+        let request = generate_request(
+            DEFAULT_MODEL,
+            Ceiling::Current,
+            DEFAULT_MAX_TOKENS,
+            &a_plan(),
+        );
         let sent = request["messages"][1]["content"]
             .as_str()
             .expect("a user message");
@@ -440,5 +534,90 @@ mod tests {
 
         assert_eq!(usage.input_tokens, 0);
         assert_eq!(usage.output_tokens, 0);
+    }
+    /// A listing, read the way Groq actually answers one.
+    ///
+    /// Recorded from a real reply rather than imagined: `name`, `context_window`
+    /// and `max_completion_tokens` are Groq's additions to a format that
+    /// promises only `id`, and the modality fields are what separate a model
+    /// that can write an application from one that transcribes audio.
+    #[test]
+    fn a_listing_keeps_what_can_write_an_application() {
+        let reply = json!({
+            "object": "list",
+            "data": [
+                {
+                    "id": "openai/gpt-oss-120b",
+                    "name": "GPT OSS 120B",
+                    "context_window": 131_072,
+                    "max_completion_tokens": 65536,
+                    "output_modalities": ["text"]
+                },
+                {
+                    "id": "whisper-large-v3",
+                    "name": "Whisper",
+                    "output_modalities": ["transcription"]
+                },
+                {
+                    "id": "canopylabs/orpheus-v1-english",
+                    "output_modalities": ["speech"]
+                },
+                { "id": "gpt-5" }
+            ]
+        });
+
+        let listed = models_from(&reply);
+
+        assert_eq!(
+            listed
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            ["openai/gpt-oss-120b", "gpt-5"],
+            "a model that cannot emit text cannot write an application"
+        );
+
+        assert_eq!(listed[0].name, "GPT OSS 120B");
+        assert_eq!(
+            listed[0].ceiling,
+            Some(65536),
+            "the reply ceiling, preferred over the whole context window"
+        );
+
+        // Plain OpenAI publishes neither a name nor a size. Silence is not a
+        // claim, so the model is kept and shown by its id.
+        assert_eq!(listed[1].name, "gpt-5");
+        assert_eq!(listed[1].ceiling, None);
+    }
+
+    /// The context window stands in when a service does not publish a reply
+    /// ceiling: it is an upper bound on one, and a bound is better than nothing
+    /// for the setting most likely to be wrong.
+    #[test]
+    fn the_context_window_stands_in_for_an_unpublished_ceiling() {
+        let reply = json!({ "data": [{ "id": "small", "context_window": 4096 }] });
+
+        assert_eq!(models_from(&reply)[0].ceiling, Some(4096));
+    }
+
+    /// A reply that is not a listing yields nothing rather than a panic. This
+    /// is untrusted input from whatever the base URL points at.
+    #[test]
+    fn a_reply_that_is_not_a_listing_is_no_models() {
+        assert!(models_from(&json!({ "error": "nope" })).is_empty());
+        assert!(models_from(&json!({ "data": "not an array" })).is_empty());
+        assert!(models_from(&json!({ "data": [{ "no": "id" }] })).is_empty());
+    }
+
+    /// The ceiling is a value the caller supplies, and it has to reach the
+    /// request under whichever name the service reads. This is the whole of
+    /// what made a 16k model usable.
+    #[test]
+    fn the_ceiling_the_caller_asks_for_is_the_one_that_is_sent() {
+        let current = plan_request("m", Ceiling::Current, 7000, "x");
+        assert_eq!(current["max_completion_tokens"], 7000);
+
+        let legacy = plan_request("m", Ceiling::Legacy, 7000, "x");
+        assert_eq!(legacy["max_tokens"], 7000);
     }
 }

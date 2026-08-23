@@ -43,6 +43,23 @@ on:
           key reaches the phone through the command line (see below).
         default: false
         type: boolean
+      service:
+        description: >
+          Which service to point the app at. A rack phone gets a fresh install
+          every run, so whatever is set here is the whole of what it knows.
+        default: "openai"
+        type: choice
+        options: [openai, anthropic, mock]
+      base_url:
+        description: The service's base URL. Blank means that provider's own.
+        default: "https://api.groq.com/openai/v1"
+        type: string
+      model:
+        description: >
+          Which model. `ephemeral models --provider openai` lists what a service
+          has, and what size of reply each will accept.
+        default: "llama-3.3-70b-versatile"
+        type: string
 
 permissions:
   contents: read
@@ -178,7 +195,25 @@ jobs:
               echo "::error::No MODEL_API_KEY secret, so there is nothing to generate with."
               exit 1
             fi
-            directives="click:credential_menu=,text:credential=$MODEL_KEY,$directives,click:generate="
+
+            # Every control here has a resource id for exactly this reason.
+            # Robo addresses things by name and cannot operate a spinner at
+            # all, which is why the service picker is a radio group: with a
+            # spinner, a rack phone could only ever exercise whichever provider
+            # happened to be the default, whatever key it was given.
+            settings="click:credential_menu=,click:provider_${{ inputs.service }}="
+            if [ -n "${{ inputs.base_url }}" ]; then
+              settings="$settings,text:base_url=${{ inputs.base_url }}"
+            fi
+            if [ -n "${{ inputs.model }}" ]; then
+              settings="$settings,text:model=${{ inputs.model }}"
+            fi
+            # The connection test before anything is generated, so a wrong key
+            # or a retired model shows up in the video as a sentence rather
+            # than as a generation that quietly does nothing.
+            settings="$settings,text:credential=$MODEL_KEY,click:check="
+
+            directives="$settings,$directives,click:generate="
           fi
 
           set +e

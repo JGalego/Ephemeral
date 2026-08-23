@@ -90,6 +90,16 @@ public final class Check {
             "with that service's own header rather than the other one's"
         );
 
+        // The connection test crosses the bridge too. The transport refuses, so
+        // this fails — what matters is that the call went out and the refusal
+        // came back as words rather than as a crash.
+        require(Native.models(session) == null, "asking for models fails when the transport refuses");
+        require(
+            refusing.endpoint != null && refusing.endpoint.endsWith("/models"),
+            "having asked the service where it lists them"
+        );
+        require(Native.lastError(session) != null, "and the refusal is reported");
+
         // A host whose transport throws is a host with a bug. It must not
         // become Ephemeral's crash: an exception left pending across a JNI
         // return poisons every later call.

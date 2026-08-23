@@ -394,6 +394,28 @@ pub extern "system" fn Java_io_github_jgalego_ephemeral_Native_providers<'local>
     })
 }
 
+/// What the chosen service says it can be asked for, as JSON.
+///
+/// Reaches the network, through the host's own transport like every other
+/// request. It is the connection test: the same endpoint and the same
+/// credential generation would use.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_jgalego_ephemeral_Native_models<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    session: jlong,
+) -> jstring {
+    guarded(ptr::null_mut(), || {
+        let Some(open) = opened(session) else {
+            return ptr::null_mut();
+        };
+        // SAFETY: live handle.
+        let produced = unsafe { ephemeral_ffi::ephemeral_models(open.ephemeral) };
+        handed_back(&mut env, produced)
+    })
+}
+
 /// Why the last call failed, or null.
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]

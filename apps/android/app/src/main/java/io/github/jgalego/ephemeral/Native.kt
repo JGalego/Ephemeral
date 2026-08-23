@@ -38,6 +38,14 @@ internal object Native {
      */
     external fun providers(): String?
 
+    /**
+     * What the chosen service says it can be asked for, as JSON.
+     *
+     * Reaches the network, and is the connection test: it uses the credential
+     * and the endpoint generation would use.
+     */
+    external fun models(session: Long): String?
+
     /** Why the last call failed, or null. */
     external fun lastError(session: Long): String?
 

@@ -85,3 +85,118 @@ pub(crate) fn run(home: &Path, reference: &str, provider_name: &str) -> Result<(
 
     Ok(())
 }
+
+/// `ephemeral models` — check the connection, and see what can be asked for.
+///
+/// One command for two questions, because they have one answer and the same
+/// failure. "Is my key right" and "does this model exist" are both settled by
+/// asking the service what it has; asking them separately gives two ways to be
+/// almost-configured, and the second one is discovered after the first token
+/// has been paid for.
+pub(crate) fn models(home: &Path, provider_name: &str) -> Result<()> {
+    let workspace = crate::commands::open(home)?;
+
+    println!("{} {provider_name}", output::dim("Asking"));
+
+    let listed = ephemeral_engine::models(&workspace, provider_name)?;
+
+    println!();
+    if listed.is_empty() {
+        // Reached, and it said nothing. Worth distinguishing from a refusal:
+        // the credential works and the connection works, and there is still
+        // nothing to choose from.
+        println!(
+            "{}",
+            output::warn("It answered, and listed no models it can be asked for.")
+        );
+        return Ok(());
+    }
+
+    println!(
+        "{}",
+        output::good(&format!(
+            "Reached {provider_name}. {} model(s).",
+            listed.len()
+        ))
+    );
+    println!();
+
+    for model in &listed {
+        // The id is what goes in a request and the name is what a person reads,
+        // and they are often the same string. Printing both when they are would
+        // be noise.
+        let label = if model.name == model.id {
+            String::new()
+        } else {
+            model.name.clone()
+        };
+
+        // The ceiling, where the service publishes one, because it is the
+        // setting most likely to be wrong: a request for a larger reply than
+        // the model can hold is refused outright, with a message about a field
+        // nobody typed.
+        let ceiling = model
+            .ceiling
+            .map(|tokens| format!("up to {tokens} tokens"))
+            .unwrap_or_default();
+
+        println!(
+            "  {:<40} {}",
+            model.id,
+            output::dim([label, ceiling].join("  ").trim())
+        );
+    }
+
+    println!();
+    for line in advice(provider_name, &listed) {
+        println!("{}", output::dim(&line));
+    }
+
+    Ok(())
+}
+
+/// What to do with the list, for the provider in question.
+fn advice(provider_name: &str, listed: &[ephemeral_agent::Model]) -> Vec<String> {
+    let mut lines = vec![match provider_name {
+        "anthropic" => format!(
+            "Set {} to one of these.",
+            ephemeral_provider_anthropic::MODEL_VARIABLE
+        ),
+        "openai" => format!(
+            "Set {} to one of these.",
+            ephemeral_provider_openai::MODEL_VARIABLE
+        ),
+        "local" => format!(
+            "Set {} to one of these.",
+            ephemeral_provider_local::MODEL_VARIABLE
+        ),
+        _ => "This provider takes no model name.".to_owned(),
+    }];
+
+    // Said once, here, rather than discovered as a refusal after a model was
+    // chosen. Every model this small was unusable until the ceiling became a
+    // setting, and nothing in the output explained why.
+    let ceiling_variable = match provider_name {
+        "anthropic" => Some(ephemeral_provider_anthropic::MAX_TOKENS_VARIABLE),
+        "openai" => Some(ephemeral_provider_openai::MAX_TOKENS_VARIABLE),
+        "local" => Some(ephemeral_provider_local::MAX_TOKENS_VARIABLE),
+        _ => None,
+    };
+
+    if let Some(variable) = ceiling_variable
+        && listed.iter().any(|model| {
+            model
+                .ceiling
+                .is_some_and(|tokens| tokens < ephemeral_provider_openai::wire::DEFAULT_MAX_TOKENS)
+        })
+    {
+        lines.push(format!(
+            "Some of these hold less than Ephemeral asks for by default ({} tokens). \
+             For one of those, set {variable} to its ceiling or below, or the service \
+             refuses the request.",
+            ephemeral_provider_openai::wire::DEFAULT_MAX_TOKENS
+        ));
+    }
+
+    lines
+}

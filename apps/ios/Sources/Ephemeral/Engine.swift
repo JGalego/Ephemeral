@@ -192,6 +192,18 @@ final class Engine {
         return (json as? [[String: Any]] ?? []).map(Provider.init)
     }
 
+    /// What the chosen service says it can be asked for.
+    ///
+    /// The connection test as well as the list, because they have one answer.
+    /// It uses the endpoint and the credential generation would use, so a wrong
+    /// key or a base URL pointing at nothing surfaces here rather than in the
+    /// middle of a generation somebody is paying for.
+    ///
+    /// Reaches the network, so nothing calls it on the main thread.
+    func models() throws -> [AvailableModel] {
+        try array(ephemeral_models(handle)).map(AvailableModel.init)
+    }
+
     // MARK: - What the screens call
 
     func create(intent: String) throws -> Summary {

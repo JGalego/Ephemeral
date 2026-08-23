@@ -171,6 +171,22 @@ internal object Engine {
         }
     }
 
+    /**
+     * Asks the chosen service what it has — which is also whether it can be
+     * reached at all.
+     *
+     * Unlike everything else here, this one call is meant to touch the network.
+     * It is what turns "configured" into "working", and before it existed the
+     * first thing that could tell the difference was a failed generation, after
+     * the intent had been sent.
+     */
+    fun models(): List<Model> {
+        val listed = JSONArray(demand(Native.models(session)))
+        return (0 until listed.length()).mapNotNull { index ->
+            listed.optJSONObject(index)?.let(Model::from)
+        }
+    }
+
     /** Records a choice of service and hands it to the engine. */
     fun choose(context: Context, choice: Choice) {
         val application = context.applicationContext

@@ -38,6 +38,29 @@ data class Provider(
 }
 
 /**
+ * One model a service says it can be asked for.
+ *
+ * The ceiling is carried because it is the setting most likely to be wrong and
+ * the hardest to guess: a model with a 16k window refuses a request for 32k
+ * outright, with a message about a field nobody typed.
+ */
+data class Model(val id: String, val name: String, val ceiling: Int?) {
+    /** What to show in a picker: the name, and what it will hold. */
+    fun label(): String = when (ceiling) {
+        null -> name
+        else -> "$name  ($ceiling tokens)"
+    }
+
+    companion object {
+        fun from(json: JSONObject) = Model(
+            id = json.optString("id"),
+            name = json.optString("name").ifBlank { json.optString("id") },
+            ceiling = if (json.has("ceiling")) json.optInt("ceiling") else null,
+        )
+    }
+}
+
+/**
  * What somebody chose: a service, and how it is configured.
  *
  * Deliberately not a place a credential lives. The key is sealed in the

@@ -14,4 +14,21 @@
     <item name="credential" type="id" />
     <item name="base_url" type="id" />
     <item name="model" type="id" />
+    <item name="check" type="id" />
+
+    <!--
+      One per provider, matched by name at run time.
+
+      The list of providers comes from the engine and this does not try to
+      mirror it: a provider with no id here still appears in the dialog and can
+      still be chosen by hand — it just cannot be named in a `--robo-directives`
+      argument, because Robo addresses controls by resource name and a name has
+      to exist in the APK before the run.
+
+      A picker built from a Spinner had none of these, which is why every
+      device run so far could only exercise whichever provider was the default.
+    -->
+    <item name="provider_mock" type="id" />
+    <item name="provider_anthropic" type="id" />
+    <item name="provider_openai" type="id" />
 </resources>

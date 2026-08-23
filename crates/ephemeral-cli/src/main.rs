@@ -195,6 +195,18 @@ enum Command {
         provider: String,
     },
 
+    /// Check a provider can be reached, and list the models it offers.
+    #[command(long_about = "Asks a provider what models it has.
+
+                      This is the connection test: it uses the credential and the endpoint                       generation would use, and reports the service's own words when it                       refuses. A wrong key, a retired model or a base URL pointing at                       nothing all show up here, before anything has been spent.
+
+                      It reaches the network for every provider but `mock`, and needs the                       same permission generating does.")]
+    Models {
+        /// Which provider: `mock`, `local`, `anthropic` or `openai`.
+        #[arg(long, default_value = "mock")]
+        provider: String,
+    },
+
     /// Return an application to a version it used to be.
     #[command(
         long_about = "Puts an earlier version's source back and records the change.\n\n\
@@ -410,6 +422,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::Logs { app, lines } => commands::logs(&home, &app, lines),
         Command::Audit { app, limit } => commands::audit(&home, app.as_deref(), limit),
         Command::Generate { app, provider } => generate::run(&home, &app, &provider),
+        Command::Models { provider } => generate::models(&home, &provider),
         Command::Rollback { app, digest } => commands::rollback(&home, &app, &digest),
         Command::Review { app } => review::run(&home, &app),
         Command::Publish { app, into } => share::publish(&home, &app, &into),

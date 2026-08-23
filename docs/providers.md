@@ -85,6 +85,7 @@ is validated identically, because privacy is not integrity.
 | `ANTHROPIC_API_KEY` | required |
 | `ANTHROPIC_BASE_URL` | default `https://api.anthropic.com` |
 | `ANTHROPIC_MODEL` | default `claude-sonnet-5` |
+| `ANTHROPIC_MAX_TOKENS` | default `32000` |
 
 Speaks Anthropic's Messages API — Anthropic's own endpoint by default, and any
 gateway or proxy that speaks it otherwise. The model was fixed here for a while,
@@ -98,6 +99,7 @@ stopped being true the moment the endpoint could be pointed elsewhere.
 | `OPENAI_API_KEY` | required |
 | `OPENAI_BASE_URL` | default `https://api.openai.com/v1` |
 | `OPENAI_MODEL` | default `gpt-5` |
+| `OPENAI_MAX_TOKENS` | default `32000` |
 | `OPENAI_TOKEN_CEILING_FIELD` | `max_completion_tokens` (default) or `max_tokens` |
 
 The chat completions format is the closest thing generation has to a common
@@ -141,12 +143,49 @@ Whatever it points at, this provider sends your intent off the machine. That is
 the whole of the difference between it and `local`, which uses the same wire
 format ([ADR-0019](architecture/decisions/0019-openai-compatible-and-a-local-model.md)).
 
+## Checking before you spend
+
+```console
+$ ephemeral models --provider openai
+```
+
+One command for two questions, because they have one answer: it asks the
+service what models it has, using the endpoint and credential generation would
+use. A wrong key, a base URL pointing at nothing, or a model that has been
+retired all surface here rather than halfway through a generation somebody is
+paying for — and the refusal is the service's own words, because "Invalid API
+Key" from the vendor beats anything Ephemeral could invent.
+
+It also prints how large a reply each model will accept, where the service
+publishes that. This is the setting most likely to be wrong and the hardest to
+guess:
+
+```text
+  openai/gpt-oss-120b     GPT OSS 120B      up to 65536 tokens
+  qwen/qwen3.6-27b        Qwen/Qwen3.6-27B  up to 16384 tokens
+  allam-2-7b              ALLaM-2-7b        up to 4096 tokens
+```
+
+Ephemeral asks for a 32,000-token reply by default, because a whole application
+plus the model's own reasoning has to arrive in one piece. Point it at a model
+that holds less and the service refuses outright, complaining about a field
+nobody typed. `OPENAI_MAX_TOKENS` — and its equivalents for the other two
+providers — is what makes those models usable. It is a real trade: a reply that
+runs out mid-way is half a JSON object, which parses as nothing.
+
+Models that cannot emit text are left out of the listing. A service that says a
+model produces speech or a transcription is telling you it cannot write an
+application, and offering it would be offering a choice that fails later for a
+reason nobody could predict from the name.
+
 ## On a phone
 
 Every provider but `local` is reachable from Android and iOS, chosen in the app
 under **Model**: a service, a base URL, a model name, and a key from the
 platform's secure store. Groq on a handset is the same three settings it is
-here.
+here. **Check connection** on that screen is `ephemeral models` — it reports
+what the service said, and fills the model box from what came back, so a name
+does not have to be typed from memory.
 
 `local` is absent, and not by oversight. It exists to keep an intent on the
 machine that generated it, and it refuses any endpoint that is not loopback —
