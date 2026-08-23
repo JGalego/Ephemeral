@@ -64,6 +64,13 @@ targets=(
     "i686-linux-android:x86:i686-linux-android"
 )
 
+# Which ABIs to build. All four, unless somebody says otherwise — a release has
+# to run on whatever phone downloads it. `EPHEMERAL_ANDROID_ABIS=x86_64` is for
+# the one case where that is waste: an emulator is a single architecture, and
+# building the three it will never load is four times the wait for the same
+# screenshot.
+wanted="${EPHEMERAL_ANDROID_ABIS:-}"
+
 libs="$here/app/src/main/jniLibs"
 mkdir -p "$libs"
 
@@ -72,6 +79,10 @@ for entry in "${targets[@]}"; do
     rest="${entry#*:}"
     abi="${rest%%:*}"
     prefix="${rest#*:}"
+
+    if [ -n "$wanted" ] && [[ " $wanted " != *" $abi "* ]]; then
+        continue
+    fi
 
     linker="$toolchain/${prefix}${API}-clang"
     if [ ! -x "$linker" ]; then

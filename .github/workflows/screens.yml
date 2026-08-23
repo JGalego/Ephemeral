@@ -67,6 +67,21 @@ jobs:
         with:
           gradle-version: 8.14.3
 
+      # The engine, for the architecture the emulator is.
+      #
+      # Without this the APK builds and installs perfectly and then says
+      # `dlopen failed: library "libephemeral_android.so" not found` on its
+      # first screen — which is what the first successful run of this workflow
+      # photographed. The application handled it gracefully, which was worth
+      # seeing; it also meant nothing past the front door could be.
+      - name: The engine, for the emulator
+        run: |
+          rustup target add x86_64-linux-android
+          EPHEMERAL_ANDROID_ABIS=x86_64 ./build-native.sh
+        working-directory: apps/android
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
+
       - name: Build the application
         run: gradle assembleDebug --no-daemon
         working-directory: apps/android
