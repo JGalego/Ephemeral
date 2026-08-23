@@ -43,6 +43,14 @@ jobs:
     name: The Android application, running
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      # Where the AVD goes, said once for every step rather than left to
+      # whichever of three environment variables each tool happens to prefer.
+      # `avdmanager` and `emulator` disagreed about that, which cost two runs:
+      # the AVD was created successfully and the emulator then said "Unknown
+      # AVD name [ephemeral]" and listed the three directories it had looked
+      # in, none of which was the one it had been written to.
+      ANDROID_AVD_HOME: ${{ github.workspace }}/.avd
     steps:
       - uses: actions/checkout@v4
 
@@ -105,20 +113,30 @@ jobs:
           "$sdkmanager" "platform-tools" "emulator" \
             "system-images;android-34;google_apis;x86_64"
 
+          mkdir -p "$ANDROID_AVD_HOME"
           echo "no" | "$avdmanager" create avd --name ephemeral \
             --package "system-images;android-34;google_apis;x86_64" --force
 
           echo "$ANDROID_HOME/emulator" >> "$GITHUB_PATH"
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
 
+          # Proved rather than assumed. `create avd` exiting zero is not the
+          # same as the emulator being able to find what it made, and the
+          # difference between those two is fifteen minutes of waiting for a
+          # device that was never going to appear.
+          if ! "$ANDROID_HOME/emulator/emulator" -list-avds | grep -qx ephemeral; then
+            echo "::error::The AVD was created but the emulator cannot see it."
+            echo "ANDROID_AVD_HOME=$ANDROID_AVD_HOME"
+            ls -la "$ANDROID_AVD_HOME" || true
+            "$ANDROID_HOME/emulator/emulator" -list-avds || true
+            exit 1
+          fi
+          echo "The emulator can see the AVD."
+
       # Every wait here is bounded. `adb wait-for-device` blocks forever when
       # the emulator died on startup, and a step that hangs until the job
       # timeout tells you nothing about why — it just costs forty minutes.
       - name: Boot it
-        env:
-          # The emulator looks for its AVD under one of these, and the runner
-          # image sets only the other.
-          ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
         run: |
           set -uo pipefail
           emulator -avd ephemeral -no-window -no-audio -no-boot-anim \
