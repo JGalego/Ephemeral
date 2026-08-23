@@ -71,10 +71,44 @@ fn opened<'a>(session: jlong) -> Option<&'a Session> {
     if session == 0 {
         return None;
     }
-    let pointer = usize::try_from(session).ok()? as *const Session;
+    // A bit-preserving cast, never `try_from`. See `as_handle`.
+    let pointer: *mut Session = from_handle(session);
     // SAFETY: non-zero, and by contract it is a pointer `open` returned and
     // `close` has not yet released.
     Some(unsafe { &*pointer })
+}
+
+/// Turns a pointer into the number Java holds on to.
+///
+/// Bit-preserving, and it has to be. Android tags heap pointers in the top
+/// byte on arm64 — the hardware ignores those bits when dereferencing, but a
+/// signed 64-bit integer does not: a tagged pointer is a *negative* `jlong`,
+/// and `i64::try_from` refuses roughly half of every allocation.
+///
+/// This was `try_from`, and it meant the application could not start on any
+/// modern 64-bit phone. It started perfectly on the x86-64 emulator, which
+/// does not tag, so nothing caught it until it ran on a Pixel — where the
+/// screen said the session did not fit in a Java long, for five minutes,
+/// on video.
+#[allow(clippy::cast_possible_wrap)]
+fn as_handle<T>(pointer: *mut T) -> jlong {
+    pointer as usize as jlong
+}
+
+/// Turns the number Java holds back into the pointer it was made from.
+///
+/// The other half of [`as_handle`], and the casts are deliberate in the same
+/// way. Clippy objects to both of its worries here, and both are answered:
+///
+/// - *may lose the sign* — it is meant to. The sign is a tag bit Android put
+///   in the top byte, not a negative quantity, and preserving the bits is
+///   precisely the job.
+/// - *may truncate on 32-bit pointers* — on a 32-bit Android a pointer fits in
+///   `usize` with room to spare, so a handle this crate produced always
+///   narrows back to exactly what it widened from.
+#[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+fn from_handle<T>(handle: jlong) -> *mut T {
+    handle as usize as *mut T
 }
 
 /// Runs a body, turning a panic into a failure rather than an unwind into Java.
@@ -247,10 +281,7 @@ pub extern "system" fn Java_io_github_jgalego_ephemeral_Native_open<'local>(
             }
 
             let session = Box::into_raw(Box::new(Session { ephemeral, host }));
-            match jlong::try_from(session as usize) {
-                Ok(handle) => handle,
-                Err(_) => opening_failed("The session does not fit in a Java long.".to_owned()),
-            }
+            as_handle(session)
         },
     )
 }
@@ -267,13 +298,14 @@ pub extern "system" fn Java_io_github_jgalego_ephemeral_Native_close(
         return;
     }
     guarded((), || {
-        let Ok(pointer) = usize::try_from(session) else {
-            return;
-        };
+        // Bit-preserving, like `as_handle` — this was `try_from` too, which
+        // meant a tagged pointer was not closed but silently leaked, along
+        // with the engine handle and the transport's global reference.
+        let pointer: *mut Session = from_handle(session);
         // SAFETY: by contract this is a session `open` returned and nobody has
         // closed yet. Taking the box here is what makes a second close a
         // caller error rather than a double free this crate performs.
-        let session = unsafe { Box::from_raw(pointer as *mut Session) };
+        let session = unsafe { Box::from_raw(pointer) };
         // SAFETY: the handle is live and was produced by `ephemeral_open`.
         unsafe { ephemeral_ffi::ephemeral_close(session.ephemeral) };
         // SAFETY: released after the handle, which held the context.
@@ -462,4 +494,56 @@ pub extern "system" fn Java_io_github_jgalego_ephemeral_Native_decide<'local>(
             )
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Android tags heap pointers in the top byte on arm64. The hardware
+    /// ignores those bits when dereferencing; `i64::try_from` does not, and
+    /// refuses every allocation whose tag sets the high bit.
+    ///
+    /// This is what shipped: the application started on the x86-64 emulator,
+    /// where nothing is tagged, and could not start on any modern phone. Five
+    /// minutes of video of a Pixel 8 saying "The session does not fit in a
+    /// Java long" is what found it. A handle is a bit pattern, not a number,
+    /// and this asserts it round-trips as one.
+    #[test]
+    fn a_tagged_pointer_survives_the_trip_through_java() {
+        // What Android's allocator hands out: a real address with a tag in the
+        // top byte, which as a signed 64-bit integer is negative.
+        let tagged = 0xb400_007a_1b2c_3d40_usize as *mut u8;
+
+        let handle = as_handle(tagged);
+        assert!(handle < 0, "a tagged pointer is a negative jlong");
+        assert_eq!(
+            from_handle::<u8>(handle),
+            tagged,
+            "and it has to come back as the same address"
+        );
+
+        // The refusal this replaced.
+        assert!(
+            jlong::try_from(tagged as usize).is_err(),
+            "which is exactly what try_from would not accept"
+        );
+    }
+
+    /// The untagged case still works, so the fix is not a trade.
+    #[test]
+    fn an_ordinary_pointer_survives_it_too() {
+        let plain = 0x0000_7f2a_9c31_0000_usize as *mut u8;
+
+        assert!(as_handle(plain) > 0);
+        assert_eq!(from_handle::<u8>(as_handle(plain)), plain);
+    }
+
+    /// Zero is the documented "no session", and must stay distinguishable from
+    /// a real handle in both directions.
+    #[test]
+    fn zero_is_never_a_session() {
+        assert!(opened(0).is_none());
+        assert_eq!(as_handle(std::ptr::null_mut::<u8>()), 0);
+    }
 }
