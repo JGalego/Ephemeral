@@ -45,6 +45,19 @@ pub const NAME: &str = "anthropic";
 /// The environment variable the credential is read from.
 pub const API_KEY_VARIABLE: &str = "ANTHROPIC_API_KEY";
 
+/// The environment variable that points this at a gateway rather than at
+/// Anthropic itself.
+pub const BASE_URL_VARIABLE: &str = "ANTHROPIC_BASE_URL";
+
+/// The environment variable that names the model.
+///
+/// This used to be the one hosted provider whose model was fixed, on the
+/// reasoning that Anthropic's own endpoint implies Anthropic's own model names.
+/// That reasoning does not survive `ANTHROPIC_BASE_URL`: a gateway speaking this
+/// API names its models whatever it likes, and a provider that can be pointed
+/// somewhere else has to be able to name what it finds there.
+pub const MODEL_VARIABLE: &str = "ANTHROPIC_MODEL";
+
 /// Generates applications with a hosted model.
 pub struct AnthropicProvider {
     api_key: Option<String>,
@@ -66,9 +79,19 @@ impl Default for AnthropicProvider {
 /// credential can also be supplied directly.
 #[must_use]
 fn credential_from_environment() -> Option<String> {
-    std::env::var(API_KEY_VARIABLE)
+    from_environment(API_KEY_VARIABLE)
+}
+
+/// A setting from the environment, if it is there and is not blank.
+///
+/// An empty variable is treated as absent. `ANTHROPIC_MODEL=` in a shell
+/// profile is somebody clearing a setting, not somebody asking for a model with
+/// no name.
+#[must_use]
+fn from_environment(name: &str) -> Option<String> {
+    std::env::var(name)
         .ok()
-        .filter(|key| !key.trim().is_empty())
+        .filter(|value| !value.trim().is_empty())
 }
 
 impl AnthropicProvider {
@@ -96,8 +119,12 @@ impl AnthropicProvider {
     pub fn with_transport(transport: Box<dyn ephemeral_agent::transport::Transport>) -> Self {
         Self {
             api_key: credential_from_environment(),
-            model: wire::DEFAULT_MODEL.to_owned(),
-            endpoint: wire::ENDPOINT.to_owned(),
+            model: from_environment(MODEL_VARIABLE)
+                .unwrap_or_else(|| wire::DEFAULT_MODEL.to_owned()),
+            endpoint: from_environment(BASE_URL_VARIABLE).map_or_else(
+                || wire::ENDPOINT.to_owned(),
+                |base| wire::endpoint_from(&base),
+            ),
             transport,
         }
     }
@@ -117,6 +144,17 @@ impl AnthropicProvider {
     #[must_use]
     pub fn with_model(mut self, model: impl Into<String>) -> Self {
         self.model = model.into();
+        self
+    }
+
+    /// The same, pointed at a service whose base URL is `base`.
+    ///
+    /// Anthropic's own by default. This exists for the gateways and proxies
+    /// that speak this API without being it — the same reason the OpenAI
+    /// provider has one, and the reason neither of them hardcodes a host.
+    #[must_use]
+    pub fn with_base_url(mut self, base: &str) -> Self {
+        self.endpoint = wire::endpoint_from(base);
         self
     }
 

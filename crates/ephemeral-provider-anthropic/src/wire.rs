@@ -23,6 +23,22 @@ pub const API_VERSION: &str = "2023-06-01";
 /// Where requests go.
 pub const ENDPOINT: &str = "https://api.anthropic.com/v1/messages";
 
+/// Anthropic's own base URL, before the path this provider appends.
+pub const BASE_URL: &str = "https://api.anthropic.com";
+
+/// The path a request is sent to, under whatever base URL is in use.
+pub const PATH: &str = "/v1/messages";
+
+/// Where requests go, for a service whose base URL is `base`.
+///
+/// A gateway, a proxy, or a company's own front door for this API. Base URLs
+/// are written both ways by everyone who publishes one, so a trailing slash is
+/// trimmed rather than reported.
+#[must_use]
+pub fn endpoint_from(base: &str) -> String {
+    format!("{}{PATH}", base.trim_end_matches('/'))
+}
+
 /// The model used unless one is named.
 pub const DEFAULT_MODEL: &str = "claude-sonnet-5";
 
@@ -236,5 +252,23 @@ mod tests {
         assert_eq!(usage.input_tokens, 1200);
         assert_eq!(usage.output_tokens, 400);
         assert_eq!(usage.cents, 0, "Ephemeral does not know the price");
+    }
+    /// The endpoint constant and the one built from the base URL have to be the
+    /// same place, or pointing this at "Anthropic" explicitly would reach
+    /// somewhere different from leaving it alone.
+    #[test]
+    fn the_default_endpoint_is_what_the_default_base_url_builds() {
+        assert_eq!(endpoint_from(BASE_URL), ENDPOINT);
+    }
+
+    /// A gateway is a base URL, and the path this provider posts to is appended
+    /// to it rather than assumed to be part of it.
+    #[test]
+    fn a_gateway_is_reached_at_the_path_this_provider_uses() {
+        assert_eq!(
+            endpoint_from("https://gateway.example.com/anthropic/"),
+            "https://gateway.example.com/anthropic/v1/messages",
+            "a trailing slash is trimmed rather than doubled"
+        );
     }
 }
