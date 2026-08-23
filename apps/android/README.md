@@ -46,8 +46,63 @@ apps/android/tests/photograph.py  # frames into ./screens
 ```
 
 `.github/workflows/screens.yml` runs exactly that against an emulator on a
-runner with KVM. An emulator is not a device; [the roadmap](../../docs/roadmap.md#phase-5--cross-platform)
-lists what running on real hardware would take.
+runner with KVM. An emulator is not a device.
+
+### On a real phone, over a wire
+
+Nothing to set up. `photograph.py` drives whatever `adb` is talking to, so a
+handset with USB debugging turned on works exactly like the emulator does — and
+the frames come from real hardware, real fonts and a real GPU. This is the
+cheapest and the best of the options here, and the only one that needs nobody's
+account.
+
+### On a real phone, in CI
+
+`.github/workflows/device.yml` runs the application on a physical device in
+[Firebase Test Lab](https://firebase.google.com/docs/test-lab). It is
+dispatch-only: it spends somebody's quota and needs a credential this
+repository does not hold, so it never runs unasked, and it says plainly which
+secret is missing rather than failing obscurely.
+
+Twenty minutes of setup, once, by somebody with a Google account:
+
+1. **A Firebase project.** [console.firebase.google.com](https://console.firebase.google.com)
+   → *Add project*. The Spark (free) plan is enough: it allows five
+   physical-device runs a day, which is more than this needs. Note the project
+   id — it is not the display name.
+2. **Enable two APIs** in the Google Cloud console for that same project:
+   *Cloud Testing API* (`testing.googleapis.com`) and *Cloud Tool Results API*
+   (`toolresults.googleapis.com`). Test Lab is a Cloud service wearing a
+   Firebase badge, and both halves have to be switched on.
+3. **A service account** — Cloud console → *IAM & Admin* → *Service accounts* →
+   *Create*. Give it **Firebase Test Lab Admin** and **Storage Admin**: the
+   first runs the test, the second writes the results and lets CI read them
+   back. Storage Admin is broader than ideal; scope it to the results bucket
+   once one exists.
+4. **A JSON key** for that account — *Keys* → *Add key* → *JSON*. This is a
+   long-lived credential. It belongs in repository secrets and nowhere else:
+   not in the tree, not in a commit, not in a paste.
+5. **Two repository secrets**, under *Settings → Secrets and variables →
+   Actions*:
+   - `FIREBASE_PROJECT_ID` — the project id from step 1
+   - `FIREBASE_SERVICE_ACCOUNT` — the entire contents of the JSON file
+6. **Run it.** *Actions → Device → Run workflow*. Pick a device model; the
+   default is a Pixel 8. If that model has been retired the run fails and
+   prints every physical device that does exist, which is the list to choose
+   from.
+
+It uploads screenshots, a video and a crash log as an artifact. Robo explores
+the application by itself; the one thing it cannot guess — what to type into
+the box — is given to it as a directive using the same resource ids
+`photograph.py` taps, so the two walkthroughs cannot drift into exercising
+different screens.
+
+**A better credential, when it is worth the time.** A JSON key never expires
+and works from anywhere it leaks to. [Workload Identity
+Federation](https://github.com/google-github-actions/auth#preferred-direct-workload-identity-federation)
+replaces it with a trust relationship between this repository and the project,
+so there is no long-lived secret at all. It is more setup and it is the right
+answer eventually.
 
 ## Building
 

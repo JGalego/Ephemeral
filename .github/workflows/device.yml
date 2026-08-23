@@ -1,0 +1,166 @@
+name: Device
+
+# Runs the Android application on a real phone, through Firebase Test Lab.
+#
+# `screens.yml` runs it on an emulator, which is the real Android framework on
+# a machine pretending to be a handset. This is a handset: a physical device in
+# a rack somewhere, with a real GPU, a real keyboard, real fonts and a real
+# amount of memory. The roadmap has wanted this row for a long time and the
+# blocker was never technical — it is an account, and accounts belong to people
+# rather than to repositories.
+#
+# Deliberately dispatch-only. It costs somebody's quota (Test Lab's free tier
+# is five physical-device runs a day), it needs a credential this repository
+# does not hold, and a workflow that goes red because nobody has signed up for
+# anything is noise rather than a check.
+#
+# What it produces is what `screens.yml` produces: pictures, a video and a
+# crash log, for a person to look at. Robo drives the application itself —
+# it explores, taps things, and reports what it broke.
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: >
+          Which phone. `gcloud firebase test android models list
+          --filter=form=PHYSICAL` lists what exists today; model ids come and go
+          as devices are retired.
+        default: "shiba"
+        type: string
+      version:
+        description: The Android API level to run it on.
+        default: "34"
+        type: string
+      minutes:
+        description: How long to let Robo explore.
+        default: "5"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: device-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  phone:
+    name: The Android application, on a phone
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # Read once here, because the `secrets` context cannot be used in an
+      # `if:` and a step that silently does nothing is worse than one that says
+      # what is missing.
+      PROJECT: ${{ secrets.FIREBASE_PROJECT_ID }}
+      KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check there is an account to use
+        run: |
+          missing=""
+          [ -z "$PROJECT" ] && missing="$missing FIREBASE_PROJECT_ID"
+          [ -z "$KEY" ] && missing="$missing FIREBASE_SERVICE_ACCOUNT"
+
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secret(s):$missing"
+            echo "apps/android/README.md has the twenty minutes of setup this needs."
+            exit 1
+          fi
+          echo "Both secrets are present."
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.14.3
+
+      # A real phone is ARM. The emulator job builds x86-64 for the same reason
+      # in reverse — an APK carrying the wrong architecture installs perfectly
+      # and then cannot find its engine.
+      - name: The engine, for a real phone
+        run: |
+          rustup target add aarch64-linux-android
+          EPHEMERAL_ANDROID_ABIS=arm64-v8a ./build-native.sh
+        working-directory: apps/android
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
+
+      - name: Build the application
+        run: gradle assembleDebug --no-daemon
+        working-directory: apps/android
+
+      # `gcloud` is on the runner image, so no third-party action is added to a
+      # repository that is careful about what runs in the pipeline that also
+      # signs its releases. The key file is written to the runner's temporary
+      # directory and the runner is destroyed afterwards.
+      - name: Sign in
+        run: |
+          printf '%s' "$KEY" > "$RUNNER_TEMP/key.json"
+          gcloud auth activate-service-account --key-file="$RUNNER_TEMP/key.json"
+          gcloud config set project "$PROJECT" --quiet
+          rm -f "$RUNNER_TEMP/key.json"
+
+      - name: Run it on a phone
+        id: run
+        run: |
+          set -uo pipefail
+          bucket="$PROJECT-ephemeral-device"
+          directory="run-${{ github.run_id }}"
+          echo "bucket=$bucket" >> "$GITHUB_OUTPUT"
+          echo "directory=$directory" >> "$GITHUB_OUTPUT"
+
+          # Made if it is not there. Test Lab has a default bucket, but naming
+          # our own means the results are somewhere predictable and can be
+          # given a lifecycle rule rather than accumulating for ever.
+          gcloud storage buckets describe "gs://$bucket" > /dev/null 2>&1 \
+            || gcloud storage buckets create "gs://$bucket" --location=us-central1
+
+          # Robo explores the application on its own. The directives give it
+          # the one thing it cannot guess — what to type into the box — using
+          # the same resource ids `photograph.py` taps, so the two walkthroughs
+          # cannot drift into testing different screens.
+          set +e
+          gcloud firebase test android run \
+            --type robo \
+            --app apps/android/app/build/outputs/apk/debug/app-debug.apk \
+            --device "model=${{ inputs.model }},version=${{ inputs.version }},locale=en,orientation=portrait" \
+            --timeout "${{ inputs.minutes }}m" \
+            --results-bucket "$bucket" \
+            --results-dir "$directory" \
+            --robo-directives "text:intent=compare two CSV files,click:create=" \
+            2>&1 | tee run.log
+          outcome=${PIPESTATUS[0]}
+          set -e
+
+          # A device id that no longer exists is the most likely way this
+          # fails, and the error for it is not obvious. Say what is available.
+          if [ "$outcome" -ne 0 ] && grep -qi "model.*not.*found\|INVALID_ARGUMENT" run.log; then
+            echo "::error::That device may no longer exist. What does:"
+            gcloud firebase test android models list --filter=form=PHYSICAL || true
+          fi
+
+          exit "$outcome"
+
+      # Whatever it managed to produce, even when the run itself failed — a
+      # crash is exactly the case where the artifacts matter most.
+      - name: Collect what it saw
+        if: always()
+        run: |
+          mkdir -p device
+          gcloud storage cp -r \
+            "gs://${{ steps.run.outputs.bucket }}/${{ steps.run.outputs.directory }}/*" \
+            device/ || echo "Nothing was uploaded."
+          find device -type f | head -50
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-on-a-phone
+          path: device/
+          if-no-files-found: warn

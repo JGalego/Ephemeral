@@ -477,8 +477,13 @@ being the whole truth the moment device clouds existed. The routes, honestly:
   runs on real Android hardware and its free tier covers five physical-device
   runs a day. Its Robo crawler walks an application by itself and returns
   screenshots, video and crash logs, which is close to what this repository
-  already means by "looking". It needs a Google Cloud service account in
-  repository secrets.
+  already means by "looking". **The workflow for it is written** —
+  `.github/workflows/device.yml`, dispatch-only — and inert until two
+  repository secrets exist; `apps/android/README.md` has the twenty minutes of
+  setup, and the workflow says which secret is missing rather than failing
+  obscurely. Wired now for the same reason the signing variables were: doing it
+  later means discovering the wiring is wrong at the moment somebody wanted an
+  answer.
 - **[AWS Device Farm](https://docs.aws.amazon.com/devicefarm/latest/developerguide/apps.html)**
   runs both platforms on real hardware, and is the interesting one for iOS: it
   re-signs an uploaded application with its own certificate and a wildcard
