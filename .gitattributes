@@ -1,0 +1,14 @@
+# The generated palette files are written by `cargo run -p ephemeral-design`
+# with `\n`, and a test asserts the checked-in copies still match. Git on
+# Windows checks text files out with `\r\n` by default, which made that test
+# fail on the Windows runner for a difference nobody wrote and nobody can see.
+#
+# Pinning them to LF is the fix at the source: the file on disk is then the
+# file the generator produces, on every machine.
+apps/desktop/ui/tokens.css                       text eol=lf
+apps/android/app/src/main/res/values/colors.xml  text eol=lf
+
+# Shell scripts are run by CI and by `scripts/check`; a CRLF shebang is a
+# script that fails with "bad interpreter" on the machine that checked it out.
+*.sh text eol=lf
+scripts/check text eol=lf

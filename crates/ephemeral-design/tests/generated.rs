@@ -18,7 +18,12 @@ fn the_generated_files_are_current() {
         let at = root.join(path);
         let found = std::fs::read_to_string(&at).unwrap_or_default();
 
-        if found != expected {
+        // Compared without line endings. Git on Windows checks text out as
+        // CRLF, and this test failed on that runner for a difference nobody
+        // wrote and nobody can see — while what it is actually asserting is
+        // that the colours are the same colours. `.gitattributes` pins these
+        // two files to LF as well, so both halves of the problem are fixed.
+        if found.replace("\r\n", "\n") != expected {
             stale.push(path);
         }
     }
