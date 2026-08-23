@@ -202,41 +202,15 @@ jobs:
           adb shell settings put global transition_animation_scale 0 || true
           adb shell settings put global animator_duration_scale 0 || true
 
-      - name: Install and open it
-        run: |
-          set -euo pipefail
-          adb install -r apps/android/app/build/outputs/apk/debug/app-debug.apk
-          adb shell am start -n io.github.jgalego.ephemeral/.MainActivity
-          sleep 8
-
-      # Two screens: the list with nothing in it, and the list with something
-      # in it. The second needs an application, and creating one writes no code
-      # and calls no model — which is precisely why the phone can do it.
+      # The walkthrough is a script in the repository rather than a wall of
+      # adb calls in a YAML file, for the same reason `film.mjs` is: it is the
+      # same command here and on anybody's machine with an emulator, and it is
+      # reviewable.
       - name: Photograph it
         run: |
-          set -euo pipefail
-          adb exec-out screencap -p > screens/01-nothing-yet.png
+          adb install -r apps/android/app/build/outputs/apk/debug/app-debug.apk
+          apps/android/tests/photograph.py screens
 
-          # Type an intent and press Create, through the input system rather
-          # than through a test hook: what is photographed has to be what a
-          # person would get.
-          adb shell input tap 540 2150 || true
-          adb shell input text "compare%stwo%sCSV%sfiles"
-          sleep 1
-          adb exec-out screencap -p > screens/02-asking-for-one.png
-
-          adb shell input keyevent 111 || true
-          adb shell input tap 980 2150 || true
-          sleep 4
-          adb exec-out screencap -p > screens/03-the-list.png
-
-          adb shell input tap 540 260 || true
-          sleep 4
-          adb exec-out screencap -p > screens/04-one-application.png
-
-      # Bounded, because `adb` waits for a device that may never have existed —
-      # which turned one failed boot into a job that sat there until the
-      # forty-five minute timeout, saying nothing.
       - name: What it said while doing it
         if: always()
         run: |

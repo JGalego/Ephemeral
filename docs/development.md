@@ -183,11 +183,14 @@ of this repository has to stay workable on a machine that is not one. CI runs it
 on `macos-latest`.
 
 Neither of those is *looking* at anything. For Android there is
-`.github/workflows/screens.yml`, which boots an emulator on a runner that has
-KVM, taps through the application and uploads the frames as an artifact — an
-emulator is not a device, but it is the real application drawn by the real
-framework, which is more than a compiler can say. For iOS there is nothing yet:
-it needs an Xcode project and a Mac.
+`apps/android/tests/photograph.py`, which drives whatever device adb is talking
+to — taps land on controls found by resource id in a UI dump, not on
+coordinates, because the first version guessed and pressed empty space next to
+the Create button. `.github/workflows/screens.yml` boots an emulator on a
+runner that has KVM, runs that script and uploads the frames. An emulator is
+not a device, but it is the real application drawn by the real framework, which
+is more than a compiler can say. For iOS there is nothing yet: it needs an
+Xcode project and a Mac.
 
 Read both the way the desktop window was read before somebody filmed it.
 
