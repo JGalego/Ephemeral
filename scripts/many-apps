@@ -61,6 +61,11 @@ GRANT_LINE = re.compile(r"^\s*ephemeral grant (\S+) (\S+)\s*$")
 # Paths handed to the application have to be those ones, not the host's.
 MOUNT_LINE = re.compile(r"which it sees as (\S+)")
 
+# Where an application's own storage appears inside its sandbox. Every
+# application has this without asking for anything, which makes it the right
+# place to put sample files for one that asked for nothing.
+DATA_MOUNT = "/data"
+
 
 @dataclass
 class Ran:
@@ -273,6 +278,7 @@ def attempt(
     arguments: str,
     provider: str,
     home: Path,
+    state: Path,
     samples: Path,
     into: Path,
     wait: int,
@@ -328,6 +334,18 @@ def attempt(
     for written in record.refused:
         record.requested.append((written, "refused: outside the harness's own home"))
 
+    # An application's own storage, which it sees as `/data`.
+    #
+    # Seeded because four applications out of four in the first real run asked
+    # for `read:/data` and nothing else — they scoped themselves to their own
+    # storage rather than to anybody's home folder, which is the permission
+    # model working. The harness assumed an application would ask to read a
+    # folder it could fill, so those four were handed nothing, printed their
+    # usage, and scored zero. That was a bug here, not there.
+    own = state / "apps" / app / "data"
+    if own.parent.exists():
+        seed(own, samples)
+
     source = into / "source"
     code, said = ephemeral("publish", app, str(source))
     if code == 0 and source.exists():
@@ -342,14 +360,13 @@ def attempt(
     record.runs.append(bare)
 
     if arguments:
-        if "{in}" in arguments and mount is None:
-            record.runs.append(
-                Ran([], "", "not run with arguments: it mounted nothing to put them under")
-            )
-        else:
-            filled = [part.replace("{in}", mount or "") for part in arguments.split()]
-            with_arguments, _ = run_once(ephemeral, app, filled, wait)
-            record.runs.append(with_arguments)
+        # `{in}` is whichever folder the application can actually read: a granted
+        # mount if it asked for one, and otherwise its own storage, which every
+        # application has and which the harness has just filled.
+        where = mount or DATA_MOUNT
+        filled = [part.replace("{in}", where) for part in arguments.split()]
+        with_arguments, _ = run_once(ephemeral, app, filled, wait)
+        record.runs.append(with_arguments)
 
     last = record.runs[-1]
     if not arguments:
@@ -520,6 +537,7 @@ def main() -> int:
                 run_with,
                 arguments.provider,
                 home,
+                state,
                 arguments.input.resolve(),
                 out / "apps" / f"{number:02d}",
                 arguments.wait,
