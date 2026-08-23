@@ -107,7 +107,7 @@ next one starts. See [the roadmap](docs/roadmap.md) for detail, and
 | 2 | Provider abstraction, generation agent, build/test/repair loop | ✅ done — and [watched happen](docs/roadmap.md#not-a-claim-this-time-it-was-run), against real Docker and a real model |
 | 3 | Meta-permissions, app permissions, permission UI, audit, sandboxing | ✅ done — [every promise mapped to what enforces it](docs/security/enforcement.md) |
 | 4 | Desktop application and dashboard | ✅ done — generate, run, pause, roll back, decide, and Ephemeral's own authority, without a terminal |
-| 5 | Windows, macOS, Linux, then mobile | 🚧 the desktop three and Android ship installable builds; iOS ships the engine, not yet an app |
+| 5 | Windows, macOS, Linux, then mobile | 🚧 the desktop three and Android ship installable builds; the iOS shell is written and type-checked, but needs an Xcode project and an identity before anybody can install it |
 | 6 | Threat model, security testing, supply chain, release automation | 🚧 [threat model](docs/security/threat-model.md) written |
 | 7 | Sharing, publishing, and shared sessions | 🚧 publish/install done |
 
@@ -151,6 +151,10 @@ genuine working CSV comparator with no model at all.
   filter egress by destination, so an application granted one refuses to start
   rather than quietly receiving the whole internet. See
   [docs/sandbox.md](docs/sandbox.md).
+- **Install Ephemeral on an iPhone.** Every screen is written and CI compiles
+  it against the iOS SDK, but sources are not a target: an installable build
+  needs an Xcode project and a paid signing identity, and nobody has run it on
+  a device. See [apps/ios/README.md](apps/ios/README.md).
 - **Share a running session with other people.** Designed in
   [ADR-0013](docs/architecture/decisions/0013-how-several-people-share-an-application.md),
   not built.
