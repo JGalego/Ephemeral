@@ -250,7 +250,10 @@ pub fn sandbox_created(runtime: &str, spec: &ContainerSpec) -> AuditEvent {
     AuditEvent::SandboxCreated {
         app: spec.app.clone(),
         runtime: runtime.to_owned(),
-        image: Some(spec.image.clone()),
+        // A runtime with no images leaves this empty, and an empty string in
+        // an audit record reads as an image nobody wrote down rather than as
+        // one that never existed.
+        image: (!spec.image.is_empty()).then(|| spec.image.clone()),
         mounts: spec
             .mounts
             .iter()

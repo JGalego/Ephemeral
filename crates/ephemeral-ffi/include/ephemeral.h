@@ -133,7 +133,16 @@ char *ephemeral_arguments(EphemeralHandle *handle, const char *id,
 /*
  * Runs an application on this device, and says what it did:
  *
- *     {"succeeded": true, "exit_code": 0, "output": "…", "refused": []}
+ *     {"succeeded": true, "exit_code": 0, "output": "…",
+ *      "presentation": "text", "refused": [], "inert": null}
+ *
+ * `presentation` is "page" or "text", decided by the engine from what the
+ * application declared itself to be. Render a page; do not sniff the bytes.
+ *
+ * `refused` is access the person granted that this runtime will not give
+ * effect to. `inert` is what they allowed that Ephemeral itself may not carry
+ * out. Show both, above the output — somebody who allowed an application to
+ * read a folder and watched it find nothing is owed the reason.
  *
  * `arguments_json` is what ephemeral_arguments returned. NULL means the
  * application never ran, and ephemeral_last_error says which of the reasons it

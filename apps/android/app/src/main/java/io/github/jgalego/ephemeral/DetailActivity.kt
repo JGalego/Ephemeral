@@ -286,8 +286,8 @@ class DetailActivity : Activity() {
     private fun plainly(ran: Ran): String {
         val said = StringBuilder()
 
-        if (ran.refused.isNotEmpty()) {
-            said.append(getString(R.string.not_given, ran.refused.joinToString("\n")))
+        if (ran.caveats().isNotEmpty()) {
+            said.append(getString(R.string.not_given, ran.caveats().joinToString("\n")))
             said.append("\n\n")
         }
         said.append(ran.output.ifBlank { getString(R.string.nothing_printed) })
@@ -330,7 +330,7 @@ class DetailActivity : Activity() {
             loadDataWithBaseURL(null, ran.output, "text/html", "utf-8", null)
         }
 
-        if (ran.refused.isEmpty()) {
+        if (ran.caveats().isEmpty()) {
             return shown
         }
 
@@ -339,7 +339,7 @@ class DetailActivity : Activity() {
         // wrote — where it could be styled to look like anything at all.
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            addView(quiet(getString(R.string.not_given, ran.refused.joinToString("\n"))))
+            addView(quiet(getString(R.string.not_given, ran.caveats().joinToString("\n"))))
             addView(
                 shown,
                 LinearLayout.LayoutParams(

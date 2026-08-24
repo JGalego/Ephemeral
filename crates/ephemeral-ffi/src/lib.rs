@@ -1268,6 +1268,67 @@ mod tests {
         (i32.store (i32.const 4) (i32.const 22))
         (drop (call $write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 16)))))"#;
 
+    /// **A phone is told when a permission it granted does nothing.**
+    ///
+    /// Both halves of the model reach a device, and nothing here mirrors the
+    /// operating system's own permissions into the ledger yet — so an
+    /// application can hold a grant Ephemeral has no authority to act on. Until
+    /// this, a handset was the only client where an application found nothing
+    /// and nothing said why; the terminal and the window have always shown it
+    /// before a run.
+    #[test]
+    fn a_permission_that_does_nothing_says_so_when_the_application_runs() {
+        let home = tempfile::tempdir().unwrap();
+        let app = install(home.path(), "tally", SAYS_HELLO);
+
+        // Asked for, then allowed — but only the application's half. Ephemeral
+        // itself has not been allowed to read anything on somebody's behalf, so
+        // the grant is real and does nothing, which is the case this is about.
+        let wanted = ephemeral_core::permission::AppPermission::FilesystemRead {
+            scope: ephemeral_core::permission::PathScope::parse("~/Documents").unwrap(),
+        };
+        let capability = wanted.capability().to_owned();
+        let mut workspace = Workspace::open(home.path()).unwrap();
+        let mut manifest = workspace.apps().load(&app).unwrap();
+        manifest.permissions.request(&wanted);
+        workspace.apps_mut().save(&manifest).unwrap();
+        drop(workspace);
+
+        let handle = open(home.path());
+        assert_eq!(
+            unsafe { ephemeral_decide(handle, c("tally").as_ptr(), c(&capability).as_ptr(), true) },
+            EPHEMERAL_OK,
+            "{}",
+            text(unsafe { ephemeral_last_error(handle) })
+        );
+        let ran = text(unsafe { ephemeral_run(handle, c("tally").as_ptr(), c("[]").as_ptr()) });
+        let ran: Value = serde_json::from_str(&ran).unwrap();
+
+        let said = ran["inert"].as_str().unwrap_or_default();
+        assert!(
+            said.contains("do nothing"),
+            "the phone was not told its grant is inert: {ran}"
+        );
+
+        unsafe { ephemeral_close(handle) };
+    }
+
+    /// And nothing is said when there is nothing to say. A warning that fires
+    /// when everything is fine is a warning nobody reads.
+    #[test]
+    fn an_application_holding_nothing_is_not_warned_about_nothing() {
+        let home = tempfile::tempdir().unwrap();
+        install(home.path(), "tally", SAYS_HELLO);
+        let handle = open(home.path());
+
+        let ran = text(unsafe { ephemeral_run(handle, c("tally").as_ptr(), c("[]").as_ptr()) });
+        let ran: Value = serde_json::from_str(&ran).unwrap();
+
+        assert!(ran["inert"].is_null(), "{ran}");
+
+        unsafe { ephemeral_close(handle) };
+    }
+
     /// An application that fails is an answer, not a failure of the call. A
     /// host that treated a non-zero exit as an error would hide every message
     /// a program writes about what went wrong.

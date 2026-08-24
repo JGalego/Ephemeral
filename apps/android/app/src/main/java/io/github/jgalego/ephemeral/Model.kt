@@ -175,9 +175,22 @@ data class Ran(
      * the reason is us.
      */
     val refused: List<String>,
+    /**
+     * What was allowed that Ephemeral itself may not carry out.
+     *
+     * Different from [refused], and on a phone it is the one that matters:
+     * nothing here mirrors the operating system's own permissions into the
+     * ledger yet, so an application can hold a grant Ephemeral has no
+     * authority to act on. Without this a handset was the only client where an
+     * application found nothing and nothing said why.
+     */
+    val inert: String?,
 ) {
     /** Whether this is meant to be rendered rather than read. */
     fun isPage() = presentation == "page"
+
+    /** Everything Ephemeral has to say before the answer, in order. */
+    fun caveats(): List<String> = listOfNotNull(inert) + refused
 
     companion object {
         fun from(json: JSONObject): Ran {
@@ -188,6 +201,7 @@ data class Ran(
                 output = json.optString("output"),
                 presentation = json.optString("presentation").ifBlank { "text" },
                 refused = (0 until refused.length()).map { refused.optString(it) },
+                inert = if (json.isNull("inert")) null else json.optString("inert").ifBlank { null },
             )
         }
     }

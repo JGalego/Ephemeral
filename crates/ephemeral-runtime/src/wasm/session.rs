@@ -72,6 +72,14 @@ pub struct Runnable<'a> {
 /// What one run produced.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ran {
+    /// Exactly what the sandbox was given.
+    ///
+    /// Carried out rather than kept private, because the audit record is a
+    /// record of *what was exposed* and not of what was granted — those are
+    /// different questions, and the first is the one an incident review asks.
+    /// A caller that had to reconstruct it would be answering the second.
+    pub spec: ContainerSpec,
+
     /// How it exited, and what it printed.
     pub completed: Completed,
 
@@ -216,6 +224,7 @@ pub fn run(runnable: &Runnable<'_>) -> Result<Ran, RuntimeError> {
     )?;
 
     Ok(Ran {
+        spec,
         completed,
         shown: Shown::of(runtime.interface),
         refused,

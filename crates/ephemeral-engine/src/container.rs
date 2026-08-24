@@ -190,6 +190,9 @@ pub struct Ran {
     /// Whether the output is a page to render or text to read.
     pub shown: ephemeral_runtime::wasm::Shown,
 
+    /// What it could reach, in words, exactly as `start` reports it.
+    pub confinement: Vec<String>,
+
     /// Access that was granted and could not be given effect, with reasons.
     pub refused: Vec<String>,
 
@@ -296,21 +299,17 @@ pub fn run_once(
         &format!("finished with exit code {}", ran.completed.exit_code),
     )?;
 
-    workspace.audit_mut().append(
-        Actor::Runtime,
-        ephemeral_core::audit::AuditEvent::SandboxCreated {
-            app: manifest.id.clone(),
-            runtime: "WebAssembly".to_owned(),
-            // No image, and saying so is the point: this runtime has none, and
-            // an empty string here would read as one nobody recorded.
-            image: None,
-            mounts: Vec::new(),
-            ports: Vec::new(),
-        },
-    );
+    // The same record the container path writes, from the same function. The
+    // first version of this passed `mounts: Vec::new()`, which was simply
+    // false — a WebAssembly application is given its own storage and whatever
+    // was granted, and an audit entry saying otherwise is worse than none.
+    workspace
+        .audit_mut()
+        .append(Actor::Runtime, sandbox_created("WebAssembly", &ran.spec));
     save(workspace, manifest)?;
 
     Ok(Ran {
+        confinement: confinement(&ran.spec),
         completed: ran.completed,
         shown: ran.shown,
         refused: ran.refused,
@@ -1078,6 +1077,44 @@ mod tests {
 
         assert!(ran.completed.succeeded);
         assert_eq!(ran.completed.output, "4 rows differ");
+    }
+
+    /// **The audit record says what was exposed, not what was granted.**
+    ///
+    /// Those are different questions and the first is the one an incident
+    /// review asks. The first version of this recorded no mounts at all, which
+    /// was simply false: every application is given its own storage whether it
+    /// asked or not. An audit entry that is wrong is worse than none.
+    #[test]
+    fn the_audit_record_says_what_the_sandbox_was_actually_given() {
+        let home = tempfile::tempdir().unwrap();
+        let mut workspace = workspace(home.path());
+        let mut manifest = ready_wasm(home.path());
+
+        run_once(&mut workspace, &mut manifest, &[], "a test").expect("it runs");
+
+        let recorded = workspace
+            .audit()
+            .entries()
+            .iter()
+            .find_map(|entry| match &entry.event {
+                AuditEvent::SandboxCreated {
+                    runtime,
+                    image,
+                    mounts,
+                    ..
+                } => Some((runtime.clone(), image.clone(), mounts.clone())),
+                _ => None,
+            })
+            .expect("a sandbox was created, so one was recorded");
+
+        let (runtime, image, mounts) = recorded;
+        assert_eq!(runtime, "WebAssembly");
+        assert_eq!(image, None, "this runtime has none, and says so");
+        assert!(
+            mounts.iter().any(|mount| mount.contains("data")),
+            "its own storage was exposed and has to appear: {mounts:?}"
+        );
     }
 
     /// A one-shot run leaves nothing behind, and the history has to say so.

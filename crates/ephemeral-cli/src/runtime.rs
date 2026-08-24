@@ -110,6 +110,13 @@ fn run_to_completion(
         );
     }
 
+    // What it could reach, after the answer rather than before it: a run that
+    // is already over is read for its result first, where a container that has
+    // just started is read for what it is now able to do.
+    for line in &ran.confinement {
+        println!("{}", output::dim(line));
+    }
+
     if ran.completed.succeeded {
         println!("{} {} finished.", output::good("Ran."), manifest.id);
         return Ok(());

@@ -42,6 +42,17 @@ pub(crate) struct Ran {
 
     /// Access the person granted that this runtime will not give effect to.
     pub refused: Vec<String>,
+
+    /// What the person allowed that **Ephemeral itself** may not carry out.
+    ///
+    /// Not the same as `refused`, and on a phone this is the one that matters:
+    /// nothing here mirrors the operating system's own permissions into the
+    /// ledger yet, so an application allowed to read a folder can still be
+    /// holding a grant Ephemeral has no authority to act on. The terminal and
+    /// the window have always shown this before a run. This did not, which
+    /// left a handset the only client where an application could find nothing
+    /// and nothing said why.
+    pub inert: Option<String>,
 }
 
 /// Runs one application here, under exactly what it was granted.
@@ -62,7 +73,9 @@ pub(crate) fn run(
     // From the ledger, never from the manifest. The manifest records what the
     // application wants, and building the sandbox from it would let an
     // application widen its own confinement by asking.
-    let granted = ephemeral_api::authority::grants(workspace.ledger(), app).effective();
+    let held = ephemeral_api::authority::grants(workspace.ledger(), app);
+    let inert = held.explain_inert();
+    let granted = held.effective();
 
     let ran = ephemeral_runtime::wasm::run_application(&Runnable {
         manifest: &manifest,
@@ -85,5 +98,6 @@ pub(crate) fn run(
         output: ran.completed.output,
         presentation: ran.shown.as_str(),
         refused: ran.refused,
+        inert,
     })
 }
