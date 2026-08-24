@@ -97,7 +97,18 @@ data class Detail(
      * anything has an empty list.
      */
     val takes: List<Field>,
+    /**
+     * Which runtime this application declares, if it has been generated.
+     *
+     * The engine already sent this; nothing here read it, which is how the
+     * screen came to tell everybody a phone cannot run anything long after one
+     * could.
+     */
+    val runtimeKind: String?,
 ) {
+    /** Whether this device can run this application itself. */
+    fun runsHere() = runtimeKind == "wasm"
+
     companion object {
         fun from(json: JSONObject): Detail {
             val permissions = json.optJSONObject("permissions")
@@ -108,6 +119,7 @@ data class Detail(
                 outstanding = capabilities(permissions?.optJSONArray("outstanding")),
                 allowed = capabilities(permissions?.optJSONArray("allowed")),
                 isolated = permissions?.optBoolean("isolated") ?: true,
+                runtimeKind = json.optJSONObject("runtime")?.optString("kind")?.ifBlank { null },
                 versions = versions(json.optJSONArray("versions")),
                 retention = json.optString("retention"),
                 takes = fields(json.optJSONObject("runtime")?.optJSONArray("inputs")),

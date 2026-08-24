@@ -33,6 +33,7 @@ class DetailActivity : Activity() {
     /** How to read each form control back, by the input's name. */
     private val filled = mutableMapOf<String, () -> String>()
     private lateinit var footnotes: TextView
+    private lateinit var whereItRuns: TextView
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
@@ -53,6 +54,7 @@ class DetailActivity : Activity() {
         form = findViewById(R.id.form)
         permissions = findViewById(R.id.permissions)
         footnotes = findViewById(R.id.footnotes)
+        whereItRuns = findViewById(R.id.where_it_runs)
 
         generate.setOnClickListener { write() }
     }
@@ -124,6 +126,17 @@ class DetailActivity : Activity() {
             notes += getString(R.string.versions) + ":\n" + page.versions.joinToString("\n")
         }
         footnotes.text = notes.joinToString("\n\n")
+
+        // What this device can do with *this* application. A fixed sentence
+        // said the same thing about every application, and was wrong about half
+        // of them from the moment a phone could run one.
+        whereItRuns.setText(
+            when {
+                page.runtimeKind == null -> R.string.phone_limits
+                page.runsHere() -> R.string.runs_here
+                else -> R.string.needs_a_computer
+            },
+        )
     }
 
     /**

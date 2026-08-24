@@ -10,8 +10,18 @@
       Said on the first screen rather than buried in an about box. Somebody who
       taps "generate" and is left waiting for a build that will never happen has
       been misled by this app, not by the engine.
+
+      This used to say a phone cannot run what it generates, full stop. That was
+      true until it wasn't: a WebAssembly application runs here now (ADR-0021).
+      A container one still cannot, and which of the two an application is is a
+      property of the application — so the detail screen says it per application
+      rather than making this sentence carry both.
     -->
-    <string name="phone_limits">Generating writes the source to this phone. Building and running it needs a sandbox a phone does not have, so that part happens on a computer.</string>
+    <string name="phone_limits">Generating writes the source to this phone. An application built for WebAssembly runs here too; one that needs a container is built and run on a computer.</string>
+
+    <!-- What is true of one application, on the page for that application. -->
+    <string name="runs_here">This one runs on your phone. It starts with no access to anything and reaches only what you allow.</string>
+    <string name="needs_a_computer">This one needs a container, which a phone does not have. Its source is here; building and running it happen on a computer.</string>
 
     <string name="generate">Generate</string>
     <string name="generate_again">Generate again</string>

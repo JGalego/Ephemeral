@@ -1329,6 +1329,38 @@ mod tests {
         unsafe { ephemeral_close(handle) };
     }
 
+    /// The page carries which runtime an application declares.
+    ///
+    /// A phone reads this to say what it can do with the application in front
+    /// of it. It was being sent all along and nothing read it, which is how
+    /// both screens came to tell everybody a phone cannot run anything long
+    /// after one could — so it is asserted now that something depends on it.
+    #[test]
+    fn an_applications_page_says_which_runtime_it_declares() {
+        let home = tempfile::tempdir().unwrap();
+        install(home.path(), "tally", SAYS_HELLO);
+        let handle = open(home.path());
+
+        let page = text(unsafe { ephemeral_application(handle, c("tally").as_ptr()) });
+        let page: Value = serde_json::from_str(&page).unwrap();
+
+        assert_eq!(page["runtime"]["kind"], "wasm");
+
+        // And an application that has not been generated says nothing rather
+        // than guessing, so a client can tell "runs here" from "not yet known".
+        let created =
+            text(unsafe { ephemeral_create(handle, c("compare two CSV files").as_ptr()) });
+        let id = serde_json::from_str::<Value>(&created).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let page = text(unsafe { ephemeral_application(handle, c(&id).as_ptr()) });
+        let page: Value = serde_json::from_str(&page).unwrap();
+        assert!(page["runtime"].is_null(), "{}", page["runtime"]);
+
+        unsafe { ephemeral_close(handle) };
+    }
+
     /// An application that fails is an answer, not a failure of the call. A
     /// host that treated a non-zero exit as an error would hide every message
     /// a program writes about what went wrong.

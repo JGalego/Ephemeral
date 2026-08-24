@@ -65,7 +65,13 @@
             android:textSize="14sp"
             android:visibility="gone" />
 
+        <!--
+          Set in code rather than here: what a phone can do with an application
+          depends on the application, and a fixed sentence was wrong for half of
+          them the moment WebAssembly arrived.
+        -->
         <TextView
+            android:id="@+id/where_it_runs"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:paddingTop="12dp"

@@ -116,11 +116,16 @@ struct ApplicationList: View {
             // Said on the first screen rather than buried in an about box.
             // Somebody who taps Generate and waits for a build that will never
             // happen has been misled by this application, not by the engine.
+            //
+            // Deliberately *not* what Android says. The engine runs WebAssembly
+            // applications on a device now (ADR-0021) and Android calls
+            // `ephemeral_run`; this application does not yet. Claiming the
+            // engine's capability here would be swapping one false sentence for
+            // a newer one.
             Text(
                 """
-                Generating writes the source to this phone. Building and running \
-                it needs a sandbox a phone does not have, so that part happens on \
-                a computer.
+                Generating writes the source to this phone. This app does not run \
+                what it generates yet — that happens on a computer.
                 """
             )
             .font(.caption)
