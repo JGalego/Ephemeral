@@ -153,7 +153,7 @@ final class EphemeralEngine {
     init(home: URL, credential: String) throws {
         // Two C function pointers. Neither may capture context, so everything
         // they need travels through the `context` argument instead.
-        let send: EphemeralHttpSend = { context, method, endpoint, headersJson, body in
+        let send: EphemeralHttpSend = { context, method, endpoint, headersJson, body, status in
             guard let method, let endpoint, let headersJson, let body,
                   let url = URL(string: String(cString: endpoint))
             else { return nil }
@@ -183,11 +183,16 @@ final class EphemeralEngine {
             // as long as one takes.
             let semaphore = DispatchSemaphore(value: 0)
             var reply: String?
-            URLSession.shared.dataTask(with: request) { data, _, _ in
+            var code: Int32 = 0
+            URLSession.shared.dataTask(with: request) { data, response, _ in
+                // Report the status you got, or leave it zero. A generated
+                // application allowed to reach a service sees this number.
+                code = Int32((response as? HTTPURLResponse)?.statusCode ?? 0)
                 reply = data.flatMap { String(data: $0, encoding: .utf8) }
                 semaphore.signal()
             }.resume()
             semaphore.wait()
+            status?.pointee = code
 
             // strdup, because Ephemeral frees this through our free function.
             return reply.map { strdup($0) } ?? nil

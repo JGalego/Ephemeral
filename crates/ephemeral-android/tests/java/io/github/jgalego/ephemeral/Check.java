@@ -186,6 +186,7 @@ public final class Check {
         private final String reply;
 
         int calls;
+        int reported;
         String method;
         String endpoint;
         String headers;
@@ -196,8 +197,10 @@ public final class Check {
         }
 
         @Override
-        public String send(String method, String endpoint, String headersJson, String body) {
+        public String send(String method, String endpoint, String headersJson, String body,
+                           int[] status) {
             this.calls++;
+            status[0] = this.reported;
             this.method = method;
             this.endpoint = endpoint;
             this.headers = headersJson;
@@ -211,7 +214,8 @@ public final class Check {
         int calls;
 
         @Override
-        public String send(String method, String endpoint, String headersJson, String body) {
+        public String send(String method, String endpoint, String headersJson, String body,
+                           int[] status) {
             this.calls++;
             throw new IllegalStateException("this host's transport is broken");
         }

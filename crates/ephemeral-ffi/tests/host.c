@@ -94,10 +94,15 @@ struct host {
  * from a script. Either way Ephemeral never opens a socket.
  */
 static char *host_send(void *context, const char *method, const char *endpoint,
-                       const char *headers_json, const char *request_json) {
+                       const char *headers_json, const char *request_json,
+                       int32_t *status) {
   struct host *host = context;
 
-  /* The contract says these are readable for the duration of the call. */
+  /* The contract says these are readable for the duration of the call, and
+     that `status` is never null and starts at zero. */
+  assert(status != NULL);
+  assert(*status == 0);
+  *status = 200;
   assert(method != NULL);
   assert(endpoint != NULL);
   assert(headers_json != NULL);

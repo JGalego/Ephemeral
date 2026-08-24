@@ -1,0 +1,31 @@
+[package]
+name = "ephemeral-app"
+description = "What a generated application links against: the network Ephemeral lends it, with no unsafe in the application's own code."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+[dependencies]
+# None, and this one is not a preference. Every dependency is something else
+# that has to compile to `wasm32-wasip1`, inside a sandbox with no network and
+# no filesystem to fetch from, in code a model wrote. The whole crate is three
+# functions over two imports.
+
+[lints.rust]
+# NOT inherited from the workspace, which forbids `unsafe_code`. Declaring an
+# import from the host is unsafe by construction — it is a C ABI — and this
+# crate exists precisely so that the unsafe lives here, once, reviewed, instead
+# of in every application a model writes.
+unsafe_code = "allow"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"

@@ -126,11 +126,12 @@ in WebAssembly and is the same thing every WASI program does. A thin safe
 wrapper crate for generated applications would remove it from the code a model
 writes; nothing depends on that yet.
 
-**The phone reports no status.** `EphemeralHttpSend` returns a body or nothing,
-so an application on a handset sees `0` where a desktop sees `200` or `404`.
-Said outright rather than smoothed over with an invented `200` an application
-might branch on. Fixing it means another ABI change, and one was already made
-today.
+**The phone reports the status too.** `EphemeralHttpSend` gained an
+`int32_t *status` the host writes what it got into, so an application sees the
+same number on a handset as in a terminal. A host with none to give leaves it
+zero, and zero reaches the application as zero — an invented `200` is a number
+it might branch on. Java has no out-parameters, so the Kotlin side takes a
+one-element `IntArray`, which is the shape the platform's own APIs use.
 
 **This widens what a generated application can do**, and that deserves saying
 plainly. Before this, the strongest thing Ephemeral could promise about a

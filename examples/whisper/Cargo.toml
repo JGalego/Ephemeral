@@ -1,0 +1,29 @@
+[package]
+name = "whisper"
+description = "The reference application for the network Ephemeral lends: two people, two devices, no shared anything."
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+# The one dependency, and the point of the example: the network arrives as a
+# `get` and a `post` rather than as an `extern` block this file would have to
+# get right.
+ephemeral-app = { path = "../../crates/ephemeral-app" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+panic = "abort"
+
+[lints.rust]
+# The claim this example exists to make. It compiles.
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }

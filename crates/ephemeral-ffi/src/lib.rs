@@ -95,12 +95,18 @@ pub const EPHEMERAL_BAD_HANDLE: c_int = -2;
 /// requires. It used to be a single `api_key` the host wrapped in Anthropic's
 /// headers, which quietly made the ABI belong to one vendor — a phone could not
 /// be pointed anywhere else no matter what anybody configured.
+/// `status` is where the host writes the HTTP status it got — 200, 404,
+/// whatever came back — or leaves as zero when it has none to report. It is
+/// never null. A phone used to return a body and nothing else, so a confined
+/// application reaching a service through this could not tell a refusal from an
+/// answer; a caller that does not care about the status ignores it.
 pub type EphemeralHttpSend = extern "C" fn(
     context: *mut c_void,
     method: *const c_char,
     endpoint: *const c_char,
     headers_json: *const c_char,
     request_json: *const c_char,
+    status: *mut i32,
 ) -> *mut c_char;
 
 /// Releases a response previously returned by an [`EphemeralHttpSend`].
@@ -177,12 +183,17 @@ impl Transport for HostTransport {
         let body = CString::new(sent)
             .map_err(|_| failure("the request body is not a C string".to_owned()))?;
 
+        // Read and deliberately unused: a provider's own reply says what went
+        // wrong in its own words, which is more useful than a number, and every
+        // one of them answers `{"error": …}` with a non-2xx status anyway.
+        let mut status: i32 = 0;
         let reply = (self.send)(
             self.context,
             method.as_ptr(),
             endpoint.as_ptr(),
             headers.as_ptr(),
             body.as_ptr(),
+            &raw mut status,
         );
 
         if reply.is_null() {
@@ -230,10 +241,10 @@ impl Transport for HostTransport {
 /// [`ephemeral_runtime::wasm`], which is where the permission model lives and
 /// where it stays.
 ///
-/// **This host transport reports no status.** A reply comes back as a body or
-/// as nothing, so an application on a phone sees `0` where a desktop would show
-/// `200` or `404`. That is said outright rather than smoothed over with an
-/// invented `200` an application might branch on.
+/// The status the host reports travels with the body, so an application can
+/// tell a refusal from an answer. A host with none to give leaves it zero,
+/// which reaches the application as zero rather than as an invented `200` it
+/// might branch on.
 struct HostReach {
     context: *mut c_void,
     send: EphemeralHttpSend,
@@ -265,12 +276,14 @@ impl ephemeral_runtime::wasm::Reach for HostReach {
         let body = CString::new(request.body.as_str())
             .map_err(|_| "that message cannot be sent as it is written".to_owned())?;
 
+        let mut status: i32 = 0;
         let reply = (self.send)(
             self.context,
             method.as_ptr(),
             endpoint.as_ptr(),
             headers.as_ptr(),
             body.as_ptr(),
+            &raw mut status,
         );
 
         if reply.is_null() {
@@ -286,7 +299,9 @@ impl ephemeral_runtime::wasm::Reach for HostReach {
         (self.free)(self.context, reply);
 
         Ok(ephemeral_runtime::wasm::Answered {
-            status: 0,
+            // Zero where the host had none to give, which is honest: an
+            // invented 200 is a number an application might branch on.
+            status: u16::try_from(status).unwrap_or(0),
             body: copied,
         })
     }
@@ -1306,7 +1321,18 @@ mod tests {
         endpoint: *const c_char,
         headers: *const c_char,
         request: *const c_char,
+        status: *mut i32,
     ) -> *mut c_char {
+        assert!(!status.is_null(), "the ABI says this is never null");
+        assert_eq!(
+            unsafe { *status },
+            0,
+            "and that it arrives at zero, so a host with nothing to say says nothing"
+        );
+        // A teapot, so a test asserting the status cannot pass by accident on
+        // a number something else would have produced.
+        unsafe { *status = 418 };
+
         let read = |pointer: *const c_char| {
             if pointer.is_null() {
                 String::new()
@@ -1766,6 +1792,14 @@ mod tests {
         assert_eq!(asked.method, "GET");
         assert_eq!(asked.endpoint, "https://room.example.com/garden");
         assert_eq!(asked.headers, "[]", "an application composes no headers");
+
+        // And the status the host reported reaches the application, so it can
+        // tell a refusal from an answer. A phone used to hand back a body and
+        // nothing else, which made every reply look like a success.
+        assert!(
+            output.contains("418"),
+            "the status crosses the boundary with the body: {output}"
+        );
 
         unsafe { ephemeral_close(handle) };
     }

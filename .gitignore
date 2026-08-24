@@ -1,5 +1,7 @@
 # Rust
 /target/
+# The examples are their own workspaces, so each has its own build directory.
+examples/*/target/
 **/*.rs.bk
 
 # Node / web UI (arrives in Phase 4)

@@ -64,6 +64,12 @@ typedef struct Ephemeral EphemeralHandle;
  * empty body, so the one call a person makes before spending anything failed
  * with a parse error that named no cause.
  *
+ * Write the HTTP status you got into `status` — 200, 404, whatever came back.
+ * It is never NULL, and it starts at zero. Leave it zero if you have no status
+ * to report; do not invent a 200. A generated application that has been allowed
+ * to reach a service sees this number, and an invented one is a number it might
+ * branch on.
+ *
  * Return the response body as a newly allocated NUL-terminated string, or NULL
  * on any failure. Ephemeral copies it immediately and then passes it to your
  * free function, so the allocation is yours throughout.
@@ -71,7 +77,7 @@ typedef struct Ephemeral EphemeralHandle;
 typedef char *(*EphemeralHttpSend)(void *context, const char *method,
                                    const char *endpoint,
                                    const char *headers_json,
-                                   const char *request_json);
+                                   const char *request_json, int32_t *status);
 
 /* Releases a response your send function returned. */
 typedef void (*EphemeralHttpFree)(void *context, char *response);

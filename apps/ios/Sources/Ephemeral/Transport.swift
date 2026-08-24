@@ -21,7 +21,7 @@ enum Transport {
     /// closure with no context — everything it needs arrives as an argument.
     /// Blocking is correct here: the engine's call is synchronous, and it is
     /// already running off the main thread on the engine's own queue.
-    static let send: EphemeralHttpSend = { _, method, endpoint, headersJson, body in
+    static let send: EphemeralHttpSend = { _, method, endpoint, headersJson, body, status in
         guard let method, let endpoint, let headersJson, let body,
               let url = URL(string: String(cString: endpoint))
         else { return nil }
@@ -56,13 +56,19 @@ enum Transport {
 
         let waiting = DispatchSemaphore(value: 0)
         var reply: String?
+        var code: Int32 = 0
 
-        URLSession.shared.dataTask(with: request) { data, _, _ in
+        URLSession.shared.dataTask(with: request) { data, response, _ in
+            // Reported rather than inferred. A generated application allowed to
+            // reach a service sees this number, and an invented 200 is one it
+            // might branch on — so a response with no status leaves it zero.
+            code = Int32((response as? HTTPURLResponse)?.statusCode ?? 0)
             reply = data.flatMap { String(data: $0, encoding: .utf8) }
             waiting.signal()
         }.resume()
 
         waiting.wait()
+        status?.pointee = code
 
         // `strdup`, because the allocation is ours throughout: Ephemeral copies
         // what it needs immediately and then hands this back to `release`.

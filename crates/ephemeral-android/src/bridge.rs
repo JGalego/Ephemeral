@@ -149,6 +149,7 @@ extern "C" fn send(
     endpoint: *const c_char,
     headers_json: *const c_char,
     request_json: *const c_char,
+    status: *mut i32,
 ) -> *mut c_char {
     guarded(ptr::null_mut(), || {
         if context.is_null() {
@@ -176,10 +177,21 @@ extern "C" fn send(
             return ptr::null_mut();
         };
 
-        let Some(reply) = ask_host(&mut guard, &host.transport, method, endpoint, headers, body)
+        let Some((reply, reported)) =
+            ask_host(&mut guard, &host.transport, method, endpoint, headers, body)
         else {
             return ptr::null_mut();
         };
+
+        if !status.is_null() {
+            // SAFETY: the C ABI documents this as a valid `int32_t *` for the
+            // duration of the call. Written only once the call has succeeded,
+            // so a failure leaves the caller's zero alone.
+            #[allow(unsafe_code)]
+            unsafe {
+                *status = reported;
+            }
+        }
 
         CString::new(reply).map_or(ptr::null_mut(), CString::into_raw)
     })
@@ -193,21 +205,28 @@ fn ask_host(
     endpoint: &str,
     headers: &str,
     body: &str,
-) -> Option<String> {
+) -> Option<(String, i32)> {
     let method = env.new_string(method).ok()?;
     let endpoint = env.new_string(endpoint).ok()?;
     let headers = env.new_string(headers).ok()?;
     let body = env.new_string(body).ok()?;
 
+    // Java has no out-parameters, so the status comes back in a one-element
+    // array — the same shape the platform's own APIs use for this. A second
+    // method returning it would be a second call, and two calls can disagree
+    // about which request they are describing.
+    let status = env.new_int_array(1).ok()?;
+
     let outcome = env.call_method(
         transport.as_obj(),
         "send",
-        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
+        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;[I)Ljava/lang/String;",
         &[
             JValue::Object(&method),
             JValue::Object(&endpoint),
             JValue::Object(&headers),
             JValue::Object(&body),
+            JValue::Object(&status),
         ],
     );
 
@@ -222,7 +241,12 @@ fn ask_host(
     if answer.is_null() {
         return None;
     }
-    env.get_string(&JString::from(answer)).ok().map(Into::into)
+
+    let mut reported = [0_i32];
+    let _ = env.get_int_array_region(&status, 0, &mut reported);
+
+    let body: String = env.get_string(&JString::from(answer)).ok()?.into();
+    Some((body, reported[0]))
 }
 
 /// Releases a response [`send`] returned. Matches [`ephemeral_ffi::EphemeralHttpFree`].

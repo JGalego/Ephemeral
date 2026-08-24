@@ -16,6 +16,10 @@ public interface Transport {
      * The method is given rather than assumed. A host that always POSTed sent
      * the models listing to {@code /v1/models} as a POST, which every service
      * refuses; {@code body} is empty for a GET and none is to be sent.
+     *
+     * Write the HTTP status into {@code status[0]}, or leave it zero if you
+     * have none. Java has no out-parameters; a generated application that has
+     * been allowed to reach a service sees this number, so do not invent one.
      */
-    String send(String method, String endpoint, String headersJson, String body);
+    String send(String method, String endpoint, String headersJson, String body, int[] status);
 }

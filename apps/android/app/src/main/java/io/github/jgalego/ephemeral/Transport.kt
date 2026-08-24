@@ -31,11 +31,22 @@ interface Transport {
      * the version of this that wrote Anthropic's headers here is the reason a
      * phone could not be pointed at anything else.
      *
+     * [status] is a one-element array to write the HTTP status into, since Java
+     * has no out-parameters. Leave it zero if there is none — a generated
+     * application allowed to reach a service sees this number, and an invented
+     * 200 is one it might branch on.
+     *
      * Called from a background thread the engine owns. It must not throw: an
      * exception here crosses back into native code, where there is nothing that
      * can act on it.
      */
-    fun send(method: String, endpoint: String, headersJson: String, body: String): String?
+    fun send(
+        method: String,
+        endpoint: String,
+        headersJson: String,
+        body: String,
+        status: IntArray,
+    ): String?
 }
 
 /** The platform's HTTPS stack, and nothing on top of it. */
@@ -43,7 +54,13 @@ internal object Https : Transport {
     private const val CONNECT_TIMEOUT = 30_000
     private const val READ_TIMEOUT = 180_000
 
-    override fun send(method: String, endpoint: String, headersJson: String, body: String): String? {
+    override fun send(
+        method: String,
+        endpoint: String,
+        headersJson: String,
+        body: String,
+        status: IntArray,
+    ): String? {
         var connection: HttpURLConnection? = null
         return try {
             // Plain HTTP would put the credential on the wire in clear text, so
@@ -72,10 +89,15 @@ internal object Https : Transport {
                 opened.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
             }
 
+            // Read once and reported, because asking for it again is another
+            // trip through the connection's own state machine.
+            val code = opened.responseCode
+            status[0] = code
+
             // The error body is returned too, not swallowed: when a provider
             // refuses, its own words are the most useful thing a person can be
             // shown, and the engine already knows how to read them.
-            val stream = if (opened.responseCode in 200..299) opened.inputStream else opened.errorStream
+            val stream = if (code in 200..299) opened.inputStream else opened.errorStream
             stream?.bufferedReader(Charsets.UTF_8)?.use(BufferedReader::readText)
         } catch (failure: Exception) {
             null
