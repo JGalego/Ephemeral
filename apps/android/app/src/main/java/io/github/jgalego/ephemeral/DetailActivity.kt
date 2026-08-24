@@ -156,27 +156,31 @@ class DetailActivity : Activity() {
         form.removeAllViews()
         filled.clear()
 
-        if (page.takes.isEmpty()) {
-            // No declaration is not an empty form. Most applications ever
-            // generated declared nothing, and drawing a form with no fields
-            // would claim they take nothing.
-            return
+        // No declaration is not an empty form. Most applications ever generated
+        // declared nothing, and drawing a form with no fields would claim they
+        // take nothing.
+        if (page.takes.isNotEmpty()) {
+            form.addView(heading(getString(R.string.what_it_takes)))
+
+            for (field in page.takes) {
+                form.addView(label(field))
+                form.addView(control(field))
+                field.help?.let { form.addView(quiet(it)) }
+            }
         }
 
-        form.addView(heading(getString(R.string.what_it_takes)))
-
-        for (field in page.takes) {
-            form.addView(label(field))
-            form.addView(control(field))
-            field.help?.let { form.addView(quiet(it)) }
+        // Outside that, deliberately. The button used to live inside the form,
+        // so an application that took no arguments — which is most of the
+        // simple ones — could not be started from a phone at all: no fields, no
+        // form, no button, and nothing saying why.
+        if (page.runsHere()) {
+            form.addView(
+                Button(this).apply {
+                    text = getString(R.string.run_it)
+                    setOnClickListener { runWithForm() }
+                },
+            )
         }
-
-        form.addView(
-            Button(this).apply {
-                text = getString(R.string.run_it)
-                setOnClickListener { runWithForm() }
-            },
-        )
     }
 
     /** The field's name, marked when it cannot be left out. */
@@ -191,7 +195,23 @@ class DetailActivity : Activity() {
     }
 
     /** The control for one field, remembered so its value can be read back. */
-    private fun control(field: Field): View = when (field.kind) {
+    private fun control(field: Field): View = describing(field, drawn(field))
+
+    /**
+     * Gives a control the name the application gave it.
+     *
+     * A form drawn from a declaration has no ids — the fields are whatever the
+     * application said it takes, and there is no layout naming them. So a
+     * screen reader announcing "edit box" for every one of six fields is the
+     * default, and it is useless. The label the application wrote is the right
+     * announcement, and it is also what lets the device walkthrough drive a
+     * form nobody wrote by hand.
+     */
+    private fun describing(field: Field, control: View): View = control.apply {
+        contentDescription = field.label
+    }
+
+    private fun drawn(field: Field): View = when (field.kind) {
         "flag" -> CheckBox(this).apply {
             isChecked = field.default == "true"
             // A checkbox says true or false; the engine decides that false

@@ -55,8 +55,7 @@ network"* a fact about the code rather than a claim about its behaviour.
 
 ### What the application sees
 
-Two imports, in a module named `ephemeral`, linked **only** when a person has
-granted egress *and* something was supplied to carry it:
+Two imports, in a module named `ephemeral`:
 
 ```
 ephemeral.send(request_ptr: i32, request_len: i32) -> i32   // the answer's size
@@ -99,13 +98,20 @@ answering, having spent nearly nothing. Sixty-four per run.
 limit bounds what a module allocates for itself and says nothing about what the
 host holds on its behalf.
 
-### An application with no grant does not start
+### An application with no grant reaches nothing, and is told so
 
-The imports are not linked, so a module that names them has nothing to bind to
-and never executes an instruction. There is no version of this where the
-application runs and its requests quietly fail. The refusal is named in the
-words a person granted it in — *"it needs to reach a service over the network,
-and has not been allowed to reach anything"* — rather than in the interpreter's.
+**Amended 2026-08-24.** The imports were linked only when egress had been
+granted, so a module naming them without one could not start at all. That is a
+good property for a module that *is* an application — its imports are a truthful
+declaration of what it needs — and a lie for an interpreter, which imports them
+because *some* script it runs might. Once applications on a phone are scripts
+([ADR-0022](0022-how-an-interpreter-reaches-a-device.md)), keeping it would have
+meant every scripted application needing a network grant to print a line.
+
+They are linked always now. Nothing is weakened: the linker was never where the
+grant was enforced — `answer` is, per request, against the ledger, before
+anything is asked to carry it. What an ungranted application gets is a readable
+refusal it can show somebody rather than a door that will not open.
 
 ## Consequences
 

@@ -1,19 +1,29 @@
 [
   {
-    "description": "Open the overflow menu. It has no id of ours — it is the framework's, and the only handle on it is what a screen reader would say.",
+    "description": "Open the overflow menu. It has no id of ours \u2014 it is the framework's, and the only handle on it is what a screen reader would say.",
     "eventType": "VIEW_CLICKED",
-    "elementDescriptors": [{ "contentDescription": "More options" }]
+    "elementDescriptors": [
+      {
+        "contentDescription": "More options"
+      }
+    ]
   },
   {
     "description": "The Model item in that menu, matched by its label because a menu item is not a view with our id on it.",
     "eventType": "VIEW_CLICKED",
-    "elementDescriptors": [{ "text": "Model" }]
+    "elementDescriptors": [
+      {
+        "text": "Model"
+      }
+    ]
   },
   {
     "description": "Pick the service. A radio group rather than a spinner exactly so this line can exist.",
     "eventType": "VIEW_CLICKED",
     "elementDescriptors": [
-      { "resourceId": "io.github.jgalego.ephemeral:id/provider_openai" }
+      {
+        "resourceId": "io.github.jgalego.ephemeral:id/provider_openai"
+      }
     ]
   },
   {
@@ -21,14 +31,18 @@
     "eventType": "VIEW_TEXT_CHANGED",
     "replacementText": "MODEL_KEY_GOES_HERE",
     "elementDescriptors": [
-      { "resourceId": "io.github.jgalego.ephemeral:id/credential" }
+      {
+        "resourceId": "io.github.jgalego.ephemeral:id/credential"
+      }
     ]
   },
   {
     "description": "Check the connection before anything is generated, so a wrong key is a sentence in the video rather than a generation that quietly does nothing.",
     "eventType": "VIEW_CLICKED",
     "elementDescriptors": [
-      { "resourceId": "io.github.jgalego.ephemeral:id/check" }
+      {
+        "resourceId": "io.github.jgalego.ephemeral:id/check"
+      }
     ]
   },
   {
@@ -44,27 +58,37 @@
   {
     "description": "Save, which is the dialog's positive button and belongs to the framework.",
     "eventType": "VIEW_CLICKED",
-    "elementDescriptors": [{ "resourceId": "android:id/button1" }]
+    "elementDescriptors": [
+      {
+        "resourceId": "android:id/button1"
+      }
+    ]
   },
   {
     "description": "Describe the application.",
     "eventType": "VIEW_TEXT_CHANGED",
-    "replacementText": "compare two CSV files and show what is different",
+    "replacementText": "show the first 20 prime numbers",
     "elementDescriptors": [
-      { "resourceId": "io.github.jgalego.ephemeral:id/intent" }
+      {
+        "resourceId": "io.github.jgalego.ephemeral:id/intent"
+      }
     ]
   },
   {
     "eventType": "VIEW_CLICKED",
     "elementDescriptors": [
-      { "resourceId": "io.github.jgalego.ephemeral:id/create" }
+      {
+        "resourceId": "io.github.jgalego.ephemeral:id/create"
+      }
     ]
   },
   {
     "description": "Generate it. This is the tap that has never once happened with a credential behind it.",
     "eventType": "VIEW_CLICKED",
     "elementDescriptors": [
-      { "resourceId": "io.github.jgalego.ephemeral:id/generate" }
+      {
+        "resourceId": "io.github.jgalego.ephemeral:id/generate"
+      }
     ]
   },
   {
@@ -75,5 +99,25 @@
   {
     "eventType": "TAKE_SCREENSHOT",
     "screenshotName": "after-generating"
+  },
+  {
+    "eventType": "WAIT",
+    "delayTime": 8000
+  },
+  {
+    "eventType": "VIEW_CLICKED",
+    "elementDescriptors": [
+      {
+        "text": "Run it"
+      }
+    ]
+  },
+  {
+    "eventType": "WAIT",
+    "delayTime": 15000
+  },
+  {
+    "eventType": "TAKE_SCREENSHOT",
+    "screenshotName": "after-running"
   }
 ]
