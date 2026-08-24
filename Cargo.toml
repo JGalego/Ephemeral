@@ -27,7 +27,12 @@ members = [
 # reference application is built for `wasm32-wasip1` and would otherwise be
 # compiled for the host by every `cargo test --workspace`, which is the one
 # platform it is not for.
-exclude = ["apps/desktop/src-tauri", "examples/tally", "examples/whisper"]
+exclude = [
+    "apps/desktop/src-tauri",
+    "examples/tally",
+    "examples/whisper",
+    "interpreters/javascript",
+]
 
 [workspace.package]
 version = "0.1.0"

@@ -31,7 +31,6 @@ static const char *const PLAN_REPLY =
     "{\"content\":[{\"type\":\"text\",\"text\":\""
     "{\\\"name\\\":\\\"Word Counter\\\","
     "\\\"summary\\\":\\\"counts the words in a file\\\","
-    "\\\"runtime\\\":\\\"docker\\\",\\\"image\\\":\\\"python:3.12-slim\\\","
     "\\\"interface\\\":\\\"command_line\\\","
     "\\\"requests\\\":[{\\\"capability\\\":\\\"filesystem_read\\\","
     "\\\"target\\\":\\\"~/Downloads/**\\\","
@@ -40,11 +39,9 @@ static const char *const PLAN_REPLY =
 
 static const char *const GENERATE_REPLY =
     "{\"content\":[{\"type\":\"text\",\"text\":\""
-    "{\\\"files\\\":[{\\\"path\\\":\\\"main.py\\\","
-    "\\\"contents\\\":\\\"print('hi')\\\"}],"
-    "\\\"dockerfile\\\":\\\"FROM python:3.12-slim\\\","
-    "\\\"entrypoint\\\":[\\\"python\\\",\\\"/app/main.py\\\"],"
-    "\\\"test_command\\\":[\\\"true\\\"]}"
+    "{\\\"files\\\":[{\\\"path\\\":\\\"main.js\\\","
+    "\\\"contents\\\":\\\"console.log('hi')\\\"}],"
+    "\\\"program\\\":\\\"main.js\\\"}"
     "\"}],\"usage\":{\"input_tokens\":3,\"output_tokens\":4}}";
 
 /*
@@ -57,17 +54,14 @@ static const char *const OPENAI_PLAN_REPLY =
     "{\"choices\":[{\"message\":{\"content\":\""
     "{\\\"name\\\":\\\"Word Counter\\\","
     "\\\"summary\\\":\\\"counts the words in a file\\\","
-    "\\\"runtime\\\":\\\"docker\\\",\\\"image\\\":\\\"python:3.12-slim\\\","
     "\\\"interface\\\":\\\"command_line\\\",\\\"requests\\\":[]}"
     "\"}}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":2}}";
 
 static const char *const OPENAI_GENERATE_REPLY =
     "{\"choices\":[{\"message\":{\"content\":\""
-    "{\\\"files\\\":[{\\\"path\\\":\\\"main.py\\\","
-    "\\\"contents\\\":\\\"print('hi')\\\"}],"
-    "\\\"dockerfile\\\":\\\"FROM python:3.12-slim\\\","
-    "\\\"entrypoint\\\":[\\\"python\\\",\\\"/app/main.py\\\"],"
-    "\\\"test_command\\\":[\\\"true\\\"]}"
+    "{\\\"files\\\":[{\\\"path\\\":\\\"main.js\\\","
+    "\\\"contents\\\":\\\"console.log('hi')\\\"}],"
+    "\\\"program\\\":\\\"main.js\\\"}"
     "\"}}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":4}}";
 
 /* What a listing looks like. Two models, one of which cannot write anything. */

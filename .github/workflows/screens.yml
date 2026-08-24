@@ -76,8 +76,9 @@ jobs:
       # seeing; it also meant nothing past the front door could be.
       - name: The engine, for the emulator
         run: |
-          rustup target add x86_64-linux-android
+          rustup target add x86_64-linux-android wasm32-wasip1
           EPHEMERAL_ANDROID_ABIS=x86_64 ./build-native.sh
+          ./build-interpreters.sh
         working-directory: apps/android
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}

@@ -189,12 +189,19 @@ fn one_model(model: &Value) -> Option<Model> {
 
 /// The request that asks for a plan.
 #[must_use]
-pub fn plan_request(model: &str, ceiling: Ceiling, tokens: u32, intent: &str) -> Value {
+pub fn plan_request(
+    model: &str,
+    ceiling: Ceiling,
+    tokens: u32,
+    intent: &str,
+    target: ephemeral_agent::dialogue::Target,
+) -> Value {
     body(
         model,
         ceiling,
         tokens,
-        &ephemeral_agent::dialogue::plan_prompt(intent),
+        ephemeral_agent::dialogue::system(target),
+        &ephemeral_agent::dialogue::plan_prompt_for(intent, target),
     )
 }
 
@@ -205,6 +212,7 @@ pub fn generate_request(model: &str, ceiling: Ceiling, tokens: u32, plan: &Plan)
         model,
         ceiling,
         tokens,
+        ephemeral_agent::dialogue::system_for(plan.runtime),
         &ephemeral_agent::dialogue::generate_prompt(plan),
     )
 }
@@ -222,6 +230,9 @@ pub fn repair_request(
         model,
         ceiling,
         tokens,
+        // Repair is the container path: it exists because a build or a test
+        // failed, and neither happens where there is no Docker.
+        ephemeral_agent::dialogue::SYSTEM,
         &ephemeral_agent::dialogue::repair_prompt(files, failure),
     )
 }
@@ -248,11 +259,11 @@ pub fn headers(api_key: Option<&str>) -> Vec<(String, String)> {
 /// field of its own, which is the whole structural difference from Anthropic's
 /// envelope. `system` is also the role every server that copied this format
 /// understands, including the ones that predate OpenAI's `developer`.
-fn body(model: &str, ceiling: Ceiling, tokens: u32, prompt: &str) -> Value {
+fn body(model: &str, ceiling: Ceiling, tokens: u32, system: &str, prompt: &str) -> Value {
     let mut body = json!({
         "model": model,
         "messages": [
-            { "role": "system", "content": ephemeral_agent::dialogue::SYSTEM },
+            { "role": "system", "content": system },
             { "role": "user", "content": prompt },
         ],
     });
@@ -390,6 +401,7 @@ mod tests {
                 Ceiling::Current,
                 DEFAULT_MAX_TOKENS,
                 "compare two CSV files",
+                ephemeral_agent::dialogue::Target::Container,
             ),
             generate_request(DEFAULT_MODEL, Ceiling::Current, DEFAULT_MAX_TOKENS, &plan),
             repair_request(
@@ -410,7 +422,13 @@ mod tests {
     /// is one it ignores.
     #[test]
     fn the_older_dialect_bounds_its_response_too() {
-        let request = plan_request("qwen2.5-coder", Ceiling::Legacy, DEFAULT_MAX_TOKENS, "x");
+        let request = plan_request(
+            "qwen2.5-coder",
+            Ceiling::Legacy,
+            DEFAULT_MAX_TOKENS,
+            "x",
+            ephemeral_agent::dialogue::Target::Container,
+        );
 
         assert_eq!(request["max_tokens"], DEFAULT_MAX_TOKENS);
         assert!(
@@ -424,7 +442,13 @@ mod tests {
     /// cannot run in the sandbox.
     #[test]
     fn every_request_carries_the_system_instruction() {
-        let request = plan_request(DEFAULT_MODEL, Ceiling::Current, DEFAULT_MAX_TOKENS, "x");
+        let request = plan_request(
+            DEFAULT_MODEL,
+            Ceiling::Current,
+            DEFAULT_MAX_TOKENS,
+            "x",
+            ephemeral_agent::dialogue::Target::Container,
+        );
         let messages = request["messages"].as_array().expect("messages");
 
         assert_eq!(messages[0]["role"], "system");
@@ -668,10 +692,22 @@ mod tests {
     /// what made a 16k model usable.
     #[test]
     fn the_ceiling_the_caller_asks_for_is_the_one_that_is_sent() {
-        let current = plan_request("m", Ceiling::Current, 7000, "x");
+        let current = plan_request(
+            "m",
+            Ceiling::Current,
+            7000,
+            "x",
+            ephemeral_agent::dialogue::Target::Container,
+        );
         assert_eq!(current["max_completion_tokens"], 7000);
 
-        let legacy = plan_request("m", Ceiling::Legacy, 7000, "x");
+        let legacy = plan_request(
+            "m",
+            Ceiling::Legacy,
+            7000,
+            "x",
+            ephemeral_agent::dialogue::Target::Container,
+        );
         assert_eq!(legacy["max_tokens"], 7000);
     }
 }

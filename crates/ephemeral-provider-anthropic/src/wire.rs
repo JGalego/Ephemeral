@@ -75,11 +75,17 @@ const _: () = assert!(
 
 /// The request that asks for a plan.
 #[must_use]
-pub fn plan_request(model: &str, tokens: u32, intent: &str) -> Value {
+pub fn plan_request(
+    model: &str,
+    tokens: u32,
+    intent: &str,
+    target: ephemeral_agent::dialogue::Target,
+) -> Value {
     body(
         model,
         tokens,
-        &ephemeral_agent::dialogue::plan_prompt(intent),
+        ephemeral_agent::dialogue::system(target),
+        &ephemeral_agent::dialogue::plan_prompt_for(intent, target),
     )
 }
 
@@ -89,6 +95,7 @@ pub fn generate_request(model: &str, tokens: u32, plan: &Plan) -> Value {
     body(
         model,
         tokens,
+        ephemeral_agent::dialogue::system_for(plan.runtime),
         &ephemeral_agent::dialogue::generate_prompt(plan),
     )
 }
@@ -99,6 +106,9 @@ pub fn repair_request(model: &str, tokens: u32, files: &[SourceFile], failure: &
     body(
         model,
         tokens,
+        // Repair is the container path: it exists because a build or a test
+        // failed, and neither happens where there is no Docker.
+        ephemeral_agent::dialogue::SYSTEM,
         &ephemeral_agent::dialogue::repair_prompt(files, failure),
     )
 }
@@ -169,11 +179,11 @@ pub fn refusal_from(response: &Value) -> Option<String> {
 }
 
 /// The common envelope.
-fn body(model: &str, tokens: u32, prompt: &str) -> Value {
+fn body(model: &str, tokens: u32, system: &str, prompt: &str) -> Value {
     json!({
         "model": model,
         "max_tokens": tokens,
-        "system": ephemeral_agent::dialogue::SYSTEM,
+        "system": system,
         "messages": [{ "role": "user", "content": prompt }],
     })
 }
@@ -284,7 +294,12 @@ mod tests {
         };
 
         for request in [
-            plan_request(DEFAULT_MODEL, DEFAULT_MAX_TOKENS, "compare two CSV files"),
+            plan_request(
+                DEFAULT_MODEL,
+                DEFAULT_MAX_TOKENS,
+                "compare two CSV files",
+                ephemeral_agent::dialogue::Target::Container,
+            ),
             generate_request(DEFAULT_MODEL, DEFAULT_MAX_TOKENS, &plan),
             repair_request(DEFAULT_MODEL, DEFAULT_MAX_TOKENS, &[], "boom"),
         ] {

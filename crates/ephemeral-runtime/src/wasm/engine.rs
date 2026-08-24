@@ -185,14 +185,22 @@ pub fn run(
     })
     .map_err(|error| WasmError::CannotPrepare(error.to_string()))?;
 
-    // Linked only when a person granted egress *and* somebody supplied a way to
-    // carry it. Either missing and the module imports something nothing
-    // provides, which is the capability model doing its job: an application
-    // that needs the network fails at the door, by name, rather than at its
-    // first request.
-    if capabilities.reachable.is_permitted() && reach.is_some() {
-        link_network(&mut linker)?;
-    }
+    // Always linked, and what varies is what they will do.
+    //
+    // These used to be linked only when egress had been granted, so that a
+    // module importing them without a grant could not start at all. That is a
+    // pleasing property for a module that *is* an application — its imports are
+    // a truthful declaration of what it needs. It is a lie for an interpreter,
+    // which is one module running somebody else's script: the JavaScript
+    // interpreter imports these because *some* script might use them, and
+    // refusing to start it would mean every scripted application needed a
+    // network grant to print a line.
+    //
+    // Nothing is weakened by this. The grant was never enforced by the linker;
+    // it is enforced per request in `answer`, against the ledger, before
+    // anything is asked to carry it. What an ungranted application gets now is
+    // a refusal it can show somebody, rather than a door that will not open.
+    link_network(&mut linker)?;
 
     let instance = linker
         .instantiate(&mut store, &module)

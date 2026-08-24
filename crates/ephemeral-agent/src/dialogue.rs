@@ -33,12 +33,107 @@ use crate::{
     plan::{GeneratedApp, Plan, RepairAttempt, SourceFile},
 };
 
+/// What kind of application to ask for.
+///
+/// Not a preference: it is a fact about the device doing the asking. A phone
+/// has no container runtime and cannot get one, so an application written for
+/// a container there is an application that can never run where it was
+/// written — which is exactly what happened, for as long as this was hard-coded
+/// to one shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Target {
+    /// A container image, built and run by Docker. The desktop default.
+    #[default]
+    Container,
+
+    /// A JavaScript file, run by the interpreter Ephemeral ships. The only
+    /// shape a handset can both write and run.
+    Script,
+}
+
+impl Target {
+    /// Which runtime an application of this shape declares.
+    #[must_use]
+    pub const fn runtime(self) -> &'static str {
+        match self {
+            Self::Container => "docker",
+            Self::Script => "wasm",
+        }
+    }
+}
+
 /// The instructions that hold whatever is being asked for.
 ///
 /// Stated as constraints on the *output*, not as a request for good behaviour.
 /// A model that ignores all of this produces something [`Plan::validate`] and
 /// [`GeneratedApp::validate`] refuse, which is where the real enforcement is —
 /// this text only makes the refusal less likely.
+/// The instructions matching a plan's own runtime.
+///
+/// Read from the plan rather than passed alongside it, so that the shape asked
+/// for and the shape written cannot disagree.
+#[must_use]
+pub const fn system_for(runtime: ephemeral_core::manifest::RuntimeKind) -> &'static str {
+    match runtime {
+        ephemeral_core::manifest::RuntimeKind::Docker => SYSTEM,
+        _ => SYSTEM_SCRIPT,
+    }
+}
+
+/// The instructions for whichever shape is being asked for.
+#[must_use]
+pub const fn system(target: Target) -> &'static str {
+    match target {
+        Target::Container => SYSTEM,
+        Target::Script => SYSTEM_SCRIPT,
+    }
+}
+
+/// The instructions for an application that is a script.
+///
+/// Everything a script may reach is listed, because everything it may reach is
+/// short. There is no `fetch`, no `require`, no `process` and no timers — not
+/// as a rule the model is asked to respect, but because the interpreter imports
+/// host functions for exactly this list and nothing else, so anything else is a
+/// `ReferenceError` at the moment it is called.
+pub const SYSTEM_SCRIPT: &str = "\
+You write small, single-purpose applications for Ephemeral, which runs them as \
+JavaScript inside a WebAssembly sandbox on the user's own device — a phone, or \
+a laptop. There is no Docker, no shell, no package manager and no build step.
+
+Write one JavaScript file. It runs top to bottom, once, and what it prints is \
+the answer.
+
+The whole of what a script can reach:
+- `console.log(...)` and `console.error(...)` — writing. This is how an \
+application answers.
+- `Ephemeral.args` — an array of strings: what somebody filled into the form, \
+in the order the inputs declare.
+- `Ephemeral.read(path)` — a file's text, or throws. Only files the user \
+granted.
+- `Ephemeral.write(path, text)` — writes a file, or throws. Only where the \
+user granted writing.
+- `Ephemeral.get(url)` and `Ephemeral.post(url, body)` — return \
+`{status, body, ok}`, or throw. Only destinations the user granted.
+
+Nothing else exists. There is no `require`, no `import`, no `fetch`, no \
+`process`, no `setTimeout`, no `Buffer`, no filesystem module and no network \
+module. Modern JavaScript itself is fine — `let`, template strings, classes, \
+`JSON`, `Map`, arrow functions, destructuring, regular expressions.
+
+Therefore:
+- Use no dependencies. There is no way to install one and no way to load one.
+- Read paths from `Ephemeral.args`, and accept absolute paths as given. The \
+application's own writable storage is /data.
+- Wrap anything that can throw and print a sentence a person can act on, \
+rather than letting the script die on an uncaught error.
+- Request a permission only if the application genuinely cannot work without \
+it, and give a reason a non-technical person can evaluate. Requests without \
+reasons are rejected outright.
+
+Reply with a single JSON object and nothing else. No prose, no markdown fence.";
+
+/// The instructions for an application that is a container.
 pub const SYSTEM: &str = "\
 You write small, single-purpose applications for Ephemeral, which runs them in \
 a locked-down container.
@@ -64,7 +159,29 @@ application with no tests is rejected.
 
 Reply with a single JSON object and nothing else. No prose, no markdown fence.";
 
-/// What to ask for a plan.
+/// What to ask for a plan, of whichever shape this device can run.
+#[must_use]
+pub fn plan_prompt_for(intent: &str, target: Target) -> String {
+    match target {
+        Target::Container => plan_prompt(intent),
+        Target::Script => format!(
+            "Somebody asked for this, in their own words:\n\n{intent}\n\n\
+             Reply with JSON of exactly this shape:\n\
+             {{\"summary\": string, \"interface\": one of \
+             \"web\"|\"command_line\"|\"job\", \
+             \"requests\": [{{\"capability\": \"filesystem_read\"|\
+             \"filesystem_write\"|\"network_outbound\", \
+             \"target\": string or null, \"reason\": string}}]}}\n\n\
+             `target` is a path for filesystem capabilities and a hostname for \
+             network_outbound. Ask for nothing you do not need.\n\n\
+             Choose \"web\" only if the application's answer is a page it \
+             writes — it cannot serve one, because it has no socket; the host \
+             renders what it prints. Otherwise choose \"job\"."
+        ),
+    }
+}
+
+/// What to ask for a container plan.
 #[must_use]
 pub fn plan_prompt(intent: &str) -> String {
     format!(
@@ -85,9 +202,40 @@ pub fn plan_prompt(intent: &str) -> String {
     )
 }
 
-/// What to ask for the application itself.
+/// What to ask for the application itself, in whichever shape it is.
 #[must_use]
 pub fn generate_prompt(plan: &Plan) -> String {
+    if plan.runtime == ephemeral_core::manifest::RuntimeKind::Docker {
+        return container_prompt(plan);
+    }
+
+    format!(
+        "Write this application, as one JavaScript file.\n\n\
+         What it does: {}\n\
+         How it is used: {}\n\n\
+         Reply with JSON of exactly this shape:\n\
+         {{\"files\": [{{\"path\": string, \"contents\": string}}], \
+         \"program\": string, \
+         \"inputs\": [{{\"name\": string, \"label\": string, \"kind\": \
+         \"text\"|\"number\"|\"file\"|\"folder\"|\"choice\"|\"flag\", \
+         \"flag\": string OR \"positional\": number, \
+         \"options\": [string] for choice only, \"required\": bool, \
+         \"default\": string, \"help\": string}}]}}\n\n\
+         `program` is the path of the file to run, and must be one of the \
+         files you return — `main.js` unless you have a reason. Every file's \
+         `path` is relative, with no leading slash and no `..`.\n\n\
+         `inputs` describes every value the application takes, so that \
+         somebody with no terminal is shown a form instead of a command line. \
+         Give each one a `label` a person would recognise rather than the \
+         variable name. They arrive in `Ephemeral.args` in the order you \
+         declare them, as strings — a flag arrives as \"true\" or is absent. \
+         Declaring an input asks for no permission and grants none.",
+        plan.summary, plan.interface
+    )
+}
+
+/// What to ask for a container application.
+fn container_prompt(plan: &Plan) -> String {
     format!(
         "Write this application.\n\n\
          What it does: {}\n\
@@ -240,13 +388,14 @@ fn escape_control_characters(text: &str) -> String {
 /// [`AgentError::Unreadable`] if a field is missing or of the wrong shape, and
 /// [`AgentError::Refused`] if the plan is well-formed but not one Ephemeral
 /// will act on.
-pub fn plan_from(provider: &str, value: &Value) -> Result<Plan, AgentError> {
-    let plan: Plan =
-        serde_json::from_value(normalise_plan(value)).map_err(|error| AgentError::Unreadable {
+pub fn plan_from(provider: &str, value: &Value, target: Target) -> Result<Plan, AgentError> {
+    let plan: Plan = serde_json::from_value(normalise_plan(value, target)).map_err(|error| {
+        AgentError::Unreadable {
             provider: provider.to_owned(),
             reason: format!("the plan was not the expected shape: {error}"),
             raw: value.to_string(),
-        })?;
+        }
+    })?;
 
     plan.validate()?;
     Ok(plan)
@@ -258,12 +407,26 @@ pub fn plan_from(provider: &str, value: &Value) -> Result<Plan, AgentError> {
 ///
 /// As [`plan_from`].
 pub fn app_from(provider: &str, value: &Value, plan: &Plan) -> Result<GeneratedApp, AgentError> {
+    // A field a model left out and a field it sent as null are the same thing,
+    // and neither is an error here: a script has no Dockerfile, no entry point
+    // and no test command, and a container has no program. `validate` decides
+    // which absences matter, from the plan's own runtime — serde refusing a
+    // null before it gets there would make every script fail to parse.
+    let given = |name: &str, empty: Value| {
+        value
+            .get(name)
+            .filter(|field| !field.is_null())
+            .cloned()
+            .unwrap_or(empty)
+    };
+
     let mut app: GeneratedApp = serde_json::from_value(json!({
         "plan": serde_json::to_value(plan).unwrap_or(Value::Null),
         "files": value.get("files").cloned().unwrap_or(Value::Null),
-        "dockerfile": value.get("dockerfile").cloned().unwrap_or(Value::Null),
-        "entrypoint": value.get("entrypoint").cloned().unwrap_or(Value::Null),
-        "test_command": value.get("test_command").cloned().unwrap_or(Value::Null),
+        "dockerfile": given("dockerfile", Value::from("")),
+        "entrypoint": given("entrypoint", json!([])),
+        "test_command": given("test_command", json!([])),
+        "program": value.get("program").cloned().unwrap_or(Value::Null),
         "inputs": serde_json::to_value(inputs_from(value)).unwrap_or(Value::Null),
     }))
     .map_err(|error| AgentError::Unreadable {
@@ -400,7 +563,7 @@ pub fn repair_from(provider: &str, value: &Value) -> Result<RepairAttempt, Agent
 /// easier to produce reliably than Ephemeral's internal tagged representation.
 /// Translating here keeps the awkwardness in one testable place rather than in
 /// a prompt.
-fn normalise_plan(value: &Value) -> Value {
+fn normalise_plan(value: &Value, target: Target) -> Value {
     let requests: Vec<Value> = value
         .get("requests")
         .and_then(Value::as_array)
@@ -410,8 +573,20 @@ fn normalise_plan(value: &Value) -> Value {
     json!({
         "summary": value.get("summary").cloned().unwrap_or(Value::Null),
         "interface": value.get("interface").cloned().unwrap_or(Value::Null),
-        "runtime": "docker",
-        "image": value.get("image").cloned().unwrap_or(Value::Null),
+        // Decided by the device, never by the reply. A model that answered
+        // "docker" on a phone would be describing an application that cannot
+        // run where it was written.
+        "runtime": target.runtime(),
+        // Absent for a script, which has no base image and is not asked for
+        // one. Empty rather than null, because the field is a string and a
+        // plan that arrives with the right shape and an empty image is one
+        // `validate` can have an opinion about — a null is one serde refuses
+        // before anybody gets to.
+        "image": value
+            .get("image")
+            .filter(|image| !image.is_null())
+            .cloned()
+            .unwrap_or_else(|| Value::from("")),
         "requests": requests,
     })
 }
@@ -517,7 +692,7 @@ mod tests {
             }],
         });
 
-        let plan = plan_from(TEST_PROVIDER, &value).expect("a valid plan");
+        let plan = plan_from(TEST_PROVIDER, &value, Target::Container).expect("a valid plan");
         assert_eq!(plan.image, "python:3.12-slim");
         assert_eq!(plan.requests.len(), 1);
         assert!(plan.requests[0].reason.contains("compared"));
@@ -537,7 +712,7 @@ mod tests {
             ],
         });
 
-        let plan = plan_from(TEST_PROVIDER, &value).expect("a valid plan");
+        let plan = plan_from(TEST_PROVIDER, &value, Target::Container).expect("a valid plan");
         assert_eq!(plan.requests.len(), 1, "only the understood one survives");
         assert_eq!(plan.requests[0].permission.capability(), "camera");
     }
@@ -554,7 +729,7 @@ mod tests {
         });
 
         assert!(matches!(
-            plan_from(TEST_PROVIDER, &value).unwrap_err(),
+            plan_from(TEST_PROVIDER, &value, Target::Container).unwrap_err(),
             AgentError::Refused(_)
         ));
     }
@@ -667,6 +842,7 @@ x = 1\"}";
                 "image": "alpine",
                 "requests": [],
             }),
+            Target::Container,
         )
         .expect("a valid plan");
 
@@ -695,6 +871,7 @@ x = 1\"}";
                 "image": "alpine",
                 "requests": [],
             }),
+            Target::Container,
         )
         .expect("a valid plan");
 
@@ -816,6 +993,7 @@ x = 1\"}";
                 "image": "alpine",
                 "requests": [],
             }),
+            Target::Container,
         )
         .expect("a valid plan");
 

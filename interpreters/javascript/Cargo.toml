@@ -1,0 +1,36 @@
+[package]
+name = "ephemeral-javascript"
+description = "The JavaScript interpreter Ephemeral ships: a WebAssembly module that runs a script an application is made of."
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+# A JavaScript engine written in Rust, which is the whole reason this one and
+# not another. Every mature alternative is C compiled with a toolchain a phone
+# does not have, or a JIT — and iOS does not allow an application to generate
+# and execute machine code, which is the constraint that chose wasmi as well
+# (ADR-0021).
+boa_engine = { version = "0.20", default-features = false }
+
+# The network a confined application is lent, if it was lent one. The
+# interpreter imports it exactly as any other application would, and gets it on
+# exactly the same terms: only when a person granted a destination.
+ephemeral-app = { path = "../../crates/ephemeral-app" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+panic = "abort"
+codegen-units = 1
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }

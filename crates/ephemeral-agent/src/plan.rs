@@ -69,7 +69,11 @@ impl Plan {
         if self.summary.trim().is_empty() {
             return Err(PlanError::NoSummary);
         }
-        if self.image.trim().is_empty() {
+        // A container needs a base image and a script has no such thing, so
+        // this is asked only of the plan that means it. Demanding one of a
+        // WebAssembly plan would be demanding a Docker tag from an application
+        // that will never see Docker.
+        if self.runtime == RuntimeKind::Docker && self.image.trim().is_empty() {
             return Err(PlanError::NoImage);
         }
 
@@ -176,9 +180,26 @@ pub struct GeneratedApp {
     pub files: Vec<SourceFile>,
 
     /// The build recipe, named explicitly so nothing has to guess.
+    ///
+    /// Empty for a script: there is nothing to build.
+    #[serde(default)]
     pub dockerfile: String,
 
+    /// Which file the interpreter runs, for an application that is a script.
+    ///
+    /// `None` for a container, where the entry point is a command rather than
+    /// a file. Named by the model rather than assumed to be `main.js`, and
+    /// checked against the files it actually wrote — a program naming
+    /// something absent is an application that installs cleanly and fails the
+    /// moment somebody presses Run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program: Option<String>,
+
     /// The command that starts it, already split into arguments.
+    ///
+    /// Empty for a script: the interpreter is what starts, and the script is
+    /// the argument it is started with.
+    #[serde(default)]
     pub entrypoint: Vec<String>,
 
     /// What the application takes, so something can draw a form for it.
@@ -195,11 +216,13 @@ pub struct GeneratedApp {
 
     /// The command that verifies it, already split into arguments.
     ///
-    /// Required, not optional. "Ephemeral tests it" is a promise the product
-    /// makes on its front page, and an application with nothing to run against
-    /// it cannot pass validation — so a provider that returns none has produced
-    /// something Ephemeral will not certify, rather than something that passes
-    /// vacuously.
+    /// Required of a container, and impossible for a script: there is no image
+    /// to run a test command in, and nothing on a handset to run one with.
+    /// "Ephemeral tests it" is a promise the product makes, and where it cannot
+    /// be kept the honest thing is to say so in the lifecycle rather than to
+    /// pass vacuously — which is what the reason recorded for a script's
+    /// `ValidationPassed` now does.
+    #[serde(default)]
     pub test_command: Vec<String>,
 }
 
@@ -223,14 +246,36 @@ impl GeneratedApp {
                 count: self.files.len(),
             });
         }
-        if self.dockerfile.trim().is_empty() {
-            return Err(PlanError::NoDockerfile);
-        }
-        if self.entrypoint.is_empty() {
-            return Err(PlanError::NoEntrypoint);
-        }
-        if self.test_command.is_empty() {
-            return Err(PlanError::NoTests);
+        // Everything below is what a *container* application is made of. A
+        // script has no Dockerfile to build, no entry point of its own — the
+        // interpreter is the entry point and the script is its argument — and
+        // no test command, because there is no image to run one in and nothing
+        // on a handset to run it with. Asking for them anyway would mean every
+        // application written on a phone failed validation for lacking three
+        // things that cannot exist there.
+        if self.plan.runtime == RuntimeKind::Docker {
+            if self.dockerfile.trim().is_empty() {
+                return Err(PlanError::NoDockerfile);
+            }
+            if self.entrypoint.is_empty() {
+                return Err(PlanError::NoEntrypoint);
+            }
+            if self.test_command.is_empty() {
+                return Err(PlanError::NoTests);
+            }
+        } else {
+            // What a script has instead: a named file, which must be one of
+            // the files it just wrote. A `program` naming something absent is
+            // an application that installs cleanly and fails on Run.
+            let named = self.program.as_deref().unwrap_or_default().trim();
+            if named.is_empty() {
+                return Err(PlanError::NoProgram);
+            }
+            if !self.files.iter().any(|file| file.path == named) {
+                return Err(PlanError::ProgramMissing {
+                    path: named.to_owned(),
+                });
+            }
         }
 
         for file in &self.files {
@@ -334,6 +379,17 @@ pub enum PlanError {
     #[error("no tests were produced, so there is no way to tell whether this application works")]
     NoTests,
 
+    /// A script application that did not say which file is the program.
+    #[error("nothing says which file to run, so there would be nothing to start")]
+    NoProgram,
+
+    /// A script application naming a file it did not write.
+    #[error("it says to run {path}, which is not one of the files it wrote")]
+    ProgramMissing {
+        /// What it named.
+        path: String,
+    },
+
     /// A path that would write outside the application's own directory.
     #[error("{path} is not a path inside the application, and will not be written")]
     UnsafePath {
@@ -426,6 +482,7 @@ mod tests {
 
     fn generated() -> GeneratedApp {
         GeneratedApp {
+            program: None,
             plan: plan(),
             files: vec![SourceFile::new("main.py", "print('hello')\n")],
             dockerfile: "FROM python:3.12-slim\nCOPY . /app\n".to_owned(),

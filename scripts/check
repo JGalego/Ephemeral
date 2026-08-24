@@ -126,6 +126,20 @@ fi
 # The claim `ephemeral-app` exists to make: an application that reaches the
 # network contains no unsafe. `whisper` declares `unsafe_code = "forbid"`, so if
 # the wrapper ever stopped being enough, this stops compiling (ADR-0023).
+# The interpreter that makes "nothing on a phone needs a computer" true. A
+# handset cannot compile anything, so an application it wrote a moment ago runs
+# there only if it is a script and something on the device runs scripts
+# (ADR-0022). If this stops compiling, that stops being true.
+step "The interpreter a phone ships"
+if rustup target list --installed 2>/dev/null | grep -qx wasm32-wasip1; then
+    (cd interpreters/javascript \
+        && cargo fmt --check \
+        && cargo clippy --all-targets --target wasm32-wasip1 -- -D warnings \
+        && cargo build --release --target wasm32-wasip1)
+else
+    echo "(skipping: no wasm32-wasip1 target here)"
+fi
+
 step "An application reaches the network without unsafe"
 cargo clippy -p ephemeral-app --all-targets -- -D warnings
 cargo test -p ephemeral-app

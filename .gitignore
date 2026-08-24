@@ -1,7 +1,12 @@
 # Rust
 /target/
-# The examples are their own workspaces, so each has its own build directory.
+# The interpreters an APK ships are build outputs, not sources. They are built
+# by apps/android/build-interpreters.sh, from interpreters/.
+apps/android/app/src/main/assets/interpreters/
+# The examples and the interpreters are their own workspaces, so each has its
+# own build directory.
 examples/*/target/
+interpreters/*/target/
 **/*.rs.bk
 
 # Node / web UI (arrives in Phase 4)

@@ -406,22 +406,34 @@ mod tests {
         }
     }
 
-    /// **An application with no network grant cannot even start one.**
+    /// **An application with no network grant reaches nothing, and is told so.**
     ///
-    /// The capability model, and the reason it is worth having: the host
-    /// functions are not linked at all, so a module that imports them has
-    /// nothing to bind to and never executes an instruction. There is no
-    /// version of this where the application runs and the request quietly
-    /// fails.
+    /// The host functions are linked whether or not anything was granted, and
+    /// the grant is enforced per request. Linking them conditionally was tried:
+    /// a module importing them without a grant then could not start at all,
+    /// which is a pleasing property for a module that *is* an application and a
+    /// lie for an interpreter — the JavaScript interpreter imports these
+    /// because some script it runs might use them, so refusing to start it
+    /// would mean every scripted application needed a network grant to print a
+    /// line.
+    ///
+    /// Nothing is weakened by that. What an ungranted application gets is a
+    /// refusal it can show somebody, and whatever would have carried the
+    /// request is never asked.
     #[test]
-    fn a_module_that_asks_for_the_network_without_a_grant_never_starts() {
+    fn a_module_with_no_grant_is_refused_and_nothing_is_sent() {
         let wasm = asks_for(r#"{"method":"GET","url":"https://api.example.com/ping"}"#);
         let carrier = Answers::default();
 
-        let refused =
-            run(&wasm, &granted(50_000_000), Some(&carrier)).expect_err("it was granted nothing");
+        let outcome = run(&wasm, &granted(50_000_000), Some(&carrier))
+            .expect("a refusal is an answer, not a failure to start");
 
-        assert!(matches!(refused, WasmError::Ungranted(_)), "{refused}");
+        assert!(
+            outcome.output.contains("not allowed to reach")
+                && outcome.output.contains("no network access at all"),
+            "{}",
+            outcome.output
+        );
         assert!(
             carrier
                 .asked

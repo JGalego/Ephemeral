@@ -105,8 +105,12 @@ impl Choice {
             ephemeral_agent::mock::NAME => Ok(Box::new(ephemeral_agent::MockProvider::new())),
 
             ephemeral_provider_anthropic::NAME => {
+                // A handset writes what a handset can run. This is the whole
+                // difference between an application that works where it was
+                // written and one that has to be carried to a computer.
                 let mut provider =
-                    ephemeral_provider_anthropic::AnthropicProvider::with_transport(transport);
+                    ephemeral_provider_anthropic::AnthropicProvider::with_transport(transport)
+                        .writing(ephemeral_agent::dialogue::Target::Script);
                 if let Some(base) = &self.base_url {
                     provider = provider.with_base_url(base);
                 }
@@ -121,7 +125,8 @@ impl Choice {
 
             ephemeral_provider_openai::NAME => {
                 let mut provider =
-                    ephemeral_provider_openai::OpenAiProvider::with_transport(transport);
+                    ephemeral_provider_openai::OpenAiProvider::with_transport(transport)
+                        .writing(ephemeral_agent::dialogue::Target::Script);
                 if let Some(base) = &self.base_url {
                     provider = provider.with_base_url(base);
                 }

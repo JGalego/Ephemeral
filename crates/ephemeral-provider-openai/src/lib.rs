@@ -74,6 +74,13 @@ pub const CEILING_VARIABLE: &str = "OPENAI_TOKEN_CEILING_FIELD";
 /// Generates applications with any service that speaks OpenAI's chat
 /// completions format.
 pub struct OpenAiProvider {
+    /// What kind of application this device can run.
+    ///
+    /// A property of the machine, not a preference. A handset has no container
+    /// runtime and never will, so asking one for a container application means
+    /// writing something that cannot run where it was written.
+    target: ephemeral_agent::dialogue::Target,
+
     api_key: Option<String>,
     model: String,
     endpoint: String,
@@ -133,6 +140,7 @@ impl OpenAiProvider {
         let base = from_environment(BASE_URL_VARIABLE).unwrap_or_else(|| wire::BASE_URL.to_owned());
 
         Self {
+            target: ephemeral_agent::dialogue::Target::default(),
             api_key: from_environment(API_KEY_VARIABLE),
             model: from_environment(MODEL_VARIABLE)
                 .unwrap_or_else(|| wire::DEFAULT_MODEL.to_owned()),
@@ -159,6 +167,18 @@ impl OpenAiProvider {
     pub fn with_credential(mut self, api_key: impl Into<String>) -> Self {
         let api_key = api_key.into();
         self.api_key = Some(api_key).filter(|key| !key.trim().is_empty());
+        self
+    }
+
+    /// The same, writing applications of the shape this device can run.
+    ///
+    /// Set by whoever knows what the device is. A phone sets
+    /// [`Target::Script`](ephemeral_agent::dialogue::Target::Script), because a
+    /// container application written on a handset is one that can never run
+    /// where it was written.
+    #[must_use]
+    pub fn writing(mut self, target: ephemeral_agent::dialogue::Target) -> Self {
+        self.target = target;
         self
     }
 
@@ -296,10 +316,19 @@ impl AgentProvider for OpenAiProvider {
     }
 
     fn plan(&self, intent: &str) -> Result<Attempt<Plan>, AgentError> {
-        let request = wire::plan_request(&self.model, self.ceiling()?, self.max_tokens, intent);
+        let request = wire::plan_request(
+            &self.model,
+            self.ceiling()?,
+            self.max_tokens,
+            intent,
+            self.target,
+        );
         let (value, usage) = self.ask(&request)?;
 
-        Ok(Attempt::new(dialogue::plan_from(NAME, &value)?, usage))
+        Ok(Attempt::new(
+            dialogue::plan_from(NAME, &value, self.target)?,
+            usage,
+        ))
     }
 
     fn generate(&self, plan: &Plan) -> Result<Attempt<GeneratedApp>, AgentError> {
@@ -403,6 +432,7 @@ mod tests {
     /// on.
     fn provider(transport: Box<dyn Transport>) -> OpenAiProvider {
         OpenAiProvider {
+            target: ephemeral_agent::dialogue::Target::default(),
             api_key: None,
             model: wire::DEFAULT_MODEL.to_owned(),
             endpoint: wire::endpoint_from(wire::BASE_URL),

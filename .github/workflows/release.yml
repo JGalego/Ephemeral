@@ -99,6 +99,18 @@ jobs:
       - name: Build
         run: cargo build --release --locked -p ephemeral-cli --target ${{ matrix.target }}
 
+      # The interpreter that lets an application written here run here. One
+      # file, the same on every platform, built from source in this repository
+      # rather than downloaded — which is the half of ADR-0022 that is not the
+      # Android asset.
+      - name: The interpreter
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup target add wasm32-wasip1
+          cd interpreters/javascript
+          cargo build --release --locked --target wasm32-wasip1
+
       # An archive rather than a bare binary: it carries the licence and the
       # readme with the thing they apply to, and it is what every package
       # manager and unpacking tool already expects.
@@ -110,8 +122,10 @@ jobs:
           [ "${GITHUB_REF_TYPE:-}" = "tag" ] || version="$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)"
           stem="ephemeral-${version}-${{ matrix.target }}"
 
-          mkdir -p "staging/$stem" dist
+          mkdir -p "staging/$stem/interpreters" dist
           cp LICENSE README.md "staging/$stem/"
+          cp interpreters/javascript/target/wasm32-wasip1/release/ephemeral-javascript.wasm \
+            "staging/$stem/interpreters/javascript.wasm"
 
           if [ "${{ runner.os }}" = "Windows" ]; then
             cp "target/${{ matrix.target }}/release/ephemeral.exe" "staging/$stem/"
@@ -573,6 +587,10 @@ jobs:
           set -euo pipefail
           export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/26.3.11579264"
           apps/android/build-native.sh
+          # The interpreter that lets an application written on the phone run
+          # on the phone. Architecture-independent, so no NDK is involved.
+          rustup target add wasm32-wasip1
+          apps/android/build-interpreters.sh
 
       # A signing key is a credential, and SECURITY.md says those do not live in
       # this repository. Until a real one lives in repository secrets, the

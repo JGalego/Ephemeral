@@ -988,10 +988,18 @@ fn generate(ephemeral: &Ephemeral, id: &str) -> Result<*mut c_char, String> {
 
     // Set before generation completes: an application that is building must
     // know what it runs on, and the manifest is validated on that transition.
+    let container = plan.result.runtime == ephemeral_core::manifest::RuntimeKind::Docker;
     manifest.runtime = Some(ephemeral_core::manifest::RuntimeSpec {
         kind: plan.result.runtime,
-        image: Some(plan.result.image.clone()),
-        program: None,
+        // An image is a container's business, and a script has none. Recording
+        // one anyway would put a Docker tag on an application that will never
+        // see Docker.
+        image: container.then(|| plan.result.image.clone()),
+        // Which file the interpreter runs. This is the field that turns what a
+        // model just wrote into something this device can start: without it
+        // `Program::locate` has nothing to look for, and the application comes
+        // to rest saying it needs a computer.
+        program: generated.result.program.clone(),
         version: None,
         entrypoint: generated.result.entrypoint.clone(),
         interface: plan.result.interface,
@@ -1095,16 +1103,16 @@ fn settle(workspace: &Workspace, manifest: &mut AppManifest) -> Result<(), Strin
     // sequence of transitions would be asking it about a different one.
     let next: Vec<(ephemeral_core::LifecycleEvent, Actor, String)> =
         match runnable_here(workspace, manifest) {
-            Ok(()) => vec![
+            Ok(checked) => vec![
                 (
                     ephemeral_core::LifecycleEvent::BuildSucceeded,
                     Actor::Runtime,
-                    "nothing to build: WebAssembly arrives compiled".to_owned(),
+                    "nothing to build: this runtime needs no build step".to_owned(),
                 ),
                 (
                     ephemeral_core::LifecycleEvent::ValidationPassed,
                     Actor::Runtime,
-                    "the module loads and has an entry point".to_owned(),
+                    checked.to_owned(),
                 ),
             ],
             Err(why) => vec![(ephemeral_core::LifecycleEvent::Block, Actor::Ephemeral, why)],
@@ -1127,7 +1135,7 @@ fn settle(workspace: &Workspace, manifest: &mut AppManifest) -> Result<(), Strin
 ///
 /// The error is the sentence a person reads, so it says what is in the way and
 /// where the rest of it can happen — not "unsupported runtime".
-fn runnable_here(workspace: &Workspace, manifest: &AppManifest) -> Result<(), String> {
+fn runnable_here(workspace: &Workspace, manifest: &AppManifest) -> Result<&'static str, String> {
     let Some(runtime) = &manifest.runtime else {
         return Err("it did not say what it runs on, so nothing here can finish it".to_owned());
     };
@@ -1151,7 +1159,22 @@ fn runnable_here(workspace: &Workspace, manifest: &AppManifest) -> Result<(), St
         .map_err(|error| format!("{} could not be read: {error}", program.wasm().display()))?;
 
     ephemeral_runtime::wasm::inspect(&bytes)
-        .map_err(|error| format!("it is not something this device can run: {error}"))
+        .map_err(|error| format!("it is not something this device can run: {error}"))?;
+
+    // Said differently for the two cases, because they are different claims.
+    // A module that loads is the application itself checked. An interpreter
+    // that loads is *the interpreter* checked, and all that has been
+    // established about the script is that it is where the manifest says —
+    // which is worth recording as exactly that rather than as "it works".
+    Ok(match program {
+        ephemeral_runtime::wasm::Program::Module { .. } => {
+            "the module loads and has an entry point"
+        }
+        ephemeral_runtime::wasm::Program::Interpreted { .. } => {
+            "its interpreter loads and its program is where it says it is; \
+             nothing here ran it"
+        }
+    })
 }
 
 fn decide(ephemeral: &Ephemeral, id: &str, capability: &str, allow: bool) -> Result<(), String> {
@@ -1442,6 +1465,24 @@ mod tests {
         app
     }
 
+    /// Puts something named like an interpreter where the engine looks.
+    ///
+    /// Deliberately not the real one. What these tests are about is the
+    /// lifecycle reaching `Ready` and the application being runnable here —
+    /// that the JavaScript in it does what it says is Boa's business, and
+    /// building three megabytes of engine to assert a state transition would
+    /// make this suite depend on a cross-compiled artifact.
+    fn install_interpreter(home: &std::path::Path) {
+        let into = home.join("interpreters");
+        std::fs::create_dir_all(&into).unwrap();
+        std::fs::write(
+            into.join("javascript.wasm"),
+            wat::parse_str(r#"(module (memory (export "memory") 1) (func (export "_start")))"#)
+                .expect("the stand-in should assemble"),
+        )
+        .unwrap();
+    }
+
     /// An application that prints one fixed line, and nothing else.
     const SAYS_HELLO: &str = r#"(module
       (import "wasi_snapshot_preview1" "fd_write"
@@ -1572,14 +1613,11 @@ mod tests {
         queue(vec![
             reply(
                 r#"{"name":"CSV Comparator","summary":"compares two CSV files",
-                    "runtime":"docker","image":"python:3.12-slim",
                     "interface":"command_line","requests":[]}"#,
             ),
             reply(
-                r#"{"files":[{"path":"main.py","contents":"print('hi')"}],
-                    "dockerfile":"FROM python:3.12-slim\nCOPY . /app",
-                    "entrypoint":["python","/app/main.py"],
-                    "test_command":["python","-c","print(1)"]}"#,
+                r#"{"files":[{"path":"main.js","contents":"console.log('hi')"}],
+                    "program":"main.js"}"#,
             ),
         ]);
         let generated = unsafe { ephemeral_generate(handle, c(&id).as_ptr()) };
@@ -2297,14 +2335,11 @@ mod tests {
         queue(vec![
             frame(
                 r#"{"name":"Word Counter","summary":"counts words in a file",
-                    "runtime":"docker","image":"python:3.12-slim",
                     "interface":"command_line","requests":[]}"#,
             ),
             frame(
-                r#"{"files":[{"path":"main.py","contents":"print('hi')"}],
-                    "dockerfile":"FROM python:3.12-slim\nCOPY . /app",
-                    "entrypoint":["python","/app/main.py"],
-                    "test_command":["python","-c","print(1)"]}"#,
+                r#"{"files":[{"path":"main.js","contents":"console.log('hi')"}],
+                    "program":"main.js"}"#,
             ),
         ]);
 
@@ -2322,6 +2357,7 @@ mod tests {
     #[test]
     fn an_application_is_generated_through_the_hosts_transport() {
         let home = tempfile::tempdir().unwrap();
+        install_interpreter(home.path());
         let handle = open(home.path());
         unsafe { ephemeral_set_credential(handle, c("sk-test-not-real").as_ptr()) };
 
@@ -2335,14 +2371,11 @@ mod tests {
         queue(vec![
             reply(
                 r#"{"name":"Word Counter","summary":"counts words in a file",
-                    "runtime":"docker","image":"python:3.12-slim",
                     "interface":"command_line","requests":[]}"#,
             ),
             reply(
-                r#"{"files":[{"path":"main.py","contents":"print('hi')"}],
-                    "dockerfile":"FROM python:3.12-slim\nCOPY . /app",
-                    "entrypoint":["python","/app/main.py"],
-                    "test_command":["python","-c","print(1)"]}"#,
+                r#"{"files":[{"path":"main.js","contents":"console.log('hi')"}],
+                    "program":"main.js"}"#,
             ),
         ]);
 
@@ -2354,24 +2387,65 @@ mod tests {
         );
         let detail: Value = serde_json::from_str(&text(produced)).unwrap();
 
-        // Generated, and explicitly *not* built: a phone has no sandbox. It
-        // comes to rest saying so, rather than in `Building` under a screen
-        // reading "Ephemeral is building the app" on a device where nothing
-        // is or ever will be.
-        assert_eq!(detail["summary"]["state"], "Blocked");
-        assert_eq!(detail["summary"]["state_kind"], "awaitinguser");
-        let explanation = detail["explanation"].as_str().unwrap_or_default();
-        assert!(
-            explanation.contains("docker") && explanation.contains("computer"),
-            "it should say what is in the way and where the rest can happen: {explanation}"
+        // **Ready, on the device it was written on.** Not "Building" for ever,
+        // not "Blocked" pointing at a computer somebody has to go and find:
+        // the phone asked for a script because a script is what it can run,
+        // and the interpreter to run it is already here.
+        assert_eq!(detail["summary"]["state"], "Ready", "{detail}");
+        assert_eq!(detail["summary"]["runnable"], true);
+        assert_eq!(detail["runtime"]["kind"], "wasm");
+        assert_eq!(detail["runtime"]["runs_locally"], true);
+        assert_eq!(
+            detail["runtime"]["image"],
+            Value::Null,
+            "a script has no base image, and recording one would be a Docker \
+             tag on something that will never see Docker"
         );
         assert!(
             home.path()
                 .join("apps")
                 .join(&id)
-                .join("source/main.py")
+                .join("source/main.js")
                 .exists(),
             "the source should have been written to the device"
+        );
+
+        unsafe { ephemeral_close(handle) };
+    }
+
+    /// **Without the interpreter, it says which one and where to put it.**
+    ///
+    /// The other half of the sentence above. An application that is a script
+    /// needs something on the device that runs scripts, and a device that has
+    /// none should say so by name rather than fail at Run with a shrug.
+    #[test]
+    fn a_device_with_no_interpreter_names_the_one_it_wants() {
+        let home = tempfile::tempdir().unwrap();
+        let handle = open(home.path());
+        unsafe { ephemeral_set_credential(handle, c("sk-test-not-real").as_ptr()) };
+
+        let created = text(unsafe { ephemeral_create(handle, c("count words").as_ptr()) });
+        let id = serde_json::from_str::<Value>(&created).unwrap()["id"]
+            .as_str()
+            .expect("an id")
+            .to_owned();
+
+        queue(vec![
+            reply(r#"{"name":"Counter","summary":"counts","interface":"job","requests":[]}"#),
+            reply(
+                r#"{"files":[{"path":"main.js","contents":"console.log('hi')"}],
+                    "program":"main.js"}"#,
+            ),
+        ]);
+
+        let detail = text(unsafe { ephemeral_generate(handle, c(&id).as_ptr()) });
+        let detail: Value = serde_json::from_str(&detail).unwrap();
+
+        assert_eq!(detail["summary"]["state"], "Blocked");
+        let explanation = detail["explanation"].as_str().unwrap_or_default();
+        assert!(
+            explanation.contains("JavaScript") && explanation.contains("javascript.wasm"),
+            "it should name the interpreter and where it goes: {explanation}"
         );
 
         unsafe { ephemeral_close(handle) };
@@ -2392,17 +2466,14 @@ mod tests {
 
         queue(vec![
             reply(
-                r#"{"name":"Reader","summary":"reads files","runtime":"docker",
-                    "image":"python:3.12-slim","interface":"command_line",
+                r#"{"name":"Reader","summary":"reads files","interface":"command_line",
                     "requests":[{"capability":"filesystem_read",
                                     "target":"~/Downloads/**",
                                     "reason":"to read the files you pick"}]}"#,
             ),
             reply(
-                r#"{"files":[{"path":"main.py","contents":"x"}],
-                    "dockerfile":"FROM python:3.12-slim",
-                    "entrypoint":["python","/app/main.py"],
-                    "test_command":["true"]}"#,
+                r#"{"files":[{"path":"main.js","contents":"console.log('x')"}],
+                    "program":"main.js"}"#,
             ),
         ]);
 

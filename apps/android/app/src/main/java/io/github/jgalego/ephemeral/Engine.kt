@@ -293,6 +293,44 @@ internal object Engine {
         }
     }
 
+    /**
+     * Puts the interpreters this app ships where the engine looks for them.
+     *
+     * A phone cannot compile anything, so an application a model wrote a
+     * moment ago can only run here if it is a script and something already on
+     * the device runs scripts. That something is a WebAssembly module in this
+     * app's own assets, signed with everything else in the APK — no download,
+     * no fetch on first run, nothing to be interrupted or substituted.
+     *
+     * Copied on every open, and cheap because it is skipped when the sizes
+     * already match. An update ships a new interpreter and the old one is
+     * replaced without anybody being asked; the alternative is an app whose
+     * engine was updated and whose interpreter was not.
+     */
+    private fun placeInterpreters(context: Context, home: File) {
+        val into = File(home, "interpreters")
+        into.mkdirs()
+
+        val assets = context.assets
+        val available = runCatching { assets.list("interpreters") }.getOrNull() ?: return
+
+        for (name in available) {
+            val target = File(into, name)
+            runCatching {
+                assets.open("interpreters/$name").use { source ->
+                    // `available()` is the asset's own uncompressed size, which
+                    // is what a copied file's length should equal. Comparing
+                    // them is the cheapest honest way to skip a copy that has
+                    // already happened.
+                    if (target.exists() && target.length() == source.available().toLong()) {
+                        return@use
+                    }
+                    target.outputStream().use { source.copyTo(it) }
+                }
+            }
+        }
+    }
+
     private fun openIfNeeded(context: Context) {
         if (session != 0L) {
             return
@@ -300,6 +338,7 @@ internal object Engine {
 
         val home = File(context.filesDir, "workspace")
         home.mkdirs()
+        placeInterpreters(context, home)
 
         val opened = Native.open(home.absolutePath, Https)
         if (opened == 0L) {

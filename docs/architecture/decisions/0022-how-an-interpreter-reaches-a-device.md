@@ -1,8 +1,7 @@
 # ADR-0022: How an interpreter reaches a device
 
-- **Status:** **proposed.** The mechanism is the owner's to choose — it is a
-  supply-chain decision, and this record exists to make choosing easy rather
-  than to make the choice.
+- **Status:** **accepted** (2026-08-24). Decided as the record below guessed it
+  would be: one build, two ways of delivering it.
 - **Date:** 2026-08-24
 - **Deciders:** Ephemeral maintainers
 - **Phase:** 1 — Local runtime
@@ -104,6 +103,79 @@ These are not exclusive. The likely shape is the second for the desktop and the
 third for Android, which is one build and two ways of delivering it — but that
 is a guess, and the point of this record is that somebody should decide rather
 than discover.
+
+## Decision
+
+**The second for the desktop and the third for Android, which is what the guess
+above said, and one build for both.**
+
+### Which interpreter
+
+**JavaScript, and [Boa](https://github.com/boa-dev/boa).**
+
+JavaScript because it is the language a model writes best, by a distance, and
+because its whole runtime is small enough to be something you ship rather than
+something you fetch.
+
+Boa because it is written in Rust and because it *interprets*. Every mature
+alternative is C — needing a `wasi-sdk` and a C toolchain in CI, which the
+record above lists as a cost — or a just-in-time compiler, and iOS does not
+allow an application to generate and execute machine code. That is the same
+constraint that chose wasmi over wasmtime one level down, arriving at the same
+answer for the same reason.
+
+It answers the criteria this record set out: pure Rust, no `wasi-sdk`, built
+from published source pinned in a lockfile, and **2.9 MB** compiled with
+`opt-level = "z"` and LTO — small enough to sit in an APK without anybody
+noticing.
+
+`interpreters/javascript` is the crate. It is about two hundred lines: read the
+script named on the command line, install five things a script can reach, and
+evaluate it. There is still no binary in this repository.
+
+### How it arrives
+
+| Where | How |
+|---|---|
+| Android | an asset in the APK, copied into `interpreters/` when the engine opens. Built by `apps/android/build-interpreters.sh`, which needs no NDK — a `.wasm` is the same file on every phone |
+| Desktop | built by the release workflow and packaged beside the binary, in `interpreters/javascript.wasm` |
+
+Nothing is fetched at run time, so Ephemeral grows no downloader — the one
+option this record was most wary of, and the only one that would have put code
+that fetches and executes code next to the sandbox.
+
+### What a script can reach
+
+Five things, and the list is the whole of it:
+
+```
+console.log(…) / console.error(…)
+Ephemeral.args
+Ephemeral.read(path) / Ephemeral.write(path, text)
+Ephemeral.get(url) / Ephemeral.post(url, body)
+```
+
+No `fetch`, no `require`, no `process`, no timers. Not as a rule the model is
+asked to respect — the interpreter imports host functions for exactly this list,
+so anything else is a `ReferenceError` at the moment it is called.
+
+The network ones go through [ADR-0023](0023-a-confined-application-reaches-the-network-through-its-host.md),
+which means the interpreter reaches a destination only if a **person** allowed
+that destination for the **application** it is running. The interpreter is
+ordinary confined code and being an interpreter buys it nothing.
+
+### One rule this changed
+
+The host network functions used to be linked only when egress had been granted,
+so a module importing them without a grant could not start at all. That is a
+good property for a module that *is* an application — its imports are a
+truthful declaration of what it needs — and a lie for an interpreter, which
+imports them because *some* script might. Refusing to start it would have meant
+every scripted application needing a network grant to print a line.
+
+They are linked always now, and the grant is enforced per request against the
+ledger, which is where it was always enforced. What an ungranted application
+gets is a refusal it can show somebody rather than a door that will not open.
 
 ## Consequences of leaving it open
 

@@ -363,6 +363,7 @@ impl AgentProvider for MockProvider {
 
         Ok(Attempt::new(
             GeneratedApp {
+                program: None,
                 plan: plan.clone(),
                 files: if broken {
                     Self::broken_source()

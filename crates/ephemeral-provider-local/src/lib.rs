@@ -88,6 +88,13 @@ pub const MAX_TOKENS_VARIABLE: &str = "EPHEMERAL_LOCAL_MAX_TOKENS";
 
 /// Generates applications with a model server on this machine.
 pub struct LocalProvider {
+    /// What kind of application this device can run.
+    ///
+    /// A property of the machine, not a preference. A handset has no container
+    /// runtime and never will, so asking one for a container application means
+    /// writing something that cannot run where it was written.
+    target: ephemeral_agent::dialogue::Target,
+
     api_key: Option<String>,
     model: String,
     endpoint: String,
@@ -131,6 +138,7 @@ impl LocalProvider {
         let base = from_environment(BASE_URL_VARIABLE).unwrap_or_else(|| BASE_URL.to_owned());
 
         Self {
+            target: ephemeral_agent::dialogue::Target::default(),
             api_key: from_environment(API_KEY_VARIABLE),
             model: from_environment(MODEL_VARIABLE).unwrap_or_else(|| DEFAULT_MODEL.to_owned()),
             // Kept as configured, even when it is not local. Quietly falling
@@ -149,6 +157,18 @@ impl LocalProvider {
     #[must_use]
     pub fn with_max_tokens(mut self, tokens: u32) -> Self {
         self.max_tokens = tokens;
+        self
+    }
+
+    /// The same, writing applications of the shape this device can run.
+    ///
+    /// Set by whoever knows what the device is. A phone sets
+    /// [`Target::Script`](ephemeral_agent::dialogue::Target::Script), because a
+    /// container application written on a handset is one that can never run
+    /// where it was written.
+    #[must_use]
+    pub fn writing(mut self, target: ephemeral_agent::dialogue::Target) -> Self {
+        self.target = target;
         self
     }
 
@@ -258,9 +278,13 @@ impl AgentProvider for LocalProvider {
             Ceiling::Legacy,
             self.max_tokens,
             intent,
+            self.target,
         ))?;
 
-        Ok(Attempt::new(dialogue::plan_from(NAME, &value)?, usage))
+        Ok(Attempt::new(
+            dialogue::plan_from(NAME, &value, self.target)?,
+            usage,
+        ))
     }
 
     fn generate(&self, plan: &Plan) -> Result<Attempt<GeneratedApp>, AgentError> {
@@ -365,6 +389,7 @@ mod tests {
     /// on.
     fn provider(transport: Box<dyn Transport>) -> LocalProvider {
         LocalProvider {
+            target: ephemeral_agent::dialogue::Target::default(),
             api_key: None,
             model: DEFAULT_MODEL.to_owned(),
             endpoint: wire::endpoint_from(BASE_URL),

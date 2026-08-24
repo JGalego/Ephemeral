@@ -123,8 +123,9 @@ jobs:
       # and then cannot find its engine.
       - name: The engine, for a real phone
         run: |
-          rustup target add aarch64-linux-android
+          rustup target add aarch64-linux-android wasm32-wasip1
           EPHEMERAL_ANDROID_ABIS=arm64-v8a ./build-native.sh
+          ./build-interpreters.sh
         working-directory: apps/android
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
