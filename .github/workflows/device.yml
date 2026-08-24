@@ -165,16 +165,23 @@ jobs:
 
       # A note about the key, because it is the one thing here that is not
       # obviously safe. Test Lab has no secret mechanism: the only way to get a
-      # credential onto a phone in a rack is through the command that starts the
-      # run, so it is in gcloud's argument vector on this runner and in the run
-      # record Test Lab keeps. Everywhere else in this repository a credential
-      # travels on stdin for exactly that reason (ADR-0016), and this is a place
-      # that cannot.
+      # credential onto a phone in a rack is to send it with the run, so it is
+      # in the Robo script this step writes and in the run record Test Lab
+      # keeps. Everywhere else in this repository a credential travels on stdin
+      # for exactly that reason (ADR-0016), and this is a place that cannot.
+      #
+      # It is a file rather than a command-line argument now, which keeps it out
+      # of the runner's process table. That is the smaller half of the problem;
+      # the larger half is that Google has a copy either way.
       #
       # So: use a key made for the run and revoked after it, not one you use for
       # anything else. That is not a workaround for a gap, it is what a
       # credential handed to somebody else's rack of phones is worth.
       - name: Run it on a phone
+        env:
+          SERVICE: ${{ inputs.service }}
+          BASE_URL: ${{ inputs.base_url }}
+          LLM_MODEL: ${{ inputs.llm_model }}
         run: |
           set -uo pipefail
 
@@ -184,41 +191,70 @@ jobs:
           # following the setup would have hit is a permission error at the
           # last step, for a bucket they never needed.
           #
-          # Robo explores the application on its own. The directives give it
-          # the one thing it cannot guess — what to type into the box — using
-          # the same resource ids `photograph.py` taps, so the two walkthroughs
-          # cannot drift into testing different screens.
+          # Without generation this is one directive pair: type the intent,
+          # press Create. That is deliberately *one* click, because
+          # `--robo-directives` allows exactly one and no more:
           #
-          # With `generate` on, three more: open the credential menu, put the
-          # key in the field, and press Generate on the page Create opens.
-          # Those controls have resource ids for exactly this reason — a
-          # control with no name is one Robo can only stumble into, which is
-          # why every device run so far stopped at the front door.
-          directives="text:intent=compare two CSV files,click:create="
+          #   "No more than one `click` element is allowed."
+          #
+          # The generation walkthrough needs five, so it cannot be directives at
+          # all. It is a Robo script — a JSON list of actions Robo replays
+          # before it starts exploring, which is what Google provides for
+          # getting past exactly this sort of front door. The version that used
+          # five click directives was rejected at validation with
+          # INVALID_ROBO_DIRECTIVES every time it ran, which was never, because
+          # a duplicate key in this file meant it did not parse.
+          steer=(--robo-directives "text:intent=compare two CSV files,click:create=")
+
           if [ "${{ inputs.generate }}" = "true" ]; then
             if [ -z "$MODEL_KEY" ]; then
               echo "::error::No MODEL_API_KEY secret, so there is nothing to generate with."
               exit 1
             fi
 
-            # Every control here has a resource id for exactly this reason.
-            # Robo addresses things by name and cannot operate a spinner at
-            # all, which is why the service picker is a radio group: with a
-            # spinner, a rack phone could only ever exercise whichever provider
-            # happened to be the default, whatever key it was given.
-            settings="click:credential_menu=,click:provider_${{ inputs.service }}="
-            if [ -n "${{ inputs.base_url }}" ]; then
-              settings="$settings,text:base_url=${{ inputs.base_url }}"
-            fi
-            if [ -n "${{ inputs.llm_model }}" ]; then
-              settings="$settings,text:model=${{ inputs.llm_model }}"
-            fi
-            # The connection test before anything is generated, so a wrong key
-            # or a retired model shows up in the video as a sentence rather
-            # than as a generation that quietly does nothing.
-            settings="$settings,text:credential=$MODEL_KEY,click:check="
+            # Built from the committed template rather than written here, so the
+            # thing that runs is the thing that was reviewed — with the key, the
+            # chosen service, and any endpoint or model filled in.
+            python3 - "$RUNNER_TEMP/robo.json" <<'BUILD'
+          import json, os, sys
 
-            directives="$settings,$directives,click:generate="
+          script = json.load(open("apps/android/robo/generate.json"))
+          service = os.environ["SERVICE"]
+          package = "io.github.jgalego.ephemeral"
+
+          for action in script:
+              for descriptor in action.get("elementDescriptors", []):
+                  if descriptor.get("resourceId", "").endswith("/provider_openai"):
+                      descriptor["resourceId"] = f"{package}:id/provider_{service}"
+              if action.get("replacementText") == "MODEL_KEY_GOES_HERE":
+                  action["replacementText"] = os.environ["MODEL_KEY"]
+
+          # Typed only when asked for. A blank box is the provider's own default,
+          # and typing an empty string into it is not the same thing.
+          def typed(where, what):
+              return {
+                  "eventType": "VIEW_TEXT_CHANGED",
+                  "replacementText": what,
+                  "elementDescriptors": [{"resourceId": f"{package}:id/{where}"}],
+              }
+
+          extra = []
+          if os.environ.get("BASE_URL"):
+              extra.append(typed("base_url", os.environ["BASE_URL"]))
+          if os.environ.get("LLM_MODEL"):
+              extra.append(typed("model", os.environ["LLM_MODEL"]))
+
+          if extra:
+              at = next(i for i, a in enumerate(script)
+                        if any(d.get("resourceId", "").endswith("/credential")
+                               for d in a.get("elementDescriptors", [])))
+              script[at:at] = extra
+
+          json.dump(script, open(sys.argv[1], "w"), indent=2)
+          print(f"Robo script: {len(script)} actions", file=sys.stderr)
+          BUILD
+
+            steer=(--robo-script "$RUNNER_TEMP/robo.json")
           fi
 
           set +e
@@ -227,7 +263,7 @@ jobs:
             --app apps/android/app/build/outputs/apk/debug/app-debug.apk \
             --device "model=${{ inputs.model }},version=${{ inputs.version }},locale=en,orientation=portrait" \
             --timeout "${{ inputs.minutes }}m" \
-            --robo-directives "$directives" \
+            "${steer[@]}" \
             2>&1 | tee run.log
           outcome=${PIPESTATUS[0]}
           set -e

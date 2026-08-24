@@ -123,6 +123,9 @@ else
     echo "(skipping: no wasm32-wasip1 target here; \`rustup target add wasm32-wasip1\`)"
 fi
 
+step "The device walkthrough drives controls that exist"
+./scripts/robo-ids
+
 step "Generating and running, in the crate both clients call"
 cargo test -p ephemeral-engine
 

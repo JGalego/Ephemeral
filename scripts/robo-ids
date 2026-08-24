@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+"""Every resource the Robo script names exists in the application.
+
+A Robo script that names a control which is not there does not fail. It simply
+does not fire, and Robo explores on its own instead — so the run passes, the
+screenshots look plausible, and nothing was driven. That is the worst kind of
+broken, and it is the one thing about this file a machine can check.
+"""
+
+import json
+import pathlib
+import re
+import sys
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+ANDROID = ROOT / "apps/android/app/src/main"
+PACKAGE = "io.github.jgalego.ephemeral"
+
+script = json.loads((ROOT / "apps/android/robo/generate.json").read_text())
+
+named = [
+    descriptor["resourceId"].split("/")[-1]
+    for action in script
+    for descriptor in action.get("elementDescriptors", [])
+    if descriptor.get("resourceId", "").startswith(PACKAGE)
+]
+
+declared = set(re.findall(r'<item name="([a-z_]+)"', (ANDROID / "res/values/ids.xml").read_text()))
+for layout in (ANDROID / "res/layout").glob("*.xml"):
+    declared |= set(re.findall(r'android:id="@\+id/([a-z_]+)"', layout.read_text()))
+
+missing = [name for name in named if name not in declared]
+for name in named:
+    print(f"  {'ok  ' if name not in missing else 'MISSING'} {name}")
+
+if missing:
+    print(f"\nThe Robo script names {len(missing)} control(s) the application does not have:")
+    for name in missing:
+        print(f"  {PACKAGE}:id/{name}")
+    print("Robo would ignore those silently and explore instead, and the run would pass.")
+    sys.exit(1)
+
+print(f"All {len(named)} controls the Robo script drives exist.")

@@ -365,6 +365,12 @@ jobs:
       # screens compile.
       - run: gradle assembleDebug --no-daemon
         working-directory: apps/android
+      # A Robo script that names a control the application does not have does
+      # not fail — it does not fire, Robo explores on its own instead, and the
+      # run passes with plausible screenshots of nothing being driven. This is
+      # the one thing about that file a machine can check.
+      - name: The device walkthrough drives controls that exist
+        run: ./scripts/robo-ids
       # A generated application's page is displayed in a WebView, and this
       # application holds INTERNET because generating needs it. A WebView
       # inherits that: with scripts on, or with network loads unblocked, a page
