@@ -690,9 +690,12 @@ place where what the bytes do is the entire question.
 So the sequence is:
 
 1. **Pin an interpreter.** Which build, from where, verified how. That is a
-   supply-chain decision and belongs in an ADR — the alternatives are
-   downloading one on first use against a pinned digest, building one in CI and
-   attaching it to a release, or shipping one inside the Android package.
+   supply-chain decision, and it is written up in
+   [ADR-0022](architecture/decisions/0022-how-an-interpreter-reaches-a-device.md)
+   — what any candidate has to be, and the three ways one could arrive:
+   downloaded on first use against a pinned digest, built in CI and attached to
+   a release, or shipped inside the Android package. That record is **proposed**
+   rather than accepted, deliberately: the choice is the owner's.
 2. **Then teach planning to choose the WebAssembly runtime** where it is the one
    available. Doing this first would be worse than doing nothing: applications
    would generate cleanly and then fail with "the JavaScript interpreter is not

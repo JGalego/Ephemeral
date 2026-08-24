@@ -32,6 +32,7 @@ supersedes the old one; the old one stays, marked superseded and linked forward.
 | [0019](0019-openai-compatible-and-a-local-model.md) | One OpenAI-compatible wire format, and a local provider that cannot leave the machine | accepted | 2 |
 | [0020](0020-the-host-chooses-the-provider.md) | The host chooses the provider, on every platform | accepted | 5 |
 | [0021](0021-webassembly-is-the-runtime-a-phone-can-have.md) | WebAssembly is the runtime a phone can have | accepted | 1 |
+| [0022](0022-how-an-interpreter-reaches-a-device.md) | How an interpreter reaches a device | **proposed** | 1 |
 
 ## When you need an ADR
 
