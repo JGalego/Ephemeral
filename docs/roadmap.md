@@ -710,6 +710,16 @@ writes a page for a host to render. `reference_wasm.rs` compiles and runs it
 under the real sandbox on every commit, so the path is exercised end to end by
 something somebody could have written rather than by a test fixture.
 
+There is also **no command that makes an application out of a module**.
+Ephemeral creates applications by generating them, so the first WebAssembly one
+on a machine is assembled by hand — `ephemeral create`, then a module and a
+runtime block written into the manifest. After that `publish` and `install`
+carry it anywhere, and `generate` checks it and makes it ready without a model
+or Docker. That is enough to use the runtime today, and it is not a path to
+show anybody until something generates these. Whether it deserves a command of
+its own, or simply disappears when generation covers this runtime, is worth
+deciding rather than drifting into.
+
 There is also a smaller thing worth deciding: `ephemeral run` exits zero even
 when the application it ran exited non-zero. It prints the exit code and the
 program's output, so nothing is hidden, but a job whose failure cannot be

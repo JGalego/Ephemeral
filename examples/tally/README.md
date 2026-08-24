@@ -32,22 +32,38 @@ rustup target add wasm32-wasip1
 cargo build --release --target wasm32-wasip1
 ```
 
-Then make it into a package — an `ephemeral.yaml` beside a `source/` holding
-`program.wasm` — whose runtime block says:
+Getting it into Ephemeral is the awkward part, and it is worth being plain
+about why: **there is no command that makes an application out of a module.**
+Ephemeral creates applications by generating them, and nothing generates
+WebAssembly yet (see below). So the first one is assembled by hand, and after
+that `publish` and `install` carry it anywhere.
 
-```yaml
-runtime:
-  type: wasm
-  program: program.wasm
-  interface: job          # or `web`, to write a page instead of a line
-  entrypoint: ["--file", "/data/files.csv"]
-```
-
-and install it:
+By hand, once:
 
 ```
-ephemeral install <the package> --accept
-ephemeral generate <id>          # checks the module; no model, no Docker
+ephemeral create "count the rows in a CSV file"
+```
+
+then, in `~/.ephemeral/apps/<id>/`, put the module at `source/program.wasm` and
+add a runtime block to `manifest.json`:
+
+```json
+"runtime": {
+  "type": "wasm",
+  "program": "program.wasm",
+  "interface": "job",
+  "entrypoint": ["--file", "/data/files.csv"]
+}
+```
+
+`interface` is `job` for a program that prints a line and `web` for one that
+writes a page — with `web`, add `--format html` to the entrypoint and a window
+or a phone renders the result instead of printing it.
+
+Then:
+
+```
+ephemeral generate <id>    # checks the module; no model, no Docker
 ephemeral run <id>
 ```
 
@@ -57,6 +73,11 @@ container that is building an image. For this it is checking that the module
 loads, has an entry point, and asks for nothing it was not given — which is
 what stops an application installing cleanly and then failing the moment
 somebody presses Run.
+
+Once one exists, `ephemeral publish <id> <dir>` writes a package that
+`ephemeral install <dir>` accepts on another machine, module and all. That
+round trip is the supported path; hand-assembly is only needed for the first
+one, and only until something generates these.
 
 `crates/ephemeral-runtime/tests/reference_wasm.rs` runs the module directly, and
 `ephemeral-engine`'s tests cover the install-and-adopt path, so both are checked
