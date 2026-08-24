@@ -53,7 +53,14 @@ pub struct Runnable<'a> {
     /// nothing else that `~` could truthfully mean.
     pub home: PathBuf,
 
-    /// What the application receives, composed by the domain from a form.
+    /// What somebody asked for, composed by the domain from a form.
+    ///
+    /// **Added to what the application declares, never replacing it.** An
+    /// application's entry point is part of what it *is*, recorded in its
+    /// version, and a command line that could replace it would let somebody run
+    /// something other than the application they are looking at. The container
+    /// runtime has always held that; this one dropped the declaration entirely
+    /// until a review noticed.
     pub arguments: Vec<String>,
 
     /// The longest it may run, whatever its manifest declares.
@@ -168,12 +175,17 @@ pub fn run(runnable: &Runnable<'_>) -> Result<Ran, RuntimeError> {
         data_dir: prepared(runnable.layout, runnable.manifest)?,
     };
 
+    // What the application declares, then what somebody asked for. In that
+    // order, and both: see [`Runnable::arguments`].
+    let mut arguments = runtime.entrypoint.clone();
+    arguments.extend(runnable.arguments.iter().cloned());
+
     let spec = ContainerSpec::from_grants(
         app.clone(),
         // No image. This runtime has none; the field belongs to the one that
         // does.
         String::new(),
-        runnable.arguments.clone(),
+        arguments,
         runnable.manifest.resources,
         runnable.granted,
         &paths,
@@ -298,6 +310,226 @@ mod tests {
         assert_eq!(ran.completed.output, "4 rows differ");
         assert_eq!(ran.shown, Shown::Text);
     }
+
+    /// Prints its own arguments, one per line, skipping argument zero.
+    const ECHOES_ITS_ARGUMENTS: &str = r#"(module
+      (import "wasi_snapshot_preview1" "args_sizes_get"
+        (func $sizes (param i32 i32) (result i32)))
+      (import "wasi_snapshot_preview1" "args_get"
+        (func $args (param i32 i32) (result i32)))
+      (import "wasi_snapshot_preview1" "fd_write"
+        (func $write (param i32 i32 i32 i32) (result i32)))
+      (memory (export "memory") 2)
+      (global $count (mut i32) (i32.const 0))
+      (global $at (mut i32) (i32.const 0))
+      (func $print_at (param $pointer i32)
+        (local $end i32)
+        (local.set $end (local.get $pointer))
+        (block $found
+          (loop $scan
+            (br_if $found (i32.eqz (i32.load8_u (local.get $end))))
+            (local.set $end (i32.add (local.get $end) (i32.const 1)))
+            (br $scan)))
+        (i32.store8 (local.get $end) (i32.const 10))
+        (i32.store (i32.const 8) (local.get $pointer))
+        (i32.store (i32.const 12)
+          (i32.add (i32.sub (local.get $end) (local.get $pointer)) (i32.const 1)))
+        (drop (call $write (i32.const 1) (i32.const 8) (i32.const 1) (i32.const 24))))
+      (func (export "_start")
+        (drop (call $sizes (i32.const 64) (i32.const 68)))
+        (global.set $count (i32.load (i32.const 64)))
+        (drop (call $args (i32.const 1024) (i32.const 2048)))
+        (global.set $at (i32.const 1))
+        (block $done
+          (loop $next
+            (br_if $done (i32.ge_u (global.get $at) (global.get $count)))
+            (call $print_at
+              (i32.load (i32.add (i32.const 1024)
+                                 (i32.mul (global.get $at) (i32.const 4)))))
+            (global.set $at (i32.add (global.get $at) (i32.const 1)))
+            (br $next))))
+    )"#;
+
+    /// **An application's entry point is part of what it is.**
+    ///
+    /// `start` has always said so for containers: arguments are *added* to the
+    /// declaration, never substituted for it, because a command line that could
+    /// replace it would let somebody run something other than the application
+    /// they are looking at. This runtime dropped the declaration entirely until
+    /// a review noticed the two paths disagreed.
+    #[test]
+    fn what_somebody_typed_is_added_to_what_the_application_declares() {
+        let home = tempfile::tempdir().expect("a temporary directory");
+        let layout = installed(home.path(), ECHOES_ITS_ARGUMENTS);
+
+        let mut manifest = AppManifest::requested(app(), "Tally");
+        manifest.runtime = Some(RuntimeSpec::wasm_job(
+            "program.wasm",
+            vec!["--format".to_owned(), "csv".to_owned()],
+        ));
+
+        let ran = run(&Runnable {
+            manifest: &manifest,
+            layout: &layout,
+            granted: &[],
+            home: home.path().to_path_buf(),
+            arguments: vec!["--verbose".to_owned()],
+            ceiling: HANDHELD_CEILING,
+        })
+        .expect("it runs");
+
+        assert_eq!(
+            ran.completed.output, "--format\ncsv\n--verbose\n",
+            "the declaration comes first and survives; what was typed follows it"
+        );
+    }
+
+    /// **A granted directory is the only one it can reach, symlinks included.**
+    ///
+    /// The escape a preopened directory has to withstand: a link inside the
+    /// application's own source pointing somewhere it was never granted. This
+    /// is cap-std's job rather than Ephemeral's, which is exactly why it is
+    /// worth an assertion — a property nothing checks is a property that is
+    /// true until a dependency changes.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_out_of_a_granted_directory_leads_nowhere() {
+        let home = tempfile::tempdir().expect("a temporary directory");
+        let outside = home.path().join("not-granted");
+        std::fs::create_dir_all(&outside).expect("somewhere it was not given");
+        std::fs::write(outside.join("secret"), "the user's private notes").expect("a file");
+
+        let layout = installed(home.path(), READS_A_FILE);
+        std::os::unix::fs::symlink(&outside, layout.app(&app()).source().join("escape"))
+            .expect("a link pointing out of the application");
+
+        let mut manifest = AppManifest::requested(app(), "Tally");
+        // Interpreted, because that is the shape that preopens the application's
+        // own source — the one directory a generated tree could plant a link in.
+        manifest.runtime = Some(RuntimeSpec::wasm_job("main.js", Vec::new()));
+        std::fs::write(layout.app(&app()).source().join("main.js"), "// unused").expect("a script");
+        let interpreters = layout.interpreters_dir();
+        std::fs::create_dir_all(&interpreters).expect("an interpreter directory");
+        std::fs::copy(
+            layout.app(&app()).source().join("program.wasm"),
+            interpreters.join("javascript.wasm"),
+        )
+        .expect("an interpreter");
+
+        let ran = run(&Runnable {
+            manifest: &manifest,
+            layout: &layout,
+            granted: &[],
+            home: home.path().to_path_buf(),
+            // Relative to the preopened directory, which is how a WASI path
+            // is named: the module holds a descriptor, not a filesystem.
+            arguments: vec!["escape/secret".to_owned()],
+            ceiling: HANDHELD_CEILING,
+        })
+        .expect("it runs, and finds nothing");
+
+        assert!(
+            !ran.completed.output.contains("private notes"),
+            "it read through a link out of what it was granted: {}",
+            ran.completed.output
+        );
+    }
+
+    /// The control for the test above. A module that cannot read anything would
+    /// pass it without the sandbox doing a thing, so this proves the same
+    /// module *does* read a file when the file is one it was given.
+    #[cfg(unix)]
+    #[test]
+    fn the_same_module_reads_a_file_it_was_given() {
+        let home = tempfile::tempdir().expect("a temporary directory");
+        let layout = installed(home.path(), READS_A_FILE);
+        let source = layout.app(&app()).source();
+        std::fs::write(source.join("notes"), "the user's private notes").expect("a file");
+        std::fs::write(source.join("main.js"), "// unused").expect("a script");
+
+        let interpreters = layout.interpreters_dir();
+        std::fs::create_dir_all(&interpreters).expect("an interpreter directory");
+        std::fs::copy(
+            source.join("program.wasm"),
+            interpreters.join("javascript.wasm"),
+        )
+        .expect("an interpreter");
+
+        let mut manifest = AppManifest::requested(app(), "Tally");
+        manifest.runtime = Some(RuntimeSpec::wasm_job("main.js", Vec::new()));
+
+        let ran = run(&Runnable {
+            manifest: &manifest,
+            layout: &layout,
+            granted: &[],
+            home: home.path().to_path_buf(),
+            arguments: vec!["notes".to_owned()],
+            ceiling: HANDHELD_CEILING,
+        })
+        .expect("it runs");
+
+        assert!(
+            ran.completed.output.contains("private notes"),
+            "the module cannot read anything at all, so the escape test proves nothing: {:?}",
+            ran.completed
+        );
+    }
+
+    /// Opens the path in argument one and prints what is in it, or nothing.
+    const READS_A_FILE: &str = r#"(module
+      (import "wasi_snapshot_preview1" "args_sizes_get"
+        (func $sizes (param i32 i32) (result i32)))
+      (import "wasi_snapshot_preview1" "args_get"
+        (func $args (param i32 i32) (result i32)))
+      (import "wasi_snapshot_preview1" "path_open"
+        (func $open (param i32 i32 i32 i32 i32 i64 i64 i32 i32) (result i32)))
+      (import "wasi_snapshot_preview1" "fd_read"
+        (func $read (param i32 i32 i32 i32) (result i32)))
+      (import "wasi_snapshot_preview1" "fd_write"
+        (func $write (param i32 i32 i32 i32) (result i32)))
+      (memory (export "memory") 4)
+      (func $length (param $pointer i32) (result i32)
+        (local $end i32)
+        (local.set $end (local.get $pointer))
+        (block $found
+          (loop $scan
+            (br_if $found (i32.eqz (i32.load8_u (local.get $end))))
+            (local.set $end (i32.add (local.get $end) (i32.const 1)))
+            (br $scan)))
+        (i32.sub (local.get $end) (local.get $pointer)))
+      (func (export "_start")
+        (local $path i32)
+        (local $opened i32)
+        (drop (call $sizes (i32.const 64) (i32.const 68)))
+        (drop (call $args (i32.const 1024) (i32.const 2048)))
+        ;; The *last* argument. An interpreted program is handed its script
+        ;; first, so argument one is not always the one a test meant.
+        (if (i32.lt_u (i32.load (i32.const 64)) (i32.const 2)) (then (return)))
+        (local.set $path
+          (i32.load (i32.add (i32.const 1024)
+                             (i32.mul (i32.sub (i32.load (i32.const 64)) (i32.const 1))
+                                      (i32.const 4)))))
+        ;; Preopened directory 3 is the first the host handed over.
+        ;; Descriptor 4, not 3. Every application is given its own storage at
+        ;; /data whether it asked or not, so that is the first preopen; the
+        ;; script's directory is the second. A real interpreter never counts —
+        ;; libc resolves a path against the preopen whose name it matches — but
+        ;; this module speaks WASI directly and has to know.
+        (if (i32.eqz (call $open
+              (i32.const 4) (i32.const 1)
+              (local.get $path) (call $length (local.get $path))
+              (i32.const 0) (i64.const 2) (i64.const 2) (i32.const 0)
+              (i32.const 80)))
+          (then
+            (local.set $opened (i32.load (i32.const 80)))
+            (i32.store (i32.const 96) (i32.const 4096))
+            (i32.store (i32.const 100) (i32.const 1024))
+            (drop (call $read (local.get $opened)
+                    (i32.const 96) (i32.const 1) (i32.const 104)))
+            (i32.store (i32.const 112) (i32.const 4096))
+            (i32.store (i32.const 116) (i32.load (i32.const 104)))
+            (drop (call $write (i32.const 1)
+                    (i32.const 112) (i32.const 1) (i32.const 120)))))))"#;
 
     /// Its own storage exists by the time it runs, even for an application that
     /// never had a directory made for it.
