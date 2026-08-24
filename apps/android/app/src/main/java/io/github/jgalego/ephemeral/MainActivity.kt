@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.text.InputType
+import android.text.method.PasswordTransformationMethod
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
@@ -168,11 +169,21 @@ class MainActivity : Activity() {
             setText(chosen?.model.orEmpty())
         }
 
+        // The order matters, and getting it wrong is invisible until somebody
+        // photographs it. `setSingleLine()` calls `setInputType` internally, so
+        // calling it *after* the password variation drops the variation and the
+        // key renders in the clear — which is how a rack of phones in somebody
+        // else's building came to take a picture of one.
+        //
+        // The transformation is also set outright rather than left to follow
+        // from the input type. Belt and braces on the one field where the
+        // failure is a credential on a screen.
         val key = EditText(this).apply {
             id = R.id.credential
             hint = getString(R.string.credential_hint)
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
             setSingleLine()
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            transformationMethod = PasswordTransformationMethod.getInstance()
         }
 
         val said = TextView(this).apply {
@@ -233,6 +244,16 @@ class MainActivity : Activity() {
             Engine.submit(this, Engine::models) { outcome ->
                 outcome
                     .onSuccess { models ->
+                        // Three states, not two. A service that answered and
+                        // listed nothing is neither working nor broken, and
+                        // folding it into either is what let a rejected key
+                        // read as green.
+                        if (models.isEmpty()) {
+                            said.setTextColor(getColor(R.color.medium))
+                            said.text = getString(R.string.model_none_listed)
+                            return@onSuccess
+                        }
+
                         said.setTextColor(getColor(R.color.low))
                         said.text = resources.getQuantityString(
                             R.plurals.models_reached,

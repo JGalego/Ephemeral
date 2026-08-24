@@ -282,6 +282,16 @@ impl AgentProvider for OpenAiProvider {
             wire::headers(Some(self.key()?)),
         ))?;
 
+        // Asked before the reply is parsed. A refusal has no `data` array, so
+        // parsing it yields an empty listing — and reporting that as a listing
+        // is how a rejected key came to read as "Reached it. 0 models."
+        if let Some(said) = wire::refusal_from(&response) {
+            return Err(AgentError::Unavailable {
+                provider: NAME.to_owned(),
+                reason: said,
+            });
+        }
+
         Ok(wire::models_from(&response))
     }
 

@@ -136,6 +136,32 @@ pub fn models_from(response: &Value) -> Vec<Model> {
         .unwrap_or_default()
 }
 
+/// What a service said went wrong, when its reply is a refusal and not a listing.
+///
+/// Kept apart from [`models_from`], which stays total on purpose: as a *parser*,
+/// answering "no models" for something that is not a listing is right, and it is
+/// what stops untrusted input from panicking.
+///
+/// The bug that made this necessary was one level up. A caller that parsed zero
+/// models and reported success turned a rejected key into "Reached it. 0
+/// models." in green — on the one control whose entire job is telling
+/// "configured" from "working". A rack phone photographed it saying exactly
+/// that, a minute before generation failed for the same reason.
+pub fn refusal_from(response: &Value) -> Option<String> {
+    let error = response.get("error")?;
+
+    // `{"error": {"message": …}}` is the shape OpenAI and everything that
+    // copied it use. A bare string is not that shape and is still a refusal.
+    let said = error
+        .get("message")
+        .and_then(Value::as_str)
+        .or_else(|| error.as_str())
+        .unwrap_or("it refused, and did not say why")
+        .trim();
+
+    Some(said.to_owned())
+}
+
 fn one_model(model: &Value) -> Option<Model> {
     let id = model["id"].as_str()?;
 
@@ -598,6 +624,34 @@ mod tests {
         let reply = json!({ "data": [{ "id": "small", "context_window": 4096 }] });
 
         assert_eq!(models_from(&reply)[0].ceiling, Some(4096));
+    }
+
+    /// A refusal is recognised as one, in the service's own words.
+    ///
+    /// The listing endpoint answering `{"error": …}` means the key was rejected
+    /// or the endpoint is not what somebody thought. Reading that as an empty
+    /// listing is how a rejection came to be reported as a success.
+    #[test]
+    fn a_refusal_is_told_apart_from_an_empty_listing() {
+        let rejected = json!({
+            "error": { "message": "Incorrect API key provided", "type": "invalid_request_error" }
+        });
+        assert_eq!(
+            refusal_from(&rejected).as_deref(),
+            Some("Incorrect API key provided")
+        );
+
+        // A service that answers with a listing is not refusing, however short
+        // the listing is. Zero models is a fact about the account, not an error.
+        assert_eq!(refusal_from(&json!({ "data": [] })), None);
+        assert_eq!(refusal_from(&json!({ "data": [{ "id": "gpt-5" }] })), None);
+    }
+
+    /// Even a refusal that says nothing useful is still a refusal.
+    #[test]
+    fn a_refusal_with_no_message_is_still_a_refusal() {
+        assert!(refusal_from(&json!({ "error": "nope" })).is_some());
+        assert!(refusal_from(&json!({ "error": {} })).is_some());
     }
 
     /// A reply that is not a listing yields nothing rather than a panic. This

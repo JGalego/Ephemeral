@@ -51,8 +51,14 @@ on:
         type: choice
         options: [openai, anthropic, mock]
       base_url:
-        description: The service's base URL. Blank means that provider's own.
-        default: "https://api.groq.com/openai/v1"
+        description: >
+          The service's base URL. Blank means that provider's own — for OpenAI,
+          api.openai.com; for Groq, paste https://api.groq.com/openai/v1.
+        # Blank, and it has to stay blank. An input with a non-empty default
+        # cannot be cleared: dispatching it as "" gets the default back, so
+        # "use the provider's own endpoint" was unsayable and a run aimed at
+        # OpenAI silently went to Groq with an OpenAI key.
+        default: ""
         type: string
       # Not `model`: that is the phone, above, and gcloud's own word for it.
       # Both were called `model` until GitHub rejected the file — a duplicate
@@ -60,10 +66,12 @@ on:
       # tolerate at all.
       llm_model:
         description: >
-          Which model the app generates with. `ephemeral models --provider
-          openai` lists what a service has, and what size of reply each will
-          accept.
-        default: "llama-3.3-70b-versatile"
+          Which model the app generates with. Blank means that provider's own
+          default. `ephemeral models --provider openai` lists what a service
+          has, and what size of reply each will accept.
+        # Blank for the same reason as base_url: a non-empty default here is one
+        # nobody can dispatch their way out of.
+        default: ""
         type: string
 
 permissions:

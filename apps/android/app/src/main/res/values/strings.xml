@@ -48,6 +48,13 @@
     <string name="model_model">Model name</string>
     <string name="model_saved">Generating with %1$s.</string>
     <string name="model_none">This build has no providers, which should not be possible.</string>
+    <!--
+      Reaching a service that lists nothing is its own state, and neither of the
+      other two. Painted as a caution rather than green: the endpoint answered,
+      so it is not a failure, but nothing can be generated with an empty list
+      and calling that "working" is the thing this control exists to prevent.
+    -->
+    <string name="model_none_listed">Reached it, and it lists no models. Nothing can be generated with an empty list — check the address and the key.</string>
     <string name="model_check">Check connection</string>
     <string name="model_checking">Asking…</string>
     <string name="model_unreachable">It could not be reached, and said nothing about why.</string>

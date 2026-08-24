@@ -148,6 +148,26 @@ pub fn models_from(response: &Value) -> Vec<Model> {
         .unwrap_or_default()
 }
 
+/// What the service said went wrong, when its reply is a refusal not a listing.
+///
+/// The same separation the OpenAI provider makes, for the same reason and after
+/// the same bug: [`models_from`] stays total so untrusted input cannot panic it,
+/// and recognising a refusal is a different question asked separately. A caller
+/// that skipped it reported a rejected key as a successful connection test.
+#[must_use]
+pub fn refusal_from(response: &Value) -> Option<String> {
+    let error = response.get("error")?;
+
+    let said = error
+        .get("message")
+        .and_then(Value::as_str)
+        .or_else(|| error.as_str())
+        .unwrap_or("it refused, and did not say why")
+        .trim();
+
+    Some(said.to_owned())
+}
+
 /// The common envelope.
 fn body(model: &str, tokens: u32, prompt: &str) -> Value {
     json!({
@@ -236,6 +256,23 @@ mod tests {
 
     /// The system prompt has to describe the sandbox the code will actually run
     /// in, or the model writes something that cannot possibly work.
+    /// A refusal is recognised as one rather than read as an empty listing.
+    /// The same assertion the OpenAI provider makes, because the same mistake
+    /// was available here and nothing had ruled it out.
+    #[test]
+    fn a_refusal_is_told_apart_from_an_empty_listing() {
+        let rejected = json!({
+            "type": "error",
+            "error": { "type": "authentication_error", "message": "invalid x-api-key" }
+        });
+        assert_eq!(
+            refusal_from(&rejected).as_deref(),
+            Some("invalid x-api-key")
+        );
+
+        assert_eq!(refusal_from(&json!({ "data": [] })), None);
+    }
+
     #[test]
     fn every_request_bounds_its_response() {
         let plan = Plan {

@@ -239,6 +239,16 @@ impl AgentProvider for AnthropicProvider {
                 wire::headers(self.key()?),
             ))?;
 
+        // Asked before the reply is parsed, for the reason the OpenAI provider
+        // documents: a refusal carries no listing, and an empty listing read
+        // back as success is a rejected key reported as a working one.
+        if let Some(said) = wire::refusal_from(&response) {
+            return Err(AgentError::Unavailable {
+                provider: NAME.to_owned(),
+                reason: said,
+            });
+        }
+
         Ok(wire::models_from(&response))
     }
 

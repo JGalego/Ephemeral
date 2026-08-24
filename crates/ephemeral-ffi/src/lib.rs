@@ -1181,6 +1181,90 @@ mod tests {
         (i32.store (i32.const 4) (i32.const 13))
         (drop (call $write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 16)))))"#;
 
+    /// **A rejected key is a refusal, not a short list.**
+    ///
+    /// The connection test exists to tell "configured" from "working", and it
+    /// used to paint a rejection green: a service that answers `{"error": …}`
+    /// carries no `data`, parsing that yields zero models, and zero models was
+    /// reported as success. A phone in a rack photographed it saying "Reached
+    /// it. 0 models." a minute before generation failed for the same reason.
+    #[test]
+    fn a_service_that_rejects_the_key_is_not_reported_as_reached() {
+        let home = tempfile::tempdir().unwrap();
+        let handle = open(home.path());
+        unsafe { ephemeral_set_credential(handle, c("sk-not-a-real-key").as_ptr()) };
+
+        // What a service actually answers when the key is wrong.
+        queue(vec![
+            serde_json::json!({
+                "error": { "message": "Incorrect API key provided", "type": "invalid_request_error" }
+            })
+            .to_string(),
+        ]);
+
+        let listed = unsafe { ephemeral_models(handle) };
+        assert!(
+            listed.is_null(),
+            "a rejection must not come back as a listing"
+        );
+
+        let said = text(unsafe { ephemeral_last_error(handle) });
+        assert!(
+            said.contains("Incorrect API key"),
+            "and it carries the service's own words: {said}"
+        );
+
+        unsafe { ephemeral_close(handle) };
+    }
+
+    /// The same, on the provider that actually failed on the phone.
+    ///
+    /// The test above drives Anthropic, because that is what a handle defaults
+    /// to — so on its own it would have left the OpenAI path, the one a rack
+    /// phone broke on, with no boundary test at all. Both providers had the
+    /// bug; both need the assertion.
+    #[test]
+    fn a_rejection_from_an_openai_service_is_a_refusal_too() {
+        let home = tempfile::tempdir().unwrap();
+        let handle = open(home.path());
+        unsafe {
+            ephemeral_set_provider(handle, c(r#"{"provider":"openai"}"#).as_ptr());
+            ephemeral_set_credential(handle, c("sk-not-a-real-key").as_ptr());
+        }
+
+        queue(vec![
+            serde_json::json!({
+                "error": { "message": "Incorrect API key provided", "type": "invalid_request_error" }
+            })
+            .to_string(),
+        ]);
+
+        assert!(unsafe { ephemeral_models(handle) }.is_null());
+        assert!(
+            text(unsafe { ephemeral_last_error(handle) }).contains("Incorrect API key"),
+            "the service's own words, whichever provider produced them"
+        );
+
+        unsafe { ephemeral_close(handle) };
+    }
+
+    /// A service that answers with a listing is reached, however short the
+    /// listing is. Zero models is a fact about an account, not an error — the
+    /// distinction the fix above turns on.
+    #[test]
+    fn an_empty_listing_is_still_a_listing() {
+        let home = tempfile::tempdir().unwrap();
+        let handle = open(home.path());
+        unsafe { ephemeral_set_credential(handle, c("sk-not-a-real-key").as_ptr()) };
+
+        queue(vec![serde_json::json!({ "data": [] }).to_string()]);
+
+        let listed = text(unsafe { ephemeral_models(handle) });
+        assert_eq!(listed, "[]", "reached, and it has nothing");
+
+        unsafe { ephemeral_close(handle) };
+    }
+
     /// **A phone runs an application.**
     ///
     /// The sentence this whole runtime exists to make true, asserted through
