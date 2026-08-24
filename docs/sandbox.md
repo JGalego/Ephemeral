@@ -186,6 +186,14 @@ Two consequences worth stating plainly:
   no socket. The usual arrangement needs a network permission, and that same
   permission then lets the application talk to anybody.
 
+Every client runs one the same way, through the same function: `ephemeral run`
+in a terminal, the Run button in the window, and `ephemeral_run` on a phone all
+reach `wasm::run_application`. A page an application wrote is rendered with
+scripts disabled and every subresource load blocked — in the window by an empty
+`sandbox` and a content policy, on Android by a `WebView` with network loads
+off. Both are tested; the window's test loads a page carrying a script and a
+remote image and asserts neither reaches anything.
+
 What it does not have is anything to generate for it yet: an application must
 be a compiled `.wasm` module, or a script whose interpreter is installed. See
 [roadmap.md](roadmap.md).

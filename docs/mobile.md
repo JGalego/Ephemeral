@@ -45,6 +45,12 @@ and **your interface has to say so**. A desktop or a control plane
 ([ADR-0007](architecture/decisions/0007-mobile-control-plane.md)) finishes that
 job.
 
+The same function runs it on every platform. `ephemeral_run` here, the Run
+button in the desktop window, and `ephemeral run` in a terminal all reach
+`wasm::run_application` — so an application behaves the same whichever one
+started it, and a bug in the sandbox is a bug in one place rather than in one of
+three.
+
 **Nothing yet generates WebAssembly.** An application must be a compiled
 `.wasm` module, or a script whose interpreter is installed under
 `interpreters/` — and no interpreter ships with Ephemeral yet. `ephemeral_run`

@@ -80,6 +80,10 @@ sockets in the WASI implementation at all, fuel counted in instructions, and a
 memory ceiling the store enforces. It runs on every platform, which is the
 point — including the ones with no daemon to have.
 
+Every client drives it through one function — `wasm::run_application` — so a
+terminal, a window and a phone run an application the same way rather than three
+nearly-the-same ways.
+
 What it does **not** yet have is anything to run. An application must either be
 a compiled `.wasm` module or a script whose interpreter is installed, and
 nothing generates the first while no interpreter ships for the second. See
@@ -669,9 +673,10 @@ deliberately do not claim who made it.
 ## What is missing before a phone generates something it can run
 
 A handset can now describe an application, generate it, decide its permissions,
-draw a form from what it declares, run it, and render a page it wrote. Every
-part of that is built and tested. One link is open, and it is worth stating
-plainly rather than discovering.
+draw a form from what it declares, run it, and render a page it wrote — and so
+can a terminal and a window, through the same code. Every part of that is built
+and tested. One link is open, and it is worth stating plainly rather than
+discovering.
 
 **There is no interpreter.** `Program::locate` resolves an application to
 something runnable in two ways. A `.wasm` file is the application itself, which
@@ -694,8 +699,15 @@ So the sequence is:
    installed", which is a less useful sentence than today's honest "this needs a
    computer with Docker".
 
-Until then a phone generates applications for containers, says so, and runs
+Until then Ephemeral generates applications for containers, says so, and runs
 WebAssembly modules put there by other means — which is what the tests do.
+
+There is also a smaller thing worth deciding: `ephemeral run` exits zero even
+when the application it ran exited non-zero. It prints the exit code and the
+program's output, so nothing is hidden, but a job whose failure cannot be
+detected by the shell is a job that cannot be used in a pipeline. Propagating it
+would make `run` behave differently for the two runtimes — a container start
+succeeding means "it started" — which is why it has not simply been changed.
 
 ## Things deliberately not being built yet
 
