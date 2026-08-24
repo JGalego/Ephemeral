@@ -400,6 +400,91 @@ export function rollbackNotice(done) {
   return notice;
 }
 
+/** What a page an application wrote is allowed to be, while it is shown.
+ *
+ * Prepended to the application's own markup, so it is the first policy the
+ * parser meets and therefore the one that applies. `none` for everything, with
+ * two exceptions that cost nothing: inline styles, so a page can look like
+ * something, and `data:` images, so it can draw a chart it computed itself.
+ * Nothing may be fetched from anywhere.
+ */
+const PAGE_POLICY =
+  '<meta http-equiv="Content-Security-Policy" ' +
+  "content=\"default-src 'none'; img-src data:; style-src 'unsafe-inline'\">";
+
+/** The page an application wrote, in a frame that can do nothing else.
+ *
+ * **The interesting part is everything this cannot do.** A WebAssembly
+ * application has no socket, so it writes a page rather than serving one — and
+ * the page is then shown in a frame with an empty `sandbox`, which withholds
+ * scripts, same-origin access, forms and navigation, plus a policy that permits
+ * no subresource loads at all.
+ *
+ * Both, not either. `sandbox` stops the page running code; the policy stops it
+ * putting what it was shown into the query string of an image. Markup a model
+ * wrote is untrusted content and is treated as content.
+ *
+ * That is also why showing somebody a user interface costs no network
+ * permission. An application serving a page on a port needs one, and the same
+ * permission then lets it talk to anybody.
+ */
+export function pageFrame(html) {
+  const frame = document.createElement('iframe');
+  frame.className = 'page';
+  // Empty, not omitted: an absent `sandbox` attribute is no sandbox, and the
+  // two are one character apart.
+  frame.setAttribute('sandbox', '');
+  frame.setAttribute('srcdoc', PAGE_POLICY + html);
+  return frame;
+}
+
+/** What starting an application said, as a notice.
+ *
+ * Two shapes, because starting has two. A container is now running and the
+ * useful thing to say is what it can reach. A WebAssembly module has already
+ * finished, and the useful thing to say is what it produced — so the output is
+ * the notice rather than a line pointing at somewhere else to look.
+ */
+export function runNotice(run) {
+  const notice = element('div', 'notice-body');
+
+  if (run.finished) {
+    notice.appendChild(
+      element(
+        'p',
+        'headline',
+        run.finished.succeeded ? 'It ran.' : `It failed (${run.finished.exit_code}).`,
+      ),
+    );
+  } else {
+    notice.appendChild(element('p', 'headline', `Started. It is ${run.state.toLowerCase()}.`));
+  }
+
+  // Before the output, and in Ephemeral's own voice rather than inside content
+  // the application wrote — where it could be styled to look like anything.
+  if (run.inert) notice.appendChild(element('p', 'caution', run.inert));
+  for (const refusal of run.refused ?? []) notice.appendChild(element('p', 'caution', refusal));
+
+  if (run.finished) {
+    if (run.finished.shown === 'page') {
+      notice.appendChild(pageFrame(run.finished.output));
+    } else if (run.finished.output.trim() === '') {
+      notice.appendChild(element('p', 'note', 'It ran and printed nothing.'));
+    } else {
+      // `textContent`, through `element`, so output is text whatever it
+      // contains. The only place markup from an application is ever parsed is
+      // the frame above, and only when it said it was writing a page.
+      notice.appendChild(element('pre', 'output', run.finished.output));
+    }
+  }
+
+  for (const said of run.confinement ?? []) notice.appendChild(element('p', 'note', said));
+
+  notice.appendChild(element('button', 'dismiss', 'Dismiss'));
+
+  return notice;
+}
+
 /// What can be done to this application right now, as buttons.
 ///
 /// Driven by the events the lifecycle says a person may raise, not by this

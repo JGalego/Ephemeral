@@ -12,6 +12,8 @@
     <color name="ground">#0b0e17</color>
     <!-- the page, one step lighter: gradients and inset areas -->
     <color name="ground_soft">#10141f</color>
+    <!-- somebody else's document, drawn on its own paper — white in both schemes, because a generated page does not know which one is in force and will use a browser's own black text -->
+    <color name="paper">#ffffff</color>
     <!-- a card sitting on the page -->
     <color name="surface">#151a28</color>
     <!-- something floating over it: a banner, a field, a menu -->

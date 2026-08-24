@@ -18,6 +18,7 @@ import {
   problem,
   rollbackConfirm,
   rollbackNotice,
+  runNotice,
 } from './render.js';
 
 /** Where the appearance choice is kept, if somebody makes one. */
@@ -303,31 +304,6 @@ async function start(id, argumentLine) {
   } catch (error) {
     reportProblem(String(error.message ?? error));
   }
-}
-
-/** What starting an application said, as a notice. */
-function runNotice(run) {
-  const notice = document.createElement('div');
-  notice.className = 'notice-body';
-
-  const line = (className, text) => {
-    const node = document.createElement('p');
-    node.className = className;
-    node.textContent = text;
-    notice.appendChild(node);
-  };
-
-  line('headline', `Started. It is ${run.state.toLowerCase()}.`);
-  if (run.inert) line('caution', run.inert);
-  for (const refusal of run.refused) line('caution', refusal);
-  for (const said of run.confinement) line('note', said);
-
-  const dismiss = document.createElement('button');
-  dismiss.className = 'dismiss';
-  dismiss.textContent = 'Dismiss';
-  notice.appendChild(dismiss);
-
-  return notice;
 }
 
 /** Records what somebody asked for, then shows them the result.

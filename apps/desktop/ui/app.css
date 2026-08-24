@@ -646,6 +646,22 @@ li.version .gone { color: var(--ink-quiet); font-size: 0.9rem; }
 
 /* Output is written by generated code, so it is placed as text and never as
    markup, and kept in its own scrollable box rather than pushing the page. */
+/* The page an application wrote.
+ *
+ * White rather than the window's ground, deliberately: this is somebody else's
+ * document, drawn on its own paper, and blending it into the interface would
+ * invite reading Ephemeral's chrome and a generated page as one thing. The
+ * frame is what the border is for.
+ */
+iframe.page {
+  display: block;
+  width: 100%;
+  height: 22rem;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-small);
+  background: var(--paper);
+}
+
 pre.output {
   margin: 0;
   padding: 0.75rem 0.9rem;

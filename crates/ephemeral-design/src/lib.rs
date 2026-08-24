@@ -91,6 +91,13 @@ pub const DARK: Scheme = Scheme {
             what: "the page, one step lighter: gradients and inset areas",
         },
         Colour {
+            name: "paper",
+            hex: "#ffffff",
+            what: "somebody else's document, drawn on its own paper — white in \
+                   both schemes, because a generated page does not know which \
+                   one is in force and will use a browser's own black text",
+        },
+        Colour {
             name: "surface",
             hex: "#151a28",
             what: "a card sitting on the page",
@@ -200,6 +207,13 @@ pub const LIGHT: Scheme = Scheme {
             name: "ground-soft",
             hex: "#ffffff",
             what: "the page, one step lighter: gradients and inset areas",
+        },
+        Colour {
+            name: "paper",
+            hex: "#ffffff",
+            what: "somebody else's document, drawn on its own paper — white in \
+                   both schemes, because a generated page does not know which \
+                   one is in force and will use a browser's own black text",
         },
         Colour {
             name: "surface",

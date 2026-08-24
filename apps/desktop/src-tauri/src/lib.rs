@@ -69,6 +69,26 @@ struct Run {
     confinement: Vec<String>,
     refused: Vec<String>,
     inert: Option<String>,
+
+    /// Set when the application ran to completion rather than being left
+    /// running. Absent for a container, which is still going when this returns.
+    finished: Option<Finished>,
+}
+
+/// An application that ran and is already over.
+///
+/// The WebAssembly runtime's shape: a module is loaded, runs, and is gone, so
+/// there is no container to inspect afterwards and the answer is the whole
+/// result rather than a handle to something still going.
+#[derive(serde::Serialize)]
+struct Finished {
+    succeeded: bool,
+    exit_code: i32,
+    output: String,
+
+    /// `"page"` or `"text"` — decided by the engine from what the application
+    /// declared itself to be, never by the window from the shape of the bytes.
+    shown: String,
 }
 
 /// What an application has been, and what it has printed.
@@ -327,6 +347,36 @@ fn start(id: String, arguments: Vec<String>) -> Result<Run, Failure> {
     let mut workspace = open()?;
     let mut manifest = load(&workspace, &id)?;
 
+    // Two shapes, chosen by what the application declares rather than by
+    // anything the window decides. A container is started and left running; a
+    // WebAssembly module runs to completion and there is nothing left to ask
+    // about afterwards.
+    if manifest.runtime.as_ref().is_some_and(|runtime| {
+        runtime.kind == ephemeral_core::manifest::RuntimeKind::Wasm
+    }) {
+        let ran = ephemeral_engine::container::run_once(
+            &mut workspace,
+            &mut manifest,
+            &arguments,
+            "run from the desktop window",
+        )
+        .map_err(|error| format!("{error:#}"))?;
+
+        return Ok(Run {
+            state: manifest.lifecycle.state().headline().to_owned(),
+            container: None,
+            confinement: Vec::new(),
+            refused: ran.refused,
+            inert: ran.inert,
+            finished: Some(Finished {
+                succeeded: ran.completed.succeeded,
+                exit_code: ran.completed.exit_code,
+                output: ran.completed.output,
+                shown: ran.shown.as_str().to_owned(),
+            }),
+        });
+    }
+
     let started = ephemeral_engine::container::start(
         &mut workspace,
         &mut manifest,
@@ -341,6 +391,7 @@ fn start(id: String, arguments: Vec<String>) -> Result<Run, Failure> {
         confinement: started.confinement,
         refused: started.refused,
         inert: started.inert,
+        finished: None,
     })
 }
 

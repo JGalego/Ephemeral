@@ -12,6 +12,8 @@
   --ground: #0b0e17;
   /* the page, one step lighter: gradients and inset areas */
   --ground-soft: #10141f;
+  /* somebody else's document, drawn on its own paper — white in both schemes, because a generated page does not know which one is in force and will use a browser's own black text */
+  --paper: #ffffff;
   /* a card sitting on the page */
   --surface: #151a28;
   /* something floating over it: a banner, a field, a menu */
@@ -60,6 +62,7 @@
 :root[data-theme="light"] {
   --ground: #f4f6fb;
   --ground-soft: #ffffff;
+  --paper: #ffffff;
   --surface: #ffffff;
   --surface-high: #ffffff;
   --edge: #e2e6f0;
