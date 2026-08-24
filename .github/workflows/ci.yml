@@ -179,6 +179,23 @@ jobs:
       # module gets what it was granted and nothing else — is the reason it
       # exists, so it is checked on its own.
       - run: cargo clippy -p ephemeral-runtime --features wasm --all-targets -- -D warnings
+      # The reference application is a real program rather than a fixture, so
+      # it is held to the same standard as everything else here — and its own
+      # tests run on the host, where a failure is a sentence rather than a trap.
+      - name: The reference application is code, and is treated as code
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test
+        working-directory: examples/tally
+      - name: The target a phone's applications are compiled for
+        run: rustup target add wasm32-wasip1
+      # Everything else that exercises the sandbox assembles a module out of
+      # WebAssembly text, which proves the sandbox holds and not that anybody
+      # could write something for it. This compiles ordinary Rust and runs it
+      # under the real thing — both tiers, in one program.
+      - name: The reference application actually runs, as WebAssembly
+        run: cargo test -p ephemeral-runtime --features wasm --test reference_wasm -- --nocapture
       # Quoted: a plain YAML scalar may not end in a colon, and `wasm::` does.
       # Unquoted, this file does not parse, no job runs at all, and the run
       # fails before it starts — which is what happened, four pushes running.

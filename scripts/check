@@ -115,6 +115,14 @@ cargo test -p ephemeral-runtime --features wasm wasm::
 
 # CI never makes a live model call (ADR-0008). Generation is exercised entirely
 # through the deterministic mock provider.
+step "The reference application actually runs, as WebAssembly"
+if rustup target list --installed 2>/dev/null | grep -qx wasm32-wasip1; then
+    (cd examples/tally && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --quiet)
+    cargo test -p ephemeral-runtime --features wasm --test reference_wasm
+else
+    echo "(skipping: no wasm32-wasip1 target here; \`rustup target add wasm32-wasip1\`)"
+fi
+
 step "Generating and running, in the crate both clients call"
 cargo test -p ephemeral-engine
 

@@ -703,7 +703,12 @@ So the sequence is:
    computer with Docker".
 
 Until then Ephemeral generates applications for containers, says so, and runs
-WebAssembly modules put there by other means — which is what the tests do.
+WebAssembly modules put there by other means. [`examples/tally`](../examples/tally)
+is one: a real program in ordinary Rust, 69 KB compiled, demonstrating both
+tiers — it takes the arguments a form composed, and with `--format html` it
+writes a page for a host to render. `reference_wasm.rs` compiles and runs it
+under the real sandbox on every commit, so the path is exercised end to end by
+something somebody could have written rather than by a test fixture.
 
 There is also a smaller thing worth deciding: `ephemeral run` exits zero even
 when the application it ran exited non-zero. It prints the exit code and the

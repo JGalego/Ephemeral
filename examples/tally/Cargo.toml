@@ -1,0 +1,26 @@
+[package]
+name = "tally"
+description = "The reference WebAssembly application: what a generated application looks like when it runs on a phone."
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+# None, deliberately. Every dependency is something else that has to compile to
+# WebAssembly, and this exists to be read.
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+panic = "abort"
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
