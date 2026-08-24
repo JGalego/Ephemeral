@@ -17,7 +17,13 @@ const ui = join(here, '..', 'ui');
 
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
 
+// Every request this process is asked for, so a test can assert that a frame
+// asked for nothing. A page that fetched something would otherwise be invisible
+// here: it fails silently, and silence looks exactly like being blocked.
+const asked = [];
+
 const server = createServer(async (request, response) => {
+  asked.push(request.url);
   const name = request.url === '/' ? '/index.html' : request.url;
   try {
     const body = await readFile(join(ui, name));
@@ -1288,6 +1294,48 @@ await check('a page an application wrote cannot run code or reach anywhere', asy
   assert.equal(seen.attribute, '', 'sandbox is empty, not absent — they are one character apart');
   assert.match(seen.srcdoc, /^<meta http-equiv="Content-Security-Policy"/);
   assert.match(seen.srcdoc, /default-src 'none'/);
+});
+
+// **The half a sandbox attribute does not cover.** `sandbox` stops a page
+// running code; it does not stop `<img src="https://...">` carrying away what
+// the page was shown. The policy is what does that, and it has to survive three
+// shapes a generated page actually comes in — including one that supplies its
+// own permissive policy, which must not be able to loosen ours.
+await check('a page cannot fetch anything, whatever shape it arrives in', async () => {
+  const leak = `${origin}/leak-check.gif`;
+  const shapes = {
+    'a bare fragment': `<h1>4 rows differ</h1><img src="${leak}">`,
+    'a whole document':
+      '<!DOCTYPE html><html><head><title>Report</title></head>' +
+      `<body><img src="${leak}"></body></html>`,
+    'a document carrying its own permissive policy':
+      '<!DOCTYPE html><html><head>' +
+      '<meta http-equiv="Content-Security-Policy" content="default-src *">' +
+      `</head><body><img src="${leak}"></body></html>`,
+  };
+
+  for (const [shape, html] of Object.entries(shapes)) {
+    asked.length = 0;
+    await page.evaluate(async (markup) => {
+      const { pageFrame } = await import('./render.js');
+      const frame = pageFrame(markup);
+      document.body.appendChild(frame);
+      await new Promise((resolve) => {
+        frame.addEventListener('load', resolve, { once: true });
+        setTimeout(resolve, 1200);
+      });
+      // A blocked request fails immediately and a permitted one does not, so
+      // give a permitted one time to arrive before concluding it never did.
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      frame.remove();
+    }, html);
+
+    assert.deepEqual(
+      asked.filter((url) => url.includes('leak-check')),
+      [],
+      `${shape}: the page reached the network`,
+    );
+  }
 });
 
 // Text output is text, whatever it looks like. Only a page declared as a page
