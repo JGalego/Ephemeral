@@ -138,3 +138,28 @@ That is the same mistake one level up.
 Rejected for the same reason with more symbols: the boundary would grow one
 function per wire format forever, and each one would still be the ABI knowing
 something only a provider should know.
+
+## Amendment (2026-08-24): the method crosses too
+
+`EphemeralHttpSend` now takes a `method` — `"GET"` or `"POST"` — ahead of the
+endpoint, and `request_json` is empty for a `GET`.
+
+This decision moved the headers across the boundary and left the method behind,
+because at the time there was only one kind of request. Then listing what a
+service offers arrived as a `GET`, `Method` was added to `HttpRequest` so the
+`curl` transport could name it — and the C ABI, which had no way to say it,
+silently kept POSTing. Both hosts had hard-coded `POST` since the day they were
+written, and both were right until they weren't.
+
+A phone found it: the connection test failed with *"the API's reply was not
+JSON: EOF while parsing a value at line 1 column 0"* against a key and an
+endpoint that generation used successfully seconds later. The listing had gone
+to `/v1/models` as a `POST`; OpenAI refused it with an empty body; an empty body
+is not JSON.
+
+It is the same mistake this ADR was written about, one field over. The ABI
+described one shape of request because one shape was all there was, and the
+hosts filled in the rest from what they assumed. The fix is the same: what the
+provider decided crosses the boundary, and the host performs it rather than
+inferring it. The C host in `tests/host.c` and the Java one in `tests/java` now
+assert the method on both kinds of request, which is what nothing did before.

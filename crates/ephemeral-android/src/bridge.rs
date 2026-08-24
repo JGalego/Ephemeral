@@ -145,6 +145,7 @@ fn opening_failed(reason: String) -> jlong {
 #[allow(unsafe_code)]
 extern "C" fn send(
     context: *mut c_void,
+    method: *const c_char,
     endpoint: *const c_char,
     headers_json: *const c_char,
     request_json: *const c_char,
@@ -157,16 +158,17 @@ extern "C" fn send(
         // and it outlives the handle by construction — see `Session`.
         let host = unsafe { &*context.cast::<Host>() };
 
-        // SAFETY: the C ABI guarantees three NUL-terminated strings valid for
+        // SAFETY: the C ABI guarantees four NUL-terminated strings valid for
         // the duration of this call.
         let borrowed = unsafe {
             (
+                CStr::from_ptr(method).to_str(),
                 CStr::from_ptr(endpoint).to_str(),
                 CStr::from_ptr(headers_json).to_str(),
                 CStr::from_ptr(request_json).to_str(),
             )
         };
-        let (Ok(endpoint), Ok(headers), Ok(body)) = borrowed else {
+        let (Ok(method), Ok(endpoint), Ok(headers), Ok(body)) = borrowed else {
             return ptr::null_mut();
         };
 
@@ -174,7 +176,8 @@ extern "C" fn send(
             return ptr::null_mut();
         };
 
-        let Some(reply) = ask_host(&mut guard, &host.transport, endpoint, headers, body) else {
+        let Some(reply) = ask_host(&mut guard, &host.transport, method, endpoint, headers, body)
+        else {
             return ptr::null_mut();
         };
 
@@ -186,10 +189,12 @@ extern "C" fn send(
 fn ask_host(
     env: &mut JNIEnv<'_>,
     transport: &GlobalRef,
+    method: &str,
     endpoint: &str,
     headers: &str,
     body: &str,
 ) -> Option<String> {
+    let method = env.new_string(method).ok()?;
     let endpoint = env.new_string(endpoint).ok()?;
     let headers = env.new_string(headers).ok()?;
     let body = env.new_string(body).ok()?;
@@ -197,8 +202,9 @@ fn ask_host(
     let outcome = env.call_method(
         transport.as_obj(),
         "send",
-        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
+        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
         &[
+            JValue::Object(&method),
             JValue::Object(&endpoint),
             JValue::Object(&headers),
             JValue::Object(&body),

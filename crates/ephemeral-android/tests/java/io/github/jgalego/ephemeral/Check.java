@@ -61,6 +61,7 @@ public final class Check {
             "and an https endpoint"
         );
         require(refusing.body != null && refusing.body.contains("{"), "and a JSON body");
+        require("POST".equals(refusing.method), "asking a model for something is a POST");
         require(Native.lastError(session) != null, "the refusal is reported");
 
         // Choosing a service. JNI is looked up by name and signature at call
@@ -98,6 +99,12 @@ public final class Check {
             refusing.endpoint != null && refusing.endpoint.endsWith("/models"),
             "having asked the service where it lists them"
         );
+        // The bug a real phone found: the method never crossed the bridge, so
+        // this went out as a POST, OpenAI refused it with an empty body, and
+        // the connection test reported a JSON parse error for a key that was
+        // perfectly good.
+        require("GET".equals(refusing.method), "and asked for it with a GET");
+        require("".equals(refusing.body), "which carries no body at all");
         require(Native.lastError(session) != null, "and the refusal is reported");
 
         // Turning a filled-in form into a command crosses the bridge too. This
@@ -179,6 +186,7 @@ public final class Check {
         private final String reply;
 
         int calls;
+        String method;
         String endpoint;
         String headers;
         String body;
@@ -188,8 +196,9 @@ public final class Check {
         }
 
         @Override
-        public String send(String endpoint, String headersJson, String body) {
+        public String send(String method, String endpoint, String headersJson, String body) {
             this.calls++;
+            this.method = method;
             this.endpoint = endpoint;
             this.headers = headersJson;
             this.body = body;
@@ -202,7 +211,7 @@ public final class Check {
         int calls;
 
         @Override
-        public String send(String endpoint, String headersJson, String body) {
+        public String send(String method, String endpoint, String headersJson, String body) {
             this.calls++;
             throw new IllegalStateException("this host's transport is broken");
         }

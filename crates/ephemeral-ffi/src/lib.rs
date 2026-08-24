@@ -52,7 +52,7 @@ use std::sync::Mutex;
 use ephemeral_agent::AgentProvider;
 use ephemeral_agent::transport::{HttpRequest, Transport};
 use ephemeral_core::{
-    Actor, AppId,
+    Actor, AppId, AppManifest,
     lifecycle::TransitionRequest,
     storage::{AppStore as _, Workspace},
 };
@@ -81,6 +81,14 @@ pub const EPHEMERAL_BAD_HANDLE: c_int = -2;
 /// Every argument is a NUL-terminated UTF-8 string that is only valid for the
 /// duration of the call.
 ///
+/// `method` is `GET` or `POST`, and the host is to use exactly that. It crosses
+/// the boundary because generation needs both: a `POST` asks a model for
+/// something, a `GET` asks a service what models it has. A host that assumed
+/// `POST` sent the listing request to `/v1/models` as a `POST` — which every
+/// service refuses, most of them with an empty body, so the one call a person
+/// makes before spending anything failed with a JSON parse error naming no
+/// cause. `request_json` is empty for a `GET` and no body is to be sent.
+///
 /// `headers_json` is the complete header set the provider composed, in order,
 /// as `[{"name":"…","value":"…"}, …]`. The host sets exactly these and adds
 /// nothing: the credential is one of them, and so is whatever else the service
@@ -89,6 +97,7 @@ pub const EPHEMERAL_BAD_HANDLE: c_int = -2;
 /// be pointed anywhere else no matter what anybody configured.
 pub type EphemeralHttpSend = extern "C" fn(
     context: *mut c_void,
+    method: *const c_char,
     endpoint: *const c_char,
     headers_json: *const c_char,
     request_json: *const c_char,
@@ -107,6 +116,14 @@ struct HostTransport {
     context: *mut c_void,
     send: EphemeralHttpSend,
     free: EphemeralHttpFree,
+
+    /// Which service this transport is sending for.
+    ///
+    /// Carried so a failure is reported against the thing a person chose. Every
+    /// failure here used to be attributed to `host`, which is not a provider,
+    /// is not in the picker, and told somebody looking at "the API's reply was
+    /// not JSON" nothing about which API.
+    provider: String,
 }
 
 // SAFETY-adjacent reasoning, stated rather than assumed: `context` is an opaque
@@ -136,22 +153,33 @@ impl Transport for HostTransport {
             .collect();
 
         let failure = |reason: String| ephemeral_agent::AgentError::Failed {
-            provider: "host".to_owned(),
+            provider: self.provider.clone(),
             reason,
         };
 
         let written = serde_json::to_string(&headers)
             .map_err(|error| failure(format!("the headers could not be written: {error}")))?;
 
+        let method = CString::new(request.method.as_str())
+            .map_err(|_| failure("the method is not a C string".to_owned()))?;
         let endpoint = CString::new(request.endpoint)
             .map_err(|_| failure("the endpoint is not a C string".to_owned()))?;
         let headers =
             CString::new(written).map_err(|_| failure("a header is not a C string".to_owned()))?;
-        let body = CString::new(request.body.to_string())
+        // Nothing at all for a GET, rather than the four characters `null` that
+        // writing `Value::Null` produces. A host is told to send no body for a
+        // GET, and handing it one it must remember to ignore is an invitation
+        // to a bug on every platform separately.
+        let sent = match request.method {
+            ephemeral_agent::transport::Method::Get => String::new(),
+            ephemeral_agent::transport::Method::Post => request.body.to_string(),
+        };
+        let body = CString::new(sent)
             .map_err(|_| failure("the request body is not a C string".to_owned()))?;
 
         let reply = (self.send)(
             self.context,
+            method.as_ptr(),
             endpoint.as_ptr(),
             headers.as_ptr(),
             body.as_ptr(),
@@ -173,8 +201,20 @@ impl Transport for HostTransport {
             .into_owned();
         (self.free)(self.context, reply);
 
+        // An empty reply is its own failure, not a parse error. A host that
+        // gets a refusal with no body hands back an empty string, and reporting
+        // that as "EOF while parsing a value at line 1 column 0" describes the
+        // parser rather than the thing that went wrong.
+        if copied.trim().is_empty() {
+            return Err(failure(format!(
+                "{} answered {} with nothing at all",
+                request.endpoint,
+                request.method.as_str()
+            )));
+        }
+
         serde_json::from_str(&copied).map_err(|error| ephemeral_agent::AgentError::Unreadable {
-            provider: "host".to_owned(),
+            provider: self.provider.clone(),
             reason: format!("the API's reply was not JSON: {error}"),
             raw: copied,
         })
@@ -243,17 +283,19 @@ impl Ephemeral {
     /// through a placeholder transport whenever a credential arrived, and could
     /// not change anything else about it at all.
     fn provider(&self) -> Result<Box<dyn AgentProvider>, String> {
-        let transport = HostTransport {
-            context: self.context,
-            send: self.send,
-            free: self.free,
-        };
-
         let choice = self
             .choice
             .lock()
             .map_err(|_| "the provider choice could not be read".to_owned())?
             .clone();
+
+        let transport = HostTransport {
+            context: self.context,
+            send: self.send,
+            free: self.free,
+            provider: choice.provider.clone(),
+        };
+
         let credential = self
             .credential
             .lock()
@@ -885,9 +927,11 @@ fn generate(ephemeral: &Ephemeral, id: &str) -> Result<*mut c_char, String> {
         .apply(TransitionRequest::new(
             ephemeral_core::LifecycleEvent::GenerationCompleted,
             Actor::Agent,
-            "written on a phone; not built here",
+            "written on a phone",
         ))
         .map_err(|error| format!("could not record generation: {error}"))?;
+
+    settle(&workspace, &mut manifest)?;
 
     // Every capability the plan asked for is recorded as a request, granted
     // nothing. A phone cannot quietly widen what an application may do.
@@ -912,6 +956,107 @@ fn generate(ephemeral: &Ephemeral, id: &str) -> Result<*mut c_char, String> {
         .map_err(|error| format!("could not save: {error}"))?;
 
     json(&ephemeral_api::application(&manifest, &workspace))
+}
+
+/// Puts a freshly generated application into the state it is actually in.
+///
+/// Generation ends at `Building`, and on a phone nothing builds. So every
+/// application ever generated on a handset sat in `Building` for ever, under a
+/// screen reading *"Ephemeral is building the app and setting up what it needs
+/// to run"* — which was not true a millisecond after it was written, on a
+/// device with nothing on it that could build anything.
+///
+/// There are two honest endings, and which one applies is a question about the
+/// application rather than about the device it was written on:
+///
+/// * **WebAssembly that this device can run.** Nothing is left to do: a module
+///   is already compiled, so `Building` and `Validating` are passed through
+///   with reasons that say nothing was built or tested rather than borrowing
+///   the container path's words. This is the same route
+///   `ephemeral_engine::generation` takes for a WebAssembly recipe, for the
+///   same reason.
+///
+/// * **Anything else.** A container image needs a container runtime and a
+///   handset has none ([ADR-0021]). That is a blocker a person has to resolve
+///   on another machine, and `Blocked` is the state that says exactly that —
+///   *"Ephemeral cannot continue until something is resolved"* — with the
+///   reason recorded beside it. The recipe is complete and portable
+///   ([ADR-0012]); what is missing is somewhere to build it.
+///
+/// Neither ending is a failure. `BuildFailed` would claim a build was attempted
+/// and did not work, and nothing was attempted.
+///
+/// Today every application generated on a phone takes the second route, because
+/// generation still writes container applications whatever the device asking
+/// for one can run. Teaching it to write for this runtime is its own piece of
+/// work; this function is what that work arrives at, and it is asked the same
+/// question either way.
+///
+/// [ADR-0012]: https://github.com/JGalego/Ephemeral/blob/main/docs/architecture/decisions/0012-sharing-distributes-recipes.md
+/// [ADR-0021]: https://github.com/JGalego/Ephemeral/blob/main/docs/architecture/decisions/0021-webassembly-is-the-runtime-a-phone-can-have.md
+fn settle(workspace: &Workspace, manifest: &mut AppManifest) -> Result<(), String> {
+    // Whichever ending applies, decided before anything is recorded: the
+    // question is about the application, and asking it half-way through a
+    // sequence of transitions would be asking it about a different one.
+    let next: Vec<(ephemeral_core::LifecycleEvent, Actor, String)> =
+        match runnable_here(workspace, manifest) {
+            Ok(()) => vec![
+                (
+                    ephemeral_core::LifecycleEvent::BuildSucceeded,
+                    Actor::Runtime,
+                    "nothing to build: WebAssembly arrives compiled".to_owned(),
+                ),
+                (
+                    ephemeral_core::LifecycleEvent::ValidationPassed,
+                    Actor::Runtime,
+                    "the module loads and has an entry point".to_owned(),
+                ),
+            ],
+            Err(why) => vec![(ephemeral_core::LifecycleEvent::Block, Actor::Ephemeral, why)],
+        };
+
+    for (event, actor, why) in next {
+        // Anything already applied is skipped rather than forced: an
+        // application part-way along this route is being finished, not redone.
+        if manifest.lifecycle.can_apply(event, actor) {
+            manifest
+                .apply(TransitionRequest::new(event, actor, &why))
+                .map_err(|error| format!("could not record what happens next: {error}"))?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Whether this device can finish the application, or why it cannot.
+///
+/// The error is the sentence a person reads, so it says what is in the way and
+/// where the rest of it can happen — not "unsupported runtime".
+fn runnable_here(workspace: &Workspace, manifest: &AppManifest) -> Result<(), String> {
+    let Some(runtime) = &manifest.runtime else {
+        return Err("it did not say what it runs on, so nothing here can finish it".to_owned());
+    };
+
+    if runtime.kind != ephemeral_core::manifest::RuntimeKind::Wasm {
+        return Err(format!(
+            "this device has no {} runtime, so it cannot build the app.              Everything needed to build it is written down and travels with it —              open it on a computer that has one.",
+            runtime.kind.as_str()
+        ));
+    }
+
+    let layout = workspace.layout();
+    let program = ephemeral_runtime::wasm::Program::locate(
+        runtime.program.as_deref(),
+        &layout.app(&manifest.id).source(),
+        &layout.interpreters_dir(),
+    )
+    .map_err(|error| error.to_string())?;
+
+    let bytes = std::fs::read(program.wasm())
+        .map_err(|error| format!("{} could not be read: {error}", program.wasm().display()))?;
+
+    ephemeral_runtime::wasm::inspect(&bytes)
+        .map_err(|error| format!("it is not something this device can run: {error}"))
 }
 
 fn decide(ephemeral: &Ephemeral, id: &str, capability: &str, allow: bool) -> Result<(), String> {
@@ -1032,8 +1177,17 @@ mod tests {
         /// reach" is now a question with more than one possible answer, and it
         /// is the question the whole provider seam exists to let a person
         /// decide.
-        static SENT: std::cell::RefCell<Vec<(String, String)>> =
+        static SENT: std::cell::RefCell<Vec<Asked>> =
             const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    /// One request the fake host was asked to make.
+    #[derive(Clone)]
+    struct Asked {
+        method: String,
+        endpoint: String,
+        headers: String,
+        body: String,
     }
 
     /// Queues what the fake host will reply, in the order it will be asked.
@@ -1045,12 +1199,16 @@ mod tests {
     /// The first request the host was asked to make: where, and with which
     /// headers.
     fn first_request() -> (String, Value) {
-        let (endpoint, headers) =
-            SENT.with(|slot| slot.borrow().first().cloned().expect("a request was sent"));
+        let asked = SENT.with(|slot| slot.borrow().first().cloned().expect("a request was sent"));
         (
-            endpoint,
-            serde_json::from_str(&headers).expect("JSON headers"),
+            asked.endpoint,
+            serde_json::from_str(&asked.headers).expect("JSON headers"),
         )
+    }
+
+    /// Every request the host was asked to make, in order.
+    fn requests() -> Vec<Asked> {
+        SENT.with(|slot| slot.borrow().clone())
     }
 
     /// One header's value, matched case-insensitively as HTTP does.
@@ -1064,9 +1222,10 @@ mod tests {
 
     extern "C" fn send(
         _context: *mut c_void,
+        method: *const c_char,
         endpoint: *const c_char,
         headers: *const c_char,
-        _request: *const c_char,
+        request: *const c_char,
     ) -> *mut c_char {
         let read = |pointer: *const c_char| {
             if pointer.is_null() {
@@ -1077,7 +1236,14 @@ mod tests {
                     .into_owned()
             }
         };
-        SENT.with(|slot| slot.borrow_mut().push((read(endpoint), read(headers))));
+        SENT.with(|slot| {
+            slot.borrow_mut().push(Asked {
+                method: read(method),
+                endpoint: read(endpoint),
+                headers: read(headers),
+                body: read(request),
+            });
+        });
 
         let next = REPLIES.with(|slot| slot.borrow_mut().pop());
         next.map_or(std::ptr::null_mut(), |text| {
@@ -1263,6 +1429,158 @@ mod tests {
         assert_eq!(listed, "[]", "reached, and it has nothing");
 
         unsafe { ephemeral_close(handle) };
+    }
+
+    /// **The listing is asked for as a `GET`, and generation as a `POST`.**
+    ///
+    /// The method crosses the boundary because both hosts assumed `POST` and
+    /// neither could have been told otherwise. That sent the connection test to
+    /// `/v1/models` as a `POST`, which OpenAI refuses with an empty body — so a
+    /// real phone reported "the API's reply was not JSON" for a key and an
+    /// endpoint that both worked, and generation against the same service
+    /// succeeded seconds later.
+    ///
+    /// A `GET` carries no body at all rather than the four characters `null`,
+    /// which is what writing out a JSON null produced.
+    #[test]
+    fn a_listing_is_a_get_with_no_body_and_generation_is_a_post() {
+        let home = tempfile::tempdir().unwrap();
+        let handle = open(home.path());
+        unsafe { ephemeral_set_credential(handle, c("sk-not-a-real-key").as_ptr()) };
+
+        queue(vec![serde_json::json!({ "data": [] }).to_string()]);
+        let _ = text(unsafe { ephemeral_models(handle) });
+
+        let listing = requests();
+        let listing = listing.first().expect("a listing was sent");
+        assert_eq!(listing.method, "GET", "{}", listing.endpoint);
+        assert_eq!(listing.body, "", "a GET carries no body, not the word null");
+
+        let created =
+            text(unsafe { ephemeral_create(handle, c("compare two CSV files").as_ptr()) });
+        let id = serde_json::from_str::<Value>(&created).unwrap()["id"]
+            .as_str()
+            .expect("an id")
+            .to_owned();
+
+        queue(vec![
+            reply(
+                r#"{"name":"CSV Comparator","summary":"compares two CSV files",
+                    "runtime":"docker","image":"python:3.12-slim",
+                    "interface":"command_line","requests":[]}"#,
+            ),
+            reply(
+                r#"{"files":[{"path":"main.py","contents":"print('hi')"}],
+                    "dockerfile":"FROM python:3.12-slim\nCOPY . /app",
+                    "entrypoint":["python","/app/main.py"],
+                    "test_command":["python","-c","print(1)"]}"#,
+            ),
+        ]);
+        let generated = unsafe { ephemeral_generate(handle, c(&id).as_ptr()) };
+        assert!(
+            !generated.is_null(),
+            "generate failed: {}",
+            text(unsafe { ephemeral_last_error(handle) })
+        );
+
+        for asked in requests() {
+            assert_eq!(
+                asked.method, "POST",
+                "asking a model for something is a POST: {}",
+                asked.endpoint
+            );
+            assert!(
+                asked.body.contains("\"model\""),
+                "a POST carries the request body: {}",
+                asked.body
+            );
+        }
+
+        unsafe { ephemeral_close(handle) };
+    }
+
+    /// A reply with nothing in it is reported as nothing, against the service
+    /// a person actually chose.
+    ///
+    /// Both halves are what a real phone got wrong at once: an empty body was
+    /// described as a JSON parse error ("EOF while parsing a value at line 1
+    /// column 0"), and it was attributed to `host`, which is not a provider,
+    /// is not in the picker and is not a thing anybody selected.
+    #[test]
+    fn an_empty_reply_says_so_and_names_the_service() {
+        let home = tempfile::tempdir().unwrap();
+        let handle = open(home.path());
+        unsafe {
+            ephemeral_set_provider(handle, c(r#"{"provider":"openai"}"#).as_ptr());
+            ephemeral_set_credential(handle, c("sk-not-a-real-key").as_ptr());
+        }
+
+        queue(vec![String::new()]);
+        assert!(unsafe { ephemeral_models(handle) }.is_null());
+
+        let why = text(unsafe { ephemeral_last_error(handle) });
+        assert!(
+            why.contains("nothing at all"),
+            "an empty reply is not a parse failure: {why}"
+        );
+        assert!(
+            why.contains("openai"),
+            "reported against the service that was chosen: {why}"
+        );
+        assert!(
+            !why.contains("EOF while parsing"),
+            "the parser is not what went wrong: {why}"
+        );
+
+        unsafe { ephemeral_close(handle) };
+    }
+
+    /// **What a phone writes comes to rest somewhere true.**
+    ///
+    /// Generation ends at `Building`, and nothing on a handset builds. Every
+    /// application ever generated on one therefore sat in `Building` for ever,
+    /// under a screen reading *"Ephemeral is building the app and setting up
+    /// what it needs to run"* — on a device with nothing on it that could.
+    ///
+    /// This asserts the question `settle` asks, on both answers. The container
+    /// answer is what `ephemeral_generate` produces today and is covered end to
+    /// end by
+    /// [`an_application_is_generated_through_the_hosts_transport`]; the
+    /// WebAssembly answer is asked here directly, because generation does not
+    /// write for that runtime yet — the plans it produces are container plans,
+    /// and teaching it otherwise is its own piece of work.
+    #[test]
+    fn what_a_device_can_finish_is_a_question_about_the_application() {
+        let home = tempfile::tempdir().unwrap();
+        let app = install(home.path(), "tally", SAYS_HELLO);
+        let workspace = Workspace::open(home.path()).unwrap();
+
+        let module = workspace.apps().load(&app).unwrap();
+        assert!(
+            runnable_here(&workspace, &module).is_ok(),
+            "a compiled module needs nothing built and nothing installed"
+        );
+
+        // The same application, said to be a container. Nothing about the files
+        // changed; what changed is what it claims to need.
+        let mut container = module.clone();
+        container.runtime = Some(ephemeral_core::manifest::RuntimeSpec {
+            kind: ephemeral_core::manifest::RuntimeKind::Docker,
+            image: Some("python:3.12-slim".to_owned()),
+            ..module.runtime.clone().unwrap()
+        });
+        let why = runnable_here(&workspace, &container).expect_err("a phone has no Docker");
+        assert!(why.contains("docker"), "{why}");
+        assert!(
+            why.contains("computer"),
+            "it has to say where the rest of it can happen: {why}"
+        );
+
+        // And a WebAssembly application whose module is not there. Not a
+        // failure of the device — a failure to say what to run.
+        let mut nothing = module.clone();
+        nothing.runtime.as_mut().unwrap().program = None;
+        assert!(runnable_here(&workspace, &nothing).is_err());
     }
 
     /// **A phone runs an application.**
@@ -1808,8 +2126,17 @@ mod tests {
         );
         let detail: Value = serde_json::from_str(&text(produced)).unwrap();
 
-        // Generated, and explicitly *not* built: a phone has no sandbox.
-        assert_eq!(detail["summary"]["state_kind"], "working");
+        // Generated, and explicitly *not* built: a phone has no sandbox. It
+        // comes to rest saying so, rather than in `Building` under a screen
+        // reading "Ephemeral is building the app" on a device where nothing
+        // is or ever will be.
+        assert_eq!(detail["summary"]["state"], "Blocked");
+        assert_eq!(detail["summary"]["state_kind"], "awaitinguser");
+        let explanation = detail["explanation"].as_str().unwrap_or_default();
+        assert!(
+            explanation.contains("docker") && explanation.contains("computer"),
+            "it should say what is in the way and where the rest can happen: {explanation}"
+        );
         assert!(
             home.path()
                 .join("apps")

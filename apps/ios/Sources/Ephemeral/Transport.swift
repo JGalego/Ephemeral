@@ -21,14 +21,21 @@ enum Transport {
     /// closure with no context — everything it needs arrives as an argument.
     /// Blocking is correct here: the engine's call is synchronous, and it is
     /// already running off the main thread on the engine's own queue.
-    static let send: EphemeralHttpSend = { _, endpoint, headersJson, body in
-        guard let endpoint, let headersJson, let body,
+    static let send: EphemeralHttpSend = { _, method, endpoint, headersJson, body in
+        guard let method, let endpoint, let headersJson, let body,
               let url = URL(string: String(cString: endpoint))
         else { return nil }
 
+        // The method the provider asked for, not an assumption. Listing what a
+        // service has is a GET, and the version of this that always POSTed sent
+        // that to `/v1/models` — which OpenAI refuses with an empty body, so
+        // the connection test failed while generation worked.
+        let verb = String(cString: method)
         var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.httpBody = Data(String(cString: body).utf8)
+        request.httpMethod = verb
+        if verb == "POST" {
+            request.httpBody = Data(String(cString: body).utf8)
+        }
 
         // Exactly the headers the provider composed, and nothing added here.
         // Which headers a service wants is the provider's knowledge; this file

@@ -93,17 +93,27 @@ struct host {
  * The HTTPS transport. On a phone this is URLSession or OkHttp; here it answers
  * from a script. Either way Ephemeral never opens a socket.
  */
-static char *host_send(void *context, const char *endpoint,
+static char *host_send(void *context, const char *method, const char *endpoint,
                        const char *headers_json, const char *request_json) {
   struct host *host = context;
 
   /* The contract says these are readable for the duration of the call. */
+  assert(method != NULL);
   assert(endpoint != NULL);
   assert(headers_json != NULL);
-  /* A completion names a model; a listing is a GET and carries no body at all,
-     which is `null` by the time it reaches here. */
   assert(request_json != NULL);
-  if (strstr(endpoint, "/models") == NULL) {
+
+  /* Asking a service what it has is a GET with no body; asking a model for
+     something is a POST that names one. Both halves are asserted because a
+     host that ignored the method and always POSTed is exactly the bug this
+     argument exists to prevent, and nothing here noticed it: a real phone
+     POSTed the listing to `/v1/models`, got an empty refusal back, and
+     reported it as a JSON parse error. */
+  if (strstr(endpoint, "/models") != NULL) {
+    assert(strcmp(method, "GET") == 0);
+    assert(request_json[0] == '\0');
+  } else {
+    assert(strcmp(method, "POST") == 0);
     assert(strstr(request_json, "\"model\"") != NULL);
   }
 

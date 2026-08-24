@@ -153,14 +153,21 @@ final class EphemeralEngine {
     init(home: URL, credential: String) throws {
         // Two C function pointers. Neither may capture context, so everything
         // they need travels through the `context` argument instead.
-        let send: EphemeralHttpSend = { context, endpoint, headersJson, body in
-            guard let endpoint, let headersJson, let body,
+        let send: EphemeralHttpSend = { context, method, endpoint, headersJson, body in
+            guard let method, let endpoint, let headersJson, let body,
                   let url = URL(string: String(cString: endpoint))
             else { return nil }
 
+            // Use the method you are given. Asking a model for something is a
+            // POST; asking a service what models it has is a GET, and sending
+            // that as a POST is refused — with an empty body, by most services,
+            // so the failure names no cause.
+            let verb = String(cString: method)
             var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.httpBody = Data(String(cString: body).utf8)
+            request.httpMethod = verb
+            if verb == "POST" {
+                request.httpBody = Data(String(cString: body).utf8)
+            }
 
             // Exactly what the provider composed, and nothing added here.
             let headers = try? JSONSerialization.jsonObject(

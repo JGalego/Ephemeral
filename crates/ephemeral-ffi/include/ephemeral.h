@@ -45,9 +45,9 @@ typedef struct Ephemeral EphemeralHandle;
  * what makes generating on iOS possible at all: the desktop transport spawns
  * `curl`, and iOS does not allow a process to spawn another process.
  *
- * POST `request_json` to `endpoint` with exactly the headers in
- * `headers_json`, which is a JSON array in the order the provider composed
- * them:
+ * Send `request_json` to `endpoint` using `method` — "GET" or "POST" — with
+ * exactly the headers in `headers_json`, which is a JSON array in the order
+ * the provider composed them:
  *
  *     [{"name": "x-api-key", "value": "…"},
  *      {"name": "anthropic-version", "value": "2023-06-01"},
@@ -58,11 +58,18 @@ typedef struct Ephemeral EphemeralHandle;
  * `api_key` that you wrapped in Anthropic's headers yourself, which meant a
  * phone could only ever talk to Anthropic however it was configured.
  *
+ * Use the method you are given. `request_json` is empty for a GET and no body
+ * is to be sent with one. A host that assumed POST sent the models listing to
+ * `/v1/models` as a POST, which every service refuses — most of them with an
+ * empty body, so the one call a person makes before spending anything failed
+ * with a parse error that named no cause.
+ *
  * Return the response body as a newly allocated NUL-terminated string, or NULL
  * on any failure. Ephemeral copies it immediately and then passes it to your
  * free function, so the allocation is yours throughout.
  */
-typedef char *(*EphemeralHttpSend)(void *context, const char *endpoint,
+typedef char *(*EphemeralHttpSend)(void *context, const char *method,
+                                   const char *endpoint,
                                    const char *headers_json,
                                    const char *request_json);
 

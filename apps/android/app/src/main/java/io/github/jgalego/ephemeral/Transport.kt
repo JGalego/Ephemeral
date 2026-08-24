@@ -15,8 +15,15 @@ import javax.net.ssl.HttpsURLConnection
  */
 interface Transport {
     /**
-     * POSTs [body] to [endpoint] with exactly the headers in [headersJson],
-     * returning the response body or null on any failure.
+     * Sends [body] to [endpoint] by [method] with exactly the headers in
+     * [headersJson], returning the response body or null on any failure.
+     *
+     * [method] is `GET` or `POST` and is to be used as given. [body] is empty
+     * for a `GET` and none is to be sent with one. The version of this that
+     * always POSTed sent the models listing to `/v1/models` as a POST, which
+     * OpenAI refuses with an empty body — so the connection test, the one call
+     * a person makes before spending anything, failed with a JSON parse error
+     * while generation against the same service worked seconds later.
      *
      * [headersJson] is `[{"name":…,"value":…}, …]` — the complete set the
      * provider composed, credential included. This app sets those and adds
@@ -28,7 +35,7 @@ interface Transport {
      * exception here crosses back into native code, where there is nothing that
      * can act on it.
      */
-    fun send(endpoint: String, headersJson: String, body: String): String?
+    fun send(method: String, endpoint: String, headersJson: String, body: String): String?
 }
 
 /** The platform's HTTPS stack, and nothing on top of it. */
@@ -36,7 +43,7 @@ internal object Https : Transport {
     private const val CONNECT_TIMEOUT = 30_000
     private const val READ_TIMEOUT = 180_000
 
-    override fun send(endpoint: String, headersJson: String, body: String): String? {
+    override fun send(method: String, endpoint: String, headersJson: String, body: String): String? {
         var connection: HttpURLConnection? = null
         return try {
             // Plain HTTP would put the credential on the wire in clear text, so
@@ -45,10 +52,15 @@ internal object Https : Transport {
             if (opened !is HttpsURLConnection) return null
             connection = opened
 
-            opened.requestMethod = "POST"
+            opened.requestMethod = method
             opened.connectTimeout = CONNECT_TIMEOUT
             opened.readTimeout = READ_TIMEOUT
-            opened.doOutput = true
+            // Setting this at all makes the request a POST, whatever
+            // requestMethod was told — HttpURLConnection decides the method
+            // from whether there is a body to write. So it is set only when
+            // there is one.
+            val sends = method.equals("POST", ignoreCase = true)
+            opened.doOutput = sends
             // Whatever the provider asked for, and only that.
             val headers = JSONArray(headersJson)
             for (index in 0 until headers.length()) {
@@ -56,7 +68,9 @@ internal object Https : Transport {
                 opened.setRequestProperty(header.optString("name"), header.optString("value"))
             }
 
-            opened.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+            if (sends) {
+                opened.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+            }
 
             // The error body is returned too, not swallowed: when a provider
             // refuses, its own words are the most useful thing a person can be

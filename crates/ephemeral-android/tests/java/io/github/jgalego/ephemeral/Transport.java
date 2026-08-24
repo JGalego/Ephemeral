@@ -8,9 +8,14 @@ package io.github.jgalego.ephemeral;
  */
 public interface Transport {
     /**
-     * POSTs {@code body} to {@code endpoint} with exactly the headers in
-     * {@code headersJson}, which is {@code [{"name":…,"value":…}, …]} — the
-     * complete set the provider composed, credential included.
+     * Sends {@code body} to {@code endpoint} by {@code method} — "GET" or
+     * "POST" — with exactly the headers in {@code headersJson}, which is
+     * {@code [{"name":…,"value":…}, …]}: the complete set the provider
+     * composed, credential included.
+     *
+     * The method is given rather than assumed. A host that always POSTed sent
+     * the models listing to {@code /v1/models} as a POST, which every service
+     * refuses; {@code body} is empty for a GET and none is to be sent.
      */
-    String send(String endpoint, String headersJson, String body);
+    String send(String method, String endpoint, String headersJson, String body);
 }
