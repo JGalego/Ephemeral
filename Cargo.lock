@@ -424,6 +424,7 @@ dependencies = [
  "ephemeral-runtime",
  "serde",
  "tempfile",
+ "wat",
 ]
 
 [[package]]

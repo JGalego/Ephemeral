@@ -11,7 +11,10 @@ authors.workspace = true
 
 [dependencies]
 ephemeral-core.workspace = true
-ephemeral-runtime.workspace = true
+# Both runtimes. The daemon half drives Docker; the `wasm` half is what runs
+# where there is no daemon, and the engine has to reach it or a laptop is less
+# capable than a phone.
+ephemeral-runtime = { workspace = true, features = ["wasm"] }
 ephemeral-agent.workspace = true
 ephemeral-api.workspace = true
 ephemeral-provider-anthropic.workspace = true
@@ -24,6 +27,10 @@ serde.workspace = true
 [dev-dependencies]
 chrono.workspace = true
 tempfile.workspace = true
+
+# Test applications are written as WebAssembly text and assembled here. A
+# `.wasm` blob in the repository is a thing nobody can review.
+wat = "1.257.1"
 
 [lints]
 workspace = true

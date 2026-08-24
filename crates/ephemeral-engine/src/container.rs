@@ -25,8 +25,17 @@ use ephemeral_runtime::{
 };
 
 use crate::sandbox::{
-    apply, confinement, ensure_allowed, sandbox_created, save, specification, usable_runtime,
+    apply, confinement, ensure_allowed, granted_permissions, home_directory, sandbox_created, save,
+    specification, usable_runtime,
 };
+
+/// The longest a WebAssembly application runs from a terminal.
+///
+/// Not [`ephemeral_runtime::wasm::HANDHELD_CEILING`]: somebody who typed a
+/// command and walked away is happy for a job to take what its manifest says it
+/// may, and a desktop that hangs for a minute is a desktop, not a brick. It is
+/// still a ceiling, because a runaway job should end on its own.
+const DESKTOP_CEILING: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 
 /// What starting an application did, and what to say about it.
 #[derive(Debug, Clone)]
@@ -170,6 +179,143 @@ pub fn start(
             Err(anyhow::Error::new(error).context(format!("could not start {}", manifest.id)))
         }
     }
+}
+
+/// What one WebAssembly run produced.
+#[derive(Debug, Clone)]
+pub struct Ran {
+    /// How it exited, and everything it printed.
+    pub completed: ephemeral_runtime::Completed,
+
+    /// Whether the output is a page to render or text to read.
+    pub shown: ephemeral_runtime::wasm::Shown,
+
+    /// Access that was granted and could not be given effect, with reasons.
+    pub refused: Vec<String>,
+
+    /// Capabilities the person allowed that Ephemeral itself may not act on.
+    pub inert: Option<String>,
+}
+
+/// Runs a WebAssembly application to completion, here.
+///
+/// The other shape a run has. [`start`] puts something in a container and
+/// leaves it there; this loads a module, runs it, and it is gone — so there is
+/// no container to stop, pause or inspect afterwards, and the lifecycle goes
+/// `Start`, `Started`, `Stopped` in one call because that is what actually
+/// happened.
+///
+/// The sequence itself is [`ephemeral_runtime::wasm::run_application`], which
+/// the mobile engine also calls. What this adds is what only a desktop knows —
+/// where the user's home directory is — and what only the engine does: the
+/// lifecycle transitions and the audit record.
+///
+/// # Errors
+///
+/// If the lifecycle does not allow starting, if the application is not one this
+/// runtime can run, or if there is nothing to run. An application that runs and
+/// exits non-zero is **not** an error: that is a [`Ran`] with a non-zero exit
+/// code, because a failing program is an answer.
+pub fn run_once(
+    workspace: &mut Workspace,
+    manifest: &mut AppManifest,
+    arguments: &[String],
+    reason: &str,
+) -> Result<Ran> {
+    ensure_allowed(manifest, LifecycleEvent::Start)?;
+
+    // Asked before anything runs, and reported alongside the result: an
+    // application whose grants are inert is confined to nothing for a reason
+    // that is not the sandbox working.
+    let inert = ephemeral_api::authority::grants(workspace.ledger(), &manifest.id).explain_inert();
+    let granted = granted_permissions(workspace, &manifest.id);
+    let home = home_directory()?;
+
+    apply(
+        workspace,
+        manifest,
+        LifecycleEvent::Start,
+        Actor::User,
+        reason,
+    )?;
+    save(workspace, manifest)?;
+
+    let outcome = ephemeral_runtime::wasm::run_application(&ephemeral_runtime::wasm::Runnable {
+        manifest,
+        layout: workspace.layout(),
+        granted: &granted,
+        home,
+        arguments: arguments.to_vec(),
+        // A terminal is not a phone: somebody who typed a command and walked
+        // away is happy for it to take what its manifest says it may.
+        ceiling: DESKTOP_CEILING,
+    });
+
+    let ran = match outcome {
+        Ok(ran) => ran,
+        Err(error) => {
+            apply(
+                workspace,
+                manifest,
+                LifecycleEvent::StartFailed,
+                Actor::Runtime,
+                &error.to_string(),
+            )?;
+            save(workspace, manifest)?;
+            return Err(anyhow::Error::new(error).context(format!("could not run {}", manifest.id)));
+        }
+    };
+
+    apply(
+        workspace,
+        manifest,
+        LifecycleEvent::Started,
+        Actor::Runtime,
+        "running as WebAssembly",
+    )?;
+    // It is already over by the time anything above learns it began, and the
+    // history has to say so: recording only the start would leave every job
+    // that ever ran looking like it never came back. The machine routes a
+    // shutdown through `Stopping`, so both events are applied — the reasons say
+    // that nobody asked for either, which is what actually happened.
+    // `Stop` is an intent and the runtime may not raise one, correctly: the
+    // decision that a returned program means a finished application is
+    // Ephemeral's, not the interpreter's. The runtime then reports it is down.
+    apply(
+        workspace,
+        manifest,
+        LifecycleEvent::Stop,
+        Actor::Ephemeral,
+        "the program returned, and a one-shot run is over when it does",
+    )?;
+    apply(
+        workspace,
+        manifest,
+        LifecycleEvent::Stopped,
+        Actor::Runtime,
+        &format!("finished with exit code {}", ran.completed.exit_code),
+    )?;
+
+    workspace.audit_mut().append(
+        Actor::Runtime,
+        ephemeral_core::audit::AuditEvent::SandboxCreated {
+            app: manifest.id.clone(),
+            runtime: "WebAssembly".to_owned(),
+            // No image, and saying so is the point: this runtime has none, and
+            // an empty string here would read as one nobody recorded.
+            image: None,
+            mounts: Vec::new(),
+            ports: Vec::new(),
+        },
+    );
+    save(workspace, manifest)?;
+
+    Ok(Ran {
+        completed: ran.completed,
+        shown: ran.shown,
+        refused: ran.refused,
+        inert,
+    })
 }
 
 /// Stops a running application and removes its container.
@@ -867,6 +1013,156 @@ mod tests {
             vec!["python".to_owned(), "compare.py".to_owned()],
         ));
         manifest
+    }
+
+    /// One application, generated and ready to run as WebAssembly.
+    fn ready_wasm(root: &Path) -> AppManifest {
+        let mut manifest = AppManifest::requested(app(), "CSV comparator");
+        manifest.runtime = Some(RuntimeSpec::wasm_job("program.wasm", Vec::new()));
+
+        // There is nothing to build for this runtime, so the route to Ready
+        // passes through `BuildSucceeded` having built nothing — generation
+        // *is* the build here, and the state machine has no separate word for
+        // that yet.
+        for (event, actor) in [
+            (LifecycleEvent::Plan, Actor::Ephemeral),
+            (LifecycleEvent::PlanCompleted, Actor::Ephemeral),
+            (LifecycleEvent::GenerationCompleted, Actor::Agent),
+            (LifecycleEvent::BuildSucceeded, Actor::Runtime),
+            (LifecycleEvent::ValidationPassed, Actor::Ephemeral),
+        ] {
+            manifest
+                .apply(TransitionRequest::new(event, actor, "ready to run"))
+                .expect("the route to ready");
+        }
+
+        install(root, SAYS_SOMETHING);
+        manifest
+    }
+
+    /// Writes a module into the application's source directory.
+    fn install(root: &Path, text: &str) {
+        let source = ephemeral_core::storage::StorageLayout::new(root)
+            .app(&app())
+            .source();
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            source.join("program.wasm"),
+            wat::parse_str(text).expect("the test application should assemble"),
+        )
+        .unwrap();
+    }
+
+    const SAYS_SOMETHING: &str = r#"(module
+      (import "wasi_snapshot_preview1" "fd_write"
+        (func $write (param i32 i32 i32 i32) (result i32)))
+      (memory (export "memory") 1)
+      (data (i32.const 32) "4 rows differ")
+      (func (export "_start")
+        (i32.store (i32.const 0) (i32.const 32))
+        (i32.store (i32.const 4) (i32.const 13))
+        (drop (call $write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 16)))))"#;
+
+    /// **A desktop runs a WebAssembly application, without Docker.**
+    ///
+    /// The gap this closes: for a while a phone could run one and a laptop
+    /// could not, which is the wrong way round and was only ever an accident of
+    /// which client got the code first. Both now call the same function.
+    #[test]
+    fn a_desktop_runs_a_webassembly_application_with_no_container_runtime() {
+        let home = tempfile::tempdir().unwrap();
+        let mut workspace = workspace(home.path());
+        let mut manifest = ready_wasm(home.path());
+
+        let ran = run_once(&mut workspace, &mut manifest, &[], "a test").expect("it runs");
+
+        assert!(ran.completed.succeeded);
+        assert_eq!(ran.completed.output, "4 rows differ");
+    }
+
+    /// A one-shot run leaves nothing behind, and the history has to say so.
+    /// Recording only the start would leave every job that ever ran looking
+    /// like it never came back.
+    #[test]
+    fn a_run_that_finished_is_not_left_looking_like_it_is_still_going() {
+        let home = tempfile::tempdir().unwrap();
+        let mut workspace = workspace(home.path());
+        let mut manifest = ready_wasm(home.path());
+
+        run_once(&mut workspace, &mut manifest, &[], "a test").expect("it runs");
+
+        assert!(
+            !manifest.lifecycle.state().holds_runtime_resources(),
+            "it is over, and the state must not claim otherwise: {}",
+            manifest.lifecycle.state()
+        );
+    }
+
+    /// An application that ran and failed is an answer, not an error. Treating
+    /// a non-zero exit as a failure of the *call* would hide everything the
+    /// program said about what went wrong.
+    #[test]
+    fn an_application_that_exits_non_zero_still_returns_its_output() {
+        let home = tempfile::tempdir().unwrap();
+        let mut workspace = workspace(home.path());
+        let mut manifest = ready_wasm(home.path());
+
+        install(
+            home.path(),
+            r#"(module
+                 (import "wasi_snapshot_preview1" "proc_exit" (func $exit (param i32)))
+                 (memory (export "memory") 1)
+                 (func (export "_start") (call $exit (i32.const 2))))"#,
+        );
+
+        let ran = run_once(&mut workspace, &mut manifest, &[], "a test")
+            .expect("a failing program is an answer");
+
+        assert!(!ran.completed.succeeded);
+        assert_eq!(ran.completed.exit_code, 2);
+    }
+
+    /// The sandbox is built from the ledger for this runtime too — an
+    /// application with an empty ledger can see nothing of the user's, whatever
+    /// its manifest asked for.
+    #[test]
+    fn a_webassembly_application_gets_only_what_the_ledger_granted() {
+        let home = tempfile::tempdir().unwrap();
+        let mut workspace = workspace(home.path());
+        let mut manifest = ready_wasm(home.path());
+
+        let ran = run_once(&mut workspace, &mut manifest, &[], "a test").expect("it runs");
+
+        assert!(ran.refused.is_empty(), "nothing was granted to refuse");
+        assert!(
+            granted_permissions(&workspace, &app()).is_empty(),
+            "and nothing was granted"
+        );
+    }
+
+    /// A container application does not quietly get the WebAssembly path. It
+    /// declares Docker, and Docker is what it must have.
+    #[test]
+    fn a_container_application_is_not_run_as_webassembly() {
+        let home = tempfile::tempdir().unwrap();
+        let mut workspace = workspace(home.path());
+        let mut manifest = built();
+        for (event, actor) in [
+            (LifecycleEvent::Plan, Actor::Ephemeral),
+            (LifecycleEvent::PlanCompleted, Actor::Ephemeral),
+            (LifecycleEvent::GenerationCompleted, Actor::Agent),
+            (LifecycleEvent::BuildSucceeded, Actor::Runtime),
+            (LifecycleEvent::ValidationPassed, Actor::Ephemeral),
+        ] {
+            manifest
+                .apply(TransitionRequest::new(event, actor, "ready to run"))
+                .unwrap();
+        }
+
+        let refused = run_once(&mut workspace, &mut manifest, &[], "a test")
+            .expect_err("this is not the runtime it asked for");
+
+        assert!(format!("{refused:#}").contains("Docker"), "{refused:#}");
     }
 
     /// The sandbox is built from the ledger, so an application with an empty

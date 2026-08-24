@@ -16,7 +16,7 @@ path = "src/main.rs"
 [dependencies]
 ephemeral-api.workspace = true
 ephemeral-core.workspace = true
-ephemeral-runtime.workspace = true
+ephemeral-runtime = { workspace = true, features = ["wasm"] }
 ephemeral-agent.workspace = true
 ephemeral-engine.workspace = true
 serde_norway.workspace = true

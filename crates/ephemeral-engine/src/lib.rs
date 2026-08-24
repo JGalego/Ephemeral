@@ -38,8 +38,8 @@ pub mod generation;
 pub mod sandbox;
 
 pub use container::{
-    Orphan, Reconciled, Started, Sweep, orphans, output, pause, reconcile, remove_orphans, resume,
-    start, stop, sweep,
+    Orphan, Ran, Reconciled, Started, Sweep, orphans, output, pause, reconcile, remove_orphans,
+    resume, run_once, start, stop, sweep,
 };
 pub use generation::{Generated, PROVIDERS, Requested, generate, models, provider_authority};
 pub use sandbox::{Confinement, specification};

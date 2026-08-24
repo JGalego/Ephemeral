@@ -46,10 +46,12 @@ use crate::spec::{ContainerSpec, Egress};
 mod engine;
 mod program;
 mod runtime;
+mod session;
 
 pub use engine::{Confined, Halt, WasmError, run};
 pub use program::{NoProgram, PROGRAM_DIRECTORY, Program, languages};
 pub use runtime::WasmRuntime;
+pub use session::{Ran, Runnable, Shown, run as run_application};
 
 /// What a module is allowed to do, derived from a [`ContainerSpec`].
 ///

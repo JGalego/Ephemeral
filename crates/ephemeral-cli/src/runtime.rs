@@ -12,15 +12,30 @@
 use std::path::Path;
 
 use anyhow::{Context as _, Result};
-use ephemeral_core::storage::Workspace;
+use ephemeral_core::{manifest::RuntimeKind, storage::Workspace};
 use ephemeral_engine::container;
+use ephemeral_runtime::wasm::Shown;
 
 use crate::output;
 
 /// Starts an application.
+///
+/// Two shapes, chosen by what the application runs on rather than by a flag. A
+/// container is started and left running, and `ephemeral status` says what it
+/// is doing. A WebAssembly module runs to completion and prints what it
+/// produced — there is nothing left to ask about afterwards, so asking somebody
+/// to type a second command to see the answer would be silly.
 pub(crate) fn run(home: &Path, reference: &str, arguments: &[String]) -> Result<()> {
     let mut workspace = crate::commands::open(home)?;
     let mut manifest = crate::commands::find(&workspace, reference)?;
+
+    if manifest
+        .runtime
+        .as_ref()
+        .is_some_and(|runtime| runtime.kind == RuntimeKind::Wasm)
+    {
+        return run_to_completion(&mut workspace, &mut manifest, arguments);
+    }
 
     let started = container::start(
         &mut workspace,
@@ -57,6 +72,58 @@ pub(crate) fn run(home: &Path, reference: &str, arguments: &[String]) -> Result<
         println!("{}", output::dim(line));
     }
 
+    Ok(())
+}
+
+/// Runs a WebAssembly application here and prints what it produced.
+fn run_to_completion(
+    workspace: &mut Workspace,
+    manifest: &mut ephemeral_core::AppManifest,
+    arguments: &[String],
+) -> Result<()> {
+    let ran = container::run_once(workspace, manifest, arguments, "run from the command line")?;
+
+    // Before the output, because it changes what the output means: an
+    // application that found nothing may have found nothing because it was
+    // never given anywhere to look.
+    if let Some(inert) = &ran.inert {
+        println!("{} {inert}", output::warn("Careful:"));
+    }
+    for refusal in &ran.refused {
+        println!("{}", output::warn(refusal));
+    }
+
+    if !ran.completed.output.is_empty() {
+        print!("{}", ran.completed.output);
+        if !ran.completed.output.ends_with('\n') {
+            println!();
+        }
+    }
+
+    if ran.shown == Shown::Page {
+        // Said rather than rendered. A terminal is not a browser, and printing
+        // markup as though it were the answer would be worse than saying what
+        // it is.
+        println!(
+            "{}",
+            output::dim("That is a page. A window or a phone renders it.")
+        );
+    }
+
+    if ran.completed.succeeded {
+        println!("{} {} finished.", output::good("Ran."), manifest.id);
+        return Ok(());
+    }
+
+    // A non-zero exit is the application's answer, not Ephemeral's failure, so
+    // this reports rather than returns an error — and the output above is the
+    // part that matters.
+    println!(
+        "{} {} exited with {}.",
+        output::warn("Failed."),
+        manifest.id,
+        ran.completed.exit_code
+    );
     Ok(())
 }
 
