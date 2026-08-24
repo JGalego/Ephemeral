@@ -476,6 +476,7 @@ dependencies = [
 name = "ephemeral-runtime"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "ephemeral-core",
  "serde",
  "serde_json",

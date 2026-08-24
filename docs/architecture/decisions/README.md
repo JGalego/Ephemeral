@@ -26,13 +26,14 @@ supersedes the old one; the old one stays, marked superseded and linked forward.
 | [0013](0013-how-several-people-share-an-application.md) | How several people share one application | **proposed** | 7 |
 | [0014](0014-drive-docker-through-its-cli.md) | Drive Docker through its CLI, not its HTTP API | accepted | 1 |
 | [0015](0015-defer-the-native-runtime.md) | Defer the native runtime rather than ship a weak one | accepted | 1 |
-| [0016](0016-real-providers-live-in-their-own-crates.md) | Real providers live in their own crates, and reach the network through `curl` | accepted | 2 |
+| [0016](0016-real-providers-live-in-their-own-crates.md) | Real providers live in their own crates,  and reach the network through `curl` | accepted | 2 |
 | [0017](0017-mobile-generates-through-a-host-transport.md) | A phone generates for itself, through a C ABI and the host's own HTTPS | accepted | 5 |
 | [0018](0018-android-is-an-application-and-jni-is-testable.md) | Android gets an application, and its JNI bridge is testable without a phone | accepted | 5 |
 | [0019](0019-openai-compatible-and-a-local-model.md) | One OpenAI-compatible wire format, and a local provider that cannot leave the machine | accepted | 2 |
 | [0020](0020-the-host-chooses-the-provider.md) | The host chooses the provider, on every platform | accepted | 5 |
 | [0021](0021-webassembly-is-the-runtime-a-phone-can-have.md) | WebAssembly is the runtime a phone can have | accepted | 1 |
 | [0022](0022-how-an-interpreter-reaches-a-device.md) | How an interpreter reaches a device | **proposed** | 1 |
+| [0023](0023-a-confined-application-reaches-the-network-through-its-host.md) | A confined application reaches the network through its host | accepted | 1 |
 
 ## When you need an ADR
 

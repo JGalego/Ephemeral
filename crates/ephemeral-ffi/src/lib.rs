@@ -221,6 +221,77 @@ impl Transport for HostTransport {
     }
 }
 
+/// Carrying a confined application's request, on a handset.
+///
+/// The same seam, and the same host stack, that already carries a request to a
+/// model provider — because a phone has exactly one HTTPS implementation worth
+/// using and it is the platform's. An application never touches it: what
+/// reaches here has already been checked against the grant by
+/// [`ephemeral_runtime::wasm`], which is where the permission model lives and
+/// where it stays.
+///
+/// **This host transport reports no status.** A reply comes back as a body or
+/// as nothing, so an application on a phone sees `0` where a desktop would show
+/// `200` or `404`. That is said outright rather than smoothed over with an
+/// invented `200` an application might branch on.
+struct HostReach {
+    context: *mut c_void,
+    send: EphemeralHttpSend,
+    free: EphemeralHttpFree,
+}
+
+// SAFETY-adjacent, as for `HostTransport`: `context` is opaque here and is only
+// ever handed back to the host's own functions.
+#[allow(unsafe_code)]
+// SAFETY: the pointer is never dereferenced in this crate.
+unsafe impl Send for HostReach {}
+#[allow(unsafe_code)]
+// SAFETY: as above.
+unsafe impl Sync for HostReach {}
+
+impl ephemeral_runtime::wasm::Reach for HostReach {
+    fn fetch(
+        &self,
+        request: &ephemeral_runtime::wasm::Outbound,
+    ) -> Result<ephemeral_runtime::wasm::Answered, String> {
+        let method = CString::new(request.method.as_str())
+            .map_err(|_| "the method is not a C string".to_owned())?;
+        let endpoint = CString::new(request.url.as_str())
+            .map_err(|_| "that address cannot be sent to this device's network".to_owned())?;
+        // No headers at all. An application that could set one is an
+        // application that can attach a credential it was never shown; the
+        // content type is the host's business and everything else is nobody's.
+        let headers = CString::new("[]").map_err(|_| "unreachable".to_owned())?;
+        let body = CString::new(request.body.as_str())
+            .map_err(|_| "that message cannot be sent as it is written".to_owned())?;
+
+        let reply = (self.send)(
+            self.context,
+            method.as_ptr(),
+            endpoint.as_ptr(),
+            headers.as_ptr(),
+            body.as_ptr(),
+        );
+
+        if reply.is_null() {
+            return Err(format!("{} could not be reached", request.url));
+        }
+
+        #[allow(unsafe_code)]
+        // SAFETY: non-null, and by the documented contract of `EphemeralHttpSend`
+        // a NUL-terminated string valid until `free` is called.
+        let copied = unsafe { CStr::from_ptr(reply) }
+            .to_string_lossy()
+            .into_owned();
+        (self.free)(self.context, reply);
+
+        Ok(ephemeral_runtime::wasm::Answered {
+            status: 0,
+            body: copied,
+        })
+    }
+}
+
 /// One header, as it crosses the boundary.
 ///
 /// Named fields rather than a two-element array, because a host reading
@@ -264,6 +335,15 @@ impl Ephemeral {
     /// Mobile applications are suspended and resumed without warning, and a
     /// long-lived open handle to files the OS may have moved underneath us is a
     /// good way to corrupt them. Re-opening is cheap and is what the CLI does.
+    /// What will carry a request an application was allowed to make.
+    fn reach(&self) -> std::sync::Arc<dyn ephemeral_runtime::wasm::Reach> {
+        std::sync::Arc::new(HostReach {
+            context: self.context,
+            send: self.send,
+            free: self.free,
+        })
+    }
+
     fn workspace(&self) -> Result<Workspace, String> {
         Workspace::open(&self.home)
             .map_err(|error| format!("could not open Ephemeral's files: {error}"))
@@ -562,7 +642,7 @@ pub unsafe extern "C" fn ephemeral_run(
         let arguments: Vec<String> = serde_json::from_str(&arguments)
             .map_err(|error| format!("those are not arguments: {error}"))?;
 
-        json(&run::run(&workspace, &app, arguments)?)
+        json(&run::run(&workspace, &app, arguments, ephemeral.reach())?)
     })
 }
 
@@ -1603,6 +1683,120 @@ mod tests {
         assert_eq!(ran["succeeded"], true);
         assert_eq!(ran["exit_code"], 0);
         assert_eq!(ran["output"], "4 rows differ");
+
+        unsafe { ephemeral_close(handle) };
+    }
+
+    /// A module that asks Ephemeral for one request and prints the answer.
+    const ASKS_THE_NETWORK: &str = r#"(module
+      (import "wasi_snapshot_preview1" "fd_write"
+        (func $write (param i32 i32 i32 i32) (result i32)))
+      (import "ephemeral" "send" (func $send (param i32 i32) (result i32)))
+      (import "ephemeral" "recv" (func $recv (param i32 i32) (result i32)))
+      (memory (export "memory") 1)
+      (data (i32.const 1024) "{\"method\":\"GET\",\"url\":\"https://room.example.com/garden\"}")
+      (func (export "_start")
+        (local $n i32)
+        (drop (call $send (i32.const 1024) (i32.const 56)))
+        (local.set $n (call $recv (i32.const 2048) (i32.const 8192)))
+        (i32.store (i32.const 0) (i32.const 2048))
+        (i32.store (i32.const 4) (local.get $n))
+        (drop (call $write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 8)))))"#;
+
+    /// Allows `app` to reach `host`, and Ephemeral itself to carry it.
+    fn allow_network(home: &std::path::Path, app: &AppId, host: &str) {
+        use ephemeral_core::Principal;
+        use ephemeral_core::permission::{AppPermission, HostScope, MetaPermission};
+
+        let mut workspace = Workspace::open(home).unwrap();
+        let ledger = workspace.ledger_mut();
+        ledger
+            .allow(
+                Principal::app(app.clone()),
+                ephemeral_core::permission::Permission::App(AppPermission::NetworkOutbound {
+                    scope: HostScope::parse(host).unwrap(),
+                }),
+                Actor::User,
+                "the room they agreed on",
+            )
+            .unwrap();
+        ledger
+            .allow(
+                Principal::Ephemeral,
+                ephemeral_core::permission::Permission::Meta(MetaPermission::NetworkAccess),
+                Actor::User,
+                "so it can carry a request",
+            )
+            .unwrap();
+        workspace.save().unwrap();
+    }
+
+    /// **A phone carries a confined application's request, and nothing else.**
+    ///
+    /// The sentence this whole seam exists to make true, asserted through the
+    /// real C ABI a handset links against. A WebAssembly application has no
+    /// socket and never will; what it has, once somebody allowed a destination,
+    /// is the host's own HTTPS — the same callback that already reaches a model
+    /// provider. Two phones can now hold a conversation without sharing a
+    /// filesystem, which before this they could not.
+    #[test]
+    fn a_phone_carries_a_request_an_application_was_allowed_to_make() {
+        let home = tempfile::tempdir().unwrap();
+        let app = install(home.path(), "whisper", ASKS_THE_NETWORK);
+        allow_network(home.path(), &app, "room.example.com");
+
+        let handle = open(home.path());
+        queue(vec!["Alice\tis this thing on?\n".to_owned()]);
+
+        let ran = text(unsafe { ephemeral_run(handle, c("whisper").as_ptr(), c("[]").as_ptr()) });
+        let ran: Value = serde_json::from_str(&ran).unwrap();
+
+        assert_eq!(ran["succeeded"], true, "{ran}");
+        let output = ran["output"].as_str().unwrap_or_default();
+        assert!(
+            output.contains("is this thing on?"),
+            "the other person's message reaches the application: {output}"
+        );
+
+        // Through the host's own transport, as a GET, with no headers — an
+        // application that could set one could attach a credential it was
+        // never shown.
+        let asked = requests();
+        let asked = asked.first().expect("the host was asked to make it");
+        assert_eq!(asked.method, "GET");
+        assert_eq!(asked.endpoint, "https://room.example.com/garden");
+        assert_eq!(asked.headers, "[]", "an application composes no headers");
+
+        unsafe { ephemeral_close(handle) };
+    }
+
+    /// **And nowhere else.**
+    ///
+    /// The same application, the same grant, a different destination. The
+    /// refusal happens in the runtime, against the ledger, *before* the host is
+    /// asked — so a phone's transport, which would happily fetch anything, is
+    /// never given the chance.
+    #[test]
+    fn a_phone_is_never_asked_to_reach_what_nobody_allowed() {
+        let home = tempfile::tempdir().unwrap();
+        let app = install(home.path(), "whisper", ASKS_THE_NETWORK);
+        allow_network(home.path(), &app, "somewhere.example.org");
+
+        let handle = open(home.path());
+        queue(vec!["should never be sent".to_owned()]);
+
+        let ran = text(unsafe { ephemeral_run(handle, c("whisper").as_ptr(), c("[]").as_ptr()) });
+        let ran: Value = serde_json::from_str(&ran).unwrap();
+
+        let output = ran["output"].as_str().unwrap_or_default();
+        assert!(
+            output.contains("not allowed to reach"),
+            "it should have been refused: {output}"
+        );
+        assert!(
+            requests().is_empty(),
+            "and the host should never have been asked"
+        );
 
         unsafe { ephemeral_close(handle) };
     }

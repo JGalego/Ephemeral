@@ -20,7 +20,7 @@ daemon = []
 # The WebAssembly runtime. Separate from `daemon` because it spawns nothing:
 # the sandbox is the module's own, and there is no process and no container.
 # That is exactly why it is the runtime a phone can have (ADR-0021).
-wasm = ["dep:wasmi", "dep:wasmi_wasi"]
+wasm = ["dep:wasmi", "dep:wasmi_wasi", "dep:async-trait"]
 
 [dependencies]
 ephemeral-core.workspace = true
@@ -35,6 +35,12 @@ ephemeral-core.workspace = true
 # something a dependency should decide on the owner's behalf.
 wasmi = { version = "0.46", optional = true, default-features = false, features = ["std"] }
 wasmi_wasi = { version = "0.46", optional = true }
+
+# Only to implement one trait. `WasiDir` is declared with `#[wiggle::async_trait]`,
+# which expands to `#[async_trait::async_trait]`, and wasmi_wasi does not re-export
+# wiggle — so implementing a read-only directory needs the same macro by its own
+# name. Already in the tree beneath wasi-common; nothing new is compiled.
+async-trait = { version = "0.1", optional = true }
 
 serde.workspace = true
 serde_json.workspace = true

@@ -95,6 +95,9 @@ fn ran(home: &Path, module: &Path, page: bool, arguments: &[&str]) -> Ran {
             .map(|argument| (*argument).to_owned())
             .collect(),
         ceiling: HANDHELD_CEILING,
+        // Nothing to carry a request, which is right: the reference
+        // application asks for no network and must not be given one.
+        reach: None,
     })
     .expect("the reference application runs")
 }
@@ -209,6 +212,7 @@ fn the_reference_application_finishes_inside_a_second_of_allowance() {
         home: home.path().to_path_buf(),
         arguments: vec!["--file".to_owned(), "/data/files.csv".to_owned()],
         ceiling: Duration::from_secs(1),
+        reach: None,
     })
     .expect("it runs");
 

@@ -9,10 +9,12 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use wasmi::{Config, Engine, Linker, Module, Store, StoreLimits, StoreLimitsBuilder};
+use wasmi::{Caller, Config, Engine, Linker, Module, Store, StoreLimits, StoreLimitsBuilder};
 use wasmi_wasi::WasiCtx;
 
-use super::Capabilities;
+use ephemeral_core::permission::HostScope;
+
+use super::{Answered, Capabilities, MOST_ONE_BODY, Method, Outbound, Reach};
 
 /// What a module did, and what it said while doing it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -135,7 +137,11 @@ pub enum WasmError {
 /// ran. A module that runs and exits non-zero, or that is stopped for exceeding
 /// a bound, is **not** an error — that is a [`Confined`] with `succeeded` false
 /// and, in the second case, a [`Halt`].
-pub fn run(wasm: &[u8], capabilities: &Capabilities) -> Result<Confined, WasmError> {
+pub fn run(
+    wasm: &[u8],
+    capabilities: &Capabilities,
+    reach: Option<&dyn Reach>,
+) -> Result<Confined, WasmError> {
     let mut config = Config::default();
     // Metered from the start. An unmetered store runs until the process is
     // killed, and "the phone stopped responding" is not a bound.
@@ -157,6 +163,10 @@ pub fn run(wasm: &[u8], capabilities: &Capabilities) -> Result<Confined, WasmErr
             .memory_size(capabilities.memory)
             .trap_on_grow_failure(true)
             .build(),
+        capabilities,
+        reach,
+        remaining: capabilities.requests,
+        answered: Vec::new(),
     };
 
     let mut store = Store::new(&engine, sandboxed);
@@ -165,13 +175,24 @@ pub fn run(wasm: &[u8], capabilities: &Capabilities) -> Result<Confined, WasmErr
         .set_fuel(capabilities.fuel)
         .map_err(|error| WasmError::CannotPrepare(error.to_string()))?;
 
-    let mut linker = <Linker<Sandboxed>>::new(&engine);
+    let mut linker = <Linker<Sandboxed<'_>>>::new(&engine);
     // The *only* imports this module will be able to resolve. Nothing else is
-    // added, so anything the application asks for beyond WASI — a socket, a
-    // host function somebody invented — has nothing to bind to and the
-    // instantiation below fails.
-    wasmi_wasi::add_to_linker(&mut linker, |sandboxed: &mut Sandboxed| &mut sandboxed.wasi)
-        .map_err(|error| WasmError::CannotPrepare(error.to_string()))?;
+    // added, so anything the application asks for beyond WASI and — where it
+    // was granted — the two functions below has nothing to bind to, and the
+    // instantiation further down fails.
+    wasmi_wasi::add_to_linker(&mut linker, |sandboxed: &mut Sandboxed<'_>| {
+        &mut sandboxed.wasi
+    })
+    .map_err(|error| WasmError::CannotPrepare(error.to_string()))?;
+
+    // Linked only when a person granted egress *and* somebody supplied a way to
+    // carry it. Either missing and the module imports something nothing
+    // provides, which is the capability model doing its job: an application
+    // that needs the network fails at the door, by name, rather than at its
+    // first request.
+    if capabilities.reachable.is_permitted() && reach.is_some() {
+        link_network(&mut linker)?;
+    }
 
     let instance = linker
         .instantiate(&mut store, &module)
@@ -259,7 +280,13 @@ pub fn inspect(wasm: &[u8]) -> Result<(), WasmError> {
     let captured = Captured::new();
     let nothing = Capabilities {
         visible: Vec::new(),
-        writable: false,
+        writable: Vec::new(),
+        // Checking is not running, and an inspection that reached the network
+        // would be an inspection with a side effect. A module that imports the
+        // network functions is checked below against the grant it will actually
+        // be given, not against this.
+        reachable: crate::spec::Egress::Denied,
+        requests: 0,
         arguments: Vec::new(),
         environment: Vec::new(),
         // Enough for a start section and no more. A module that wants to do
@@ -274,6 +301,10 @@ pub fn inspect(wasm: &[u8]) -> Result<(), WasmError> {
             .memory_size(nothing.memory)
             .trap_on_grow_failure(true)
             .build(),
+        capabilities: &nothing,
+        reach: None,
+        remaining: 0,
+        answered: Vec::new(),
     };
 
     let mut store = Store::new(&engine, sandboxed);
@@ -282,9 +313,16 @@ pub fn inspect(wasm: &[u8]) -> Result<(), WasmError> {
         .set_fuel(nothing.fuel)
         .map_err(|error| WasmError::CannotPrepare(error.to_string()))?;
 
-    let mut linker = <Linker<Sandboxed>>::new(&engine);
-    wasmi_wasi::add_to_linker(&mut linker, |sandboxed: &mut Sandboxed| &mut sandboxed.wasi)
-        .map_err(|error| WasmError::CannotPrepare(error.to_string()))?;
+    let mut linker = <Linker<Sandboxed<'_>>>::new(&engine);
+    wasmi_wasi::add_to_linker(&mut linker, |sandboxed: &mut Sandboxed<'_>| {
+        &mut sandboxed.wasi
+    })
+    .map_err(|error| WasmError::CannotPrepare(error.to_string()))?;
+
+    // Present so that an application which asks for the network is not called
+    // broken by a check that never intended to give it one. Whether it may
+    // actually reach anything is decided when it runs, from the grant.
+    link_network(&mut linker)?;
 
     let instance = linker
         .instantiate(&mut store, &module)
@@ -307,9 +345,28 @@ pub fn inspect(wasm: &[u8]) -> Result<(), WasmError> {
 /// asks for both through the store's data type: a limiter is a function from
 /// that type, so a store whose data is a bare [`WasiCtx`] is a store that can
 /// have no memory limit at all.
-struct Sandboxed {
+struct Sandboxed<'a> {
     wasi: WasiCtx,
     limits: StoreLimits,
+
+    /// What the person granted. Consulted on every request, never cached into
+    /// a decision made once at start-up.
+    capabilities: &'a Capabilities,
+
+    /// Whoever will actually make a request. `None` when nothing was granted,
+    /// in which case no host function is linked and this is never read.
+    reach: Option<&'a dyn Reach>,
+
+    /// How many requests are left in this run.
+    remaining: u32,
+
+    /// The last answer, waiting to be copied into the module's memory.
+    ///
+    /// Held on this side rather than written straight into linear memory,
+    /// because the module has to be told how much room to make before it can
+    /// offer any. One slot, not a table: an application can have exactly one
+    /// request in flight, which is all a synchronous host call can mean.
+    answered: Vec<u8>,
 }
 
 /// The refusal a failure represents, if it is one.
@@ -322,6 +379,18 @@ fn unrunnable(error: &wasmi::Error) -> Option<WasmError> {
     let said = error.to_string();
 
     if said.contains("unknown import") || said.contains("cannot find") {
+        // Named in the words a person granted it in. The interpreter's own
+        // sentence — "cannot find definition for import ephemeral::send with
+        // type Func(FuncType { … })" — is true and tells somebody holding a
+        // phone nothing they can act on, when what happened is that an
+        // application asked to use the network and nobody said it could.
+        if said.contains(NETWORK_MODULE) {
+            return Some(WasmError::Ungranted(
+                "it needs to reach a service over the network, and has not been allowed \
+                 to reach anything. Allowing it says which service."
+                    .to_owned(),
+            ));
+        }
         return Some(WasmError::Ungranted(said));
     }
 
@@ -368,6 +437,233 @@ fn halt(error: &wasmi::Error) -> Halt {
     Halt::Fault
 }
 
+/// The name of the import module an application reaches the network through.
+pub(super) const NETWORK_MODULE: &str = "ephemeral";
+
+/// Asks for one request. Returns how many bytes the answer is, or a negative
+/// number when the request itself could not be read.
+pub(super) const SEND: &str = "send";
+
+/// Copies the answer out. Returns how many bytes were copied.
+pub(super) const RECV: &str = "recv";
+
+/// The request could not be read: it is not JSON, names a method that is not
+/// one of the two, or does not fit.
+const UNREADABLE: i32 = -1;
+
+/// The pointer and length an application gave do not lie inside its own memory.
+const OUT_OF_BOUNDS: i32 = -2;
+
+/// Gives a module the two functions it reaches the network through.
+///
+/// ## Why two, and why bytes
+///
+/// A host call cannot return a variable-length value, so the answer is held on
+/// this side and the module is told how big it is. It makes room, then asks for
+/// it. The alternative — the module guessing a buffer size and the host
+/// truncating — makes silent partial answers, which for a message from another
+/// person is the worst possible failure.
+///
+/// ## What an application can and cannot say
+///
+/// A request is `{"method":"GET"|"POST","url":"…","body":"…"}` and nothing
+/// else. **No headers.** An application that could set a header on a request
+/// the host performs is an application that can attach a credential it was
+/// never shown, to a destination of its choosing; nothing a generated
+/// application legitimately does needs one.
+///
+/// Every answer is a readable document, refusals included:
+/// `{"status":200,"body":"…"}` or `{"status":0,"error":"…"}`. An application
+/// told "you are not allowed to reach that" can say so to the person looking at
+/// it, which is a great deal more useful than a trap.
+fn link_network(linker: &mut Linker<Sandboxed<'_>>) -> Result<(), WasmError> {
+    fn prepare(error: impl std::fmt::Display) -> WasmError {
+        WasmError::CannotPrepare(error.to_string())
+    }
+
+    linker
+        .func_wrap(
+            NETWORK_MODULE,
+            SEND,
+            |mut caller: Caller<'_, Sandboxed<'_>>, at: i32, len: i32| -> i32 {
+                let Some(asked) = borrow(&caller, at, len) else {
+                    return OUT_OF_BOUNDS;
+                };
+
+                let answered = answer(caller.data_mut(), &asked);
+                let Ok(written) = serde_json::to_vec(&answered) else {
+                    return UNREADABLE;
+                };
+
+                let length = i32::try_from(written.len()).unwrap_or(i32::MAX);
+                caller.data_mut().answered = written;
+                length
+            },
+        )
+        .map_err(prepare)?;
+
+    linker
+        .func_wrap(
+            NETWORK_MODULE,
+            RECV,
+            |mut caller: Caller<'_, Sandboxed<'_>>, at: i32, room: i32| -> i32 {
+                // Taken rather than copied: one answer is delivered once, so a
+                // module cannot be handed a stale reply by asking twice.
+                let answered = std::mem::take(&mut caller.data_mut().answered);
+                let room = usize::try_from(room).unwrap_or(0);
+                if answered.len() > room {
+                    return OUT_OF_BOUNDS;
+                }
+
+                match place(&mut caller, at, &answered) {
+                    Some(()) => i32::try_from(answered.len()).unwrap_or(i32::MAX),
+                    None => OUT_OF_BOUNDS,
+                }
+            },
+        )
+        .map_err(prepare)?;
+
+    Ok(())
+}
+
+/// What one request gets back, refusals included.
+///
+/// Split out from the host function so the whole decision — is it readable, is
+/// it allowed, is there anything left in the budget — is a function from data
+/// to data, and can be asserted about without an interpreter.
+fn answer(sandboxed: &mut Sandboxed<'_>, asked: &[u8]) -> serde_json::Value {
+    let refused = |reason: String| serde_json::json!({ "status": 0, "error": reason });
+
+    if asked.len() > MOST_ONE_BODY {
+        return refused(format!(
+            "that request is larger than the {MOST_ONE_BODY} bytes an application may send"
+        ));
+    }
+
+    let Ok(asked) = serde_json::from_slice::<serde_json::Value>(asked) else {
+        return refused("that is not a request this runtime understands".to_owned());
+    };
+
+    let Some(method) = asked
+        .get("method")
+        .and_then(serde_json::Value::as_str)
+        .and_then(Method::of)
+    else {
+        return refused("a request is a GET or a POST, and says which".to_owned());
+    };
+
+    let url = asked
+        .get("url")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+
+    let Some(destination) = destination(&url) else {
+        return refused(format!(
+            "{url} is not somewhere this runtime can be asked to reach"
+        ));
+    };
+
+    // The grant, checked here rather than by whoever performs the request.
+    if !sandboxed.capabilities.may_reach(&destination) {
+        return refused(format!(
+            "this application was not allowed to reach {destination}. It has {}.",
+            sandboxed.capabilities.reachable.describe()
+        ));
+    }
+
+    if sandboxed.remaining == 0 {
+        return refused(
+            "it has made every request it was allowed in one run. \
+             Nothing was sent."
+                .to_owned(),
+        );
+    }
+    sandboxed.remaining -= 1;
+
+    let Some(reach) = sandboxed.reach else {
+        return refused("nothing here can carry a request".to_owned());
+    };
+
+    let body = match method {
+        Method::Get => String::new(),
+        Method::Post => asked
+            .get("body")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+    };
+
+    match reach.fetch(&Outbound { method, url, body }) {
+        Ok(Answered { status, body }) if body.len() > MOST_ONE_BODY => serde_json::json!({
+            "status": status,
+            "error": format!(
+                "the reply was larger than the {MOST_ONE_BODY} bytes an application may be handed"
+            ),
+        }),
+        Ok(Answered { status, body }) => serde_json::json!({ "status": status, "body": body }),
+        Err(reason) => refused(reason),
+    }
+}
+
+/// The host and port a URL names, or nothing when it names none.
+///
+/// Deliberately strict, and deliberately not a URL parser: this crate has no
+/// business normalising somebody's URL, and every ambiguity here is a way for
+/// two pieces of code to disagree about which host a request reaches. Only
+/// `https://` and `http://` are recognised; anything with a credential in it —
+/// `https://user@host/` — is refused rather than untangled.
+fn destination(url: &str) -> Option<HostScope> {
+    let rest = url
+        .strip_prefix("https://")
+        .map(|rest| (rest, 443))
+        .or_else(|| url.strip_prefix("http://").map(|rest| (rest, 80)));
+    let (rest, default_port) = rest?;
+
+    let authority = rest
+        .split(['/', '?', '#'])
+        .next()
+        .filter(|authority| !authority.is_empty())?;
+    if authority.contains('@') {
+        return None;
+    }
+
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((host, port)) => (host, port.parse().ok()?),
+        None => (authority, default_port),
+    };
+
+    HostScope::parse(format!("{host}:{port}")).ok()
+}
+
+/// A module's own memory, if it exports one.
+fn memory(caller: &Caller<'_, Sandboxed<'_>>) -> Option<wasmi::Memory> {
+    match caller.get_export("memory") {
+        Some(wasmi::Extern::Memory(memory)) => Some(memory),
+        _ => None,
+    }
+}
+
+/// Reads `len` bytes at `at` out of the module's memory.
+fn borrow(caller: &Caller<'_, Sandboxed<'_>>, at: i32, len: i32) -> Option<Vec<u8>> {
+    let memory = memory(caller)?;
+    let at = usize::try_from(at).ok()?;
+    let len = usize::try_from(len).ok()?;
+
+    memory
+        .data(caller)
+        .get(at..at.checked_add(len)?)
+        .map(<[u8]>::to_vec)
+}
+
+/// Writes `bytes` into the module's memory at `at`.
+fn place(caller: &mut Caller<'_, Sandboxed<'_>>, at: i32, bytes: &[u8]) -> Option<()> {
+    let memory = memory(caller)?;
+    let at = usize::try_from(at).ok()?;
+
+    memory.write(caller, at, bytes).ok()
+}
+
 /// The WASI context, holding exactly what was granted.
 fn build_context(capabilities: &Capabilities, captured: &Captured) -> Result<WasiCtx, WasmError> {
     let mut builder = wasmi_wasi::WasiCtxBuilder::new();
@@ -393,14 +689,33 @@ fn build_context(capabilities: &Capabilities, captured: &Captured) -> Result<Was
             captured.err.clone(),
         )));
 
+    // Built before the preopens are pushed, because a read-only mount cannot go
+    // through the builder at all: `preopened_dir` takes a `cap_std` directory
+    // and wraps it in the read-write implementation itself. The context's own
+    // `push_preopened_dir` takes any `WasiDir`, which is what lets a mount be
+    // what the specification says it is.
+    let context = builder.build();
+
     for (host, seen_as) in &capabilities.visible {
-        let opened = open_directory(host)?;
-        builder
-            .preopened_dir(opened, seen_as)
+        let opened = wasmi_wasi::dir::Dir::from_cap_std(open_directory(host)?);
+
+        // Read-only means read-only. Every mount used to be preopened with the
+        // ambient authority it was opened with, whatever the specification
+        // said, so an application whose write grant had been revoked could
+        // still write — while the run's banner correctly said "Can read" and
+        // the sentence shown when granting says "It cannot change those files".
+        let mounted: Box<dyn wasmi_wasi::WasiDir> = if capabilities.may_write(seen_as) {
+            Box::new(opened)
+        } else {
+            Box::new(super::readonly::ReadOnly(Box::new(opened)))
+        };
+
+        context
+            .push_preopened_dir(mounted, seen_as)
             .map_err(|error| WasmError::CannotPrepare(error.to_string()))?;
     }
 
-    Ok(builder.build())
+    Ok(context)
 }
 
 fn open_directory(path: &Path) -> Result<wasmi_wasi::Dir, WasmError> {

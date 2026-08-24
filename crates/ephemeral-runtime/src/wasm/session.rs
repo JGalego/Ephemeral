@@ -32,7 +32,6 @@ use crate::{Completed, HostPaths, RuntimeError, Secrets, spec::ContainerSpec};
 use super::{Program, WasmRuntime};
 
 /// An application, and everything needed to run it once.
-#[derive(Debug)]
 pub struct Runnable<'a> {
     /// What the application is.
     pub manifest: &'a AppManifest,
@@ -67,6 +66,15 @@ pub struct Runnable<'a> {
     ///
     /// [`super::HANDHELD_CEILING`] where somebody is waiting for it.
     pub ceiling: Duration,
+
+    /// Who will carry a request the application is allowed to make.
+    ///
+    /// `None` means nothing will, and an application granted the network is
+    /// refused rather than started — this crate opens no socket and brings no
+    /// HTTP client, so a caller that supplies nothing has given it no network
+    /// to give. Every client passes what it has: `curl` on a desktop, the
+    /// platform's own stack on a handset.
+    pub reach: Option<std::sync::Arc<dyn super::Reach>>,
 }
 
 /// What one run produced.
@@ -216,7 +224,12 @@ pub fn run(runnable: &Runnable<'_>) -> Result<Ran, RuntimeError> {
         stderr: error.to_string(),
     })?;
 
-    let completed = WasmRuntime::new().run_once(
+    let engine = match &runnable.reach {
+        Some(reach) => WasmRuntime::reaching(std::sync::Arc::clone(reach)),
+        None => WasmRuntime::new(),
+    };
+
+    let completed = engine.run_once(
         &program,
         &spec,
         allowance(runnable.manifest, runnable.ceiling),
@@ -312,6 +325,7 @@ mod tests {
             home: home.path().to_path_buf(),
             arguments: Vec::new(),
             ceiling: HANDHELD_CEILING,
+            reach: None,
         })
         .expect("it runs");
 
@@ -384,6 +398,7 @@ mod tests {
             home: home.path().to_path_buf(),
             arguments: vec!["--verbose".to_owned()],
             ceiling: HANDHELD_CEILING,
+            reach: None,
         })
         .expect("it runs");
 
@@ -434,6 +449,7 @@ mod tests {
             // is named: the module holds a descriptor, not a filesystem.
             arguments: vec!["escape/secret".to_owned()],
             ceiling: HANDHELD_CEILING,
+            reach: None,
         })
         .expect("it runs, and finds nothing");
 
@@ -474,6 +490,7 @@ mod tests {
             home: home.path().to_path_buf(),
             arguments: vec!["notes".to_owned()],
             ceiling: HANDHELD_CEILING,
+            reach: None,
         })
         .expect("it runs");
 
@@ -557,6 +574,7 @@ mod tests {
             home: home.path().to_path_buf(),
             arguments: Vec::new(),
             ceiling: HANDHELD_CEILING,
+            reach: None,
         })
         .expect("it runs");
 
@@ -578,6 +596,7 @@ mod tests {
             home: home.path().to_path_buf(),
             arguments: Vec::new(),
             ceiling: HANDHELD_CEILING,
+            reach: None,
         })
         .expect_err("there is nothing to run");
 
@@ -599,6 +618,7 @@ mod tests {
             home: home.path().to_path_buf(),
             arguments: Vec::new(),
             ceiling: HANDHELD_CEILING,
+            reach: None,
         })
         .expect_err("this runtime does not run containers");
 

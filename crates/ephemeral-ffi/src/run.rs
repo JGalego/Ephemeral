@@ -64,6 +64,7 @@ pub(crate) fn run(
     workspace: &Workspace,
     app: &AppId,
     arguments: Vec<String>,
+    reach: std::sync::Arc<dyn ephemeral_runtime::wasm::Reach>,
 ) -> Result<Ran, String> {
     let manifest = workspace
         .apps()
@@ -89,6 +90,10 @@ pub(crate) fn run(
         arguments,
         // Somebody is holding the device and waiting.
         ceiling: HANDHELD_CEILING,
+        // The platform's own HTTPS, which is the only one worth having here.
+        // Supplying it grants nothing: an application reaches a destination
+        // only if a person allowed that destination.
+        reach: Some(reach),
     })
     .map_err(|error| error.to_string())?;
 

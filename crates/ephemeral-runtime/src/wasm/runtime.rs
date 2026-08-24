@@ -17,6 +17,7 @@
 //! What it offers instead is the one operation a module has: run it to
 //! completion, under exactly what was granted, and say what happened.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::{Completed, RuntimeError, Secrets, spec::ContainerSpec};
@@ -24,14 +25,41 @@ use crate::{Completed, RuntimeError, Secrets, spec::ContainerSpec};
 use super::{Capabilities, Confined, Program, WasmError, run};
 
 /// Runs applications as WebAssembly modules, in this process.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct WasmRuntime;
+///
+/// Holds, optionally, the one thing this crate refuses to bring itself: a way
+/// to make a network request. There is no HTTP client here and no socket, so a
+/// runtime built with [`WasmRuntime::new`] can give an application no network
+/// however it was granted — it says so rather than starting one that will fail
+/// at its first request.
+#[derive(Default)]
+pub struct WasmRuntime {
+    reach: Option<Arc<dyn super::Reach>>,
+}
+
+impl std::fmt::Debug for WasmRuntime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WasmRuntime")
+            .field("reach", &self.reach.is_some())
+            .finish()
+    }
+}
 
 impl WasmRuntime {
-    /// A runtime.
+    /// A runtime that can give an application no network.
     #[must_use]
     pub fn new() -> Self {
-        Self
+        Self { reach: None }
+    }
+
+    /// A runtime that will ask `reach` to carry what an application was allowed
+    /// to send.
+    ///
+    /// Supplying one does not grant anything. It makes a grant *possible*: the
+    /// person still decides, and every request is checked against what they
+    /// decided before `reach` is asked to make it.
+    #[must_use]
+    pub fn reaching(reach: Arc<dyn super::Reach>) -> Self {
+        Self { reach: Some(reach) }
     }
 
     /// The name of this runtime, for the interface and the audit log.
@@ -83,7 +111,7 @@ impl WasmRuntime {
             stderr: format!("{} could not be read: {error}", program.wasm().display()),
         })?;
 
-        match run(&wasm, &capabilities) {
+        match run(&wasm, &capabilities, self.reach.as_deref()) {
             Ok(confined) => Ok(reported(&confined)),
             Err(WasmError::Ungranted(said)) => Err(RuntimeError::Ungranted {
                 app: spec.app.clone(),
@@ -117,17 +145,19 @@ impl WasmRuntime {
         timeout: Duration,
         secrets: &Secrets,
     ) -> Result<Capabilities, RuntimeError> {
-        // The one place this runtime is *stricter* than the container one.
-        // There are no sockets in this WASI implementation to hand out, so an
-        // egress grant cannot be honoured — and appearing to honour it is worse
-        // than saying so, because the application would fail at its first
-        // request with a message about a network that was never there.
-        if spec.egress.is_permitted() {
+        // There are still no sockets in this WASI implementation, and there
+        // will not be. What an egress grant buys is that the application may
+        // *describe* a request and something outside the sandbox will make it —
+        // so a runtime with nothing to make it with can honour no grant at all,
+        // and says so rather than starting an application that will fail at its
+        // first request with a message about a network that was never there.
+        if spec.egress.is_permitted() && self.reach.is_none() {
             return Err(RuntimeError::CannotEnforce {
                 control: "network access".to_owned(),
-                reason: "WebAssembly applications on this device have no network at all, \
-                         so an application that needs one cannot run here. On a desktop \
-                         with Docker it can."
+                reason: "nothing here can carry a request for an application, so one that \
+                         needs the network cannot run. A WebAssembly application never \
+                         opens a socket itself; whatever is running it does that, and \
+                         this runtime was given no way to."
                     .to_owned(),
             });
         }
@@ -348,16 +378,16 @@ mod tests {
             "its own source, and nothing of the user's"
         );
         assert!(
-            !capabilities.writable,
+            capabilities.writable.is_empty(),
             "an interpreter that could rewrite its script is an application that edits itself"
         );
     }
 
-    /// A grant the container runtime honours and this one cannot is refused
-    /// rather than quietly dropped. An application promised the network and
-    /// silently denied it looks broken in a way nothing explains.
+    /// A grant nothing can carry is refused rather than quietly dropped. An
+    /// application promised the network and silently denied it looks broken in
+    /// a way nothing explains.
     #[test]
-    fn an_application_that_needs_the_network_is_refused_here_and_told_why() {
+    fn a_network_grant_nothing_can_carry_is_refused_and_says_so() {
         let mut spec = spec();
         spec.egress = Egress::AllowList(vec![
             ephemeral_core::permission::HostScope::parse("api.example.com").expect("a host"),
@@ -370,14 +400,63 @@ mod tests {
                 Duration::from_secs(30),
                 &Secrets::new(),
             )
-            .expect_err("this runtime has no network to give");
+            .expect_err("nothing was supplied to carry a request");
 
         let said = refused.to_string();
         assert!(said.contains("network"), "{said}");
         assert!(
-            said.contains("Docker"),
-            "and it says where the application can run instead: {said}"
+            said.contains("opens a socket") || said.contains("carry"),
+            "and it says why, which is not about this application: {said}"
         );
+    }
+
+    /// **A confined application can be given the network without a socket.**
+    ///
+    /// The same grant, the same specification, and a way to carry a request —
+    /// and it is honoured. What changed is not the sandbox's opinion of the
+    /// application; it is that somebody outside the sandbox agreed to make the
+    /// request, which is the only way this runtime will ever do it.
+    #[test]
+    fn the_same_grant_is_honoured_when_something_can_carry_it() {
+        let mut spec = spec();
+        let reachable =
+            ephemeral_core::permission::HostScope::parse("api.example.com").expect("a host");
+        spec.egress = Egress::AllowList(vec![reachable.clone()]);
+
+        let capabilities = WasmRuntime::reaching(std::sync::Arc::new(Nowhere))
+            .capabilities(
+                &Program::module("unused.wasm"),
+                &spec,
+                Duration::from_secs(30),
+                &Secrets::new(),
+            )
+            .expect("something can carry it now");
+
+        assert!(capabilities.may_reach(&reachable));
+        assert!(
+            !capabilities.may_reach(
+                &ephemeral_core::permission::HostScope::parse("api.example.org").expect("a host")
+            ),
+            "one host was granted, not the internet"
+        );
+        assert!(
+            !capabilities.isolated(),
+            "an application that can reach a service is not isolated, and the \
+             interface has to be able to say so"
+        );
+    }
+
+    /// A way to carry a request that never carries one. Enough to prove the
+    /// grant is honoured without this test depending on a network.
+    struct Nowhere;
+
+    impl super::super::Reach for Nowhere {
+        fn fetch(
+            &self,
+            _request: &super::super::Outbound,
+        ) -> Result<super::super::Answered, String> {
+            Err("this test does not have a network".to_owned())
+        }
     }
 
     /// A module importing something nothing provides is a refusal naming the

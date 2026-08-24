@@ -41,15 +41,20 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use ephemeral_core::permission::HostScope;
+
 use crate::spec::{ContainerSpec, Egress};
 
 mod engine;
 mod program;
+mod reach;
+mod readonly;
 mod runtime;
 mod session;
 
 pub use engine::{Confined, Halt, WasmError, inspect, run};
 pub use program::{NoProgram, PROGRAM_DIRECTORY, Program, languages};
+pub use reach::{Answered, MOST_ONE_BODY, MOST_REQUESTS, Method, Outbound, Reach};
 pub use runtime::WasmRuntime;
 pub use session::{Ran, Runnable, Shown, run as run_application};
 
@@ -69,8 +74,26 @@ pub struct Capabilities {
     /// anything at all, which is the default here.
     pub visible: Vec<(PathBuf, String)>,
 
-    /// Whether the module may write to any of them.
-    pub writable: bool,
+    /// Which of them it may write to, by the name it sees.
+    ///
+    /// A separate list rather than a flag on each entry, so the question the
+    /// engine asks — *may this preopen be written to?* — has one answer and one
+    /// place to look. The version of this that carried a single `writable`
+    /// summarising every mount is why a revoked write grant still permitted
+    /// writes: the summary was reported to a person and never consulted when
+    /// the directory was opened.
+    pub writable: Vec<String>,
+
+    /// Where it may send a request, if anywhere.
+    ///
+    /// [`Egress::Denied`] — the default — means no host function is linked at
+    /// all, so a module that imports one cannot start. Anything else means the
+    /// engine will check each request against this before handing it to a
+    /// [`Reach`].
+    pub reachable: Egress,
+
+    /// How many requests one run may make.
+    pub requests: u32,
 
     /// The arguments, as the application sees them.
     pub arguments: Vec<String>,
@@ -142,13 +165,6 @@ impl Capabilities {
     /// guessed at, which fails closed.
     #[must_use]
     pub fn from_spec(spec: &ContainerSpec, timeout: Duration, secrets: &crate::Secrets) -> Self {
-        // Egress has no representation here at all. wasmi's WASI has no sockets
-        // to offer, so a module cannot reach the network whatever a
-        // specification says — the one case where this runtime is *stricter*
-        // than the container one, and the interface has to say so rather than
-        // quietly appearing to honour a grant it cannot give effect to.
-        let _ = Egress::Denied;
-
         let visible = spec
             .mounts
             .iter()
@@ -157,7 +173,22 @@ impl Capabilities {
 
         Self {
             visible,
-            writable: spec.mounts.iter().any(|mount| mount.writable),
+            // Only the mounts the specification actually made writable. Every
+            // other one is opened read-only, which is what the sentence a
+            // person was shown when they granted it — "It cannot change those
+            // files" — has always claimed.
+            writable: spec
+                .mounts
+                .iter()
+                .filter(|mount| mount.writable)
+                .map(|mount| mount.container_path.clone())
+                .collect(),
+            // Carried rather than dropped. There are still no sockets: what an
+            // egress grant now buys is that the engine will link a host
+            // function, and ask whoever is running the application to make the
+            // request. Denied stays the default and links nothing.
+            reachable: spec.egress.clone(),
+            requests: MOST_REQUESTS,
             arguments: spec.entrypoint.clone(),
             environment: spec
                 .environment_names
@@ -181,7 +212,28 @@ impl Capabilities {
     /// Whether the module can reach anything of the user's at all.
     #[must_use]
     pub fn isolated(&self) -> bool {
-        self.visible.is_empty()
+        self.visible.is_empty() && !self.reachable.is_permitted()
+    }
+
+    /// Whether the module may write to the preopen it sees as `seen_as`.
+    #[must_use]
+    pub fn may_write(&self, seen_as: &str) -> bool {
+        self.writable.iter().any(|writable| writable == seen_as)
+    }
+
+    /// Whether a request to `host` is one the grant covers.
+    ///
+    /// Asked here rather than by whoever performs the request. A host that
+    /// decided this for itself would be a second copy of the permission model,
+    /// in another language, on another release cycle — and the copy that drifts
+    /// is the one nobody is looking at.
+    #[must_use]
+    pub fn may_reach(&self, host: &HostScope) -> bool {
+        match &self.reachable {
+            Egress::Denied => false,
+            Egress::Anywhere => true,
+            Egress::AllowList(allowed) => allowed.iter().any(|scope| scope.contains(host)),
+        }
     }
 }
 
@@ -202,7 +254,9 @@ mod tests {
     fn granted(fuel: u64) -> Capabilities {
         Capabilities {
             visible: Vec::new(),
-            writable: false,
+            writable: Vec::new(),
+            reachable: Egress::Denied,
+            requests: MOST_REQUESTS,
             arguments: Vec::new(),
             environment: Vec::new(),
             fuel,
@@ -210,12 +264,296 @@ mod tests {
         }
     }
 
+    /// Escapes text so it can sit in a WebAssembly text data segment.
+    fn quoted(text: &str) -> String {
+        text.replace('\\', "\\\\").replace('"', "\\\"")
+    }
+
+    /// A module that tries to create a file in the first preopened directory,
+    /// and exits with the errno it got — zero when it was allowed.
+    fn tries_to_write() -> Vec<u8> {
+        module(
+            r#"(module
+                 (import "wasi_snapshot_preview1" "path_open"
+                   (func $open (param i32 i32 i32 i32 i32 i64 i64 i32 i32) (result i32)))
+                 (import "wasi_snapshot_preview1" "proc_exit" (func $exit (param i32)))
+                 (memory (export "memory") 1)
+                 (data (i32.const 100) "note.txt")
+                 (func (export "_start")
+                   (call $exit
+                     (call $open
+                       (i32.const 3)      ;; the first preopen
+                       (i32.const 0)
+                       (i32.const 100)    ;; "note.txt"
+                       (i32.const 8)
+                       (i32.const 1)      ;; O_CREAT
+                       (i64.const 64)     ;; FD_WRITE
+                       (i64.const 64)
+                       (i32.const 0)
+                       (i32.const 200)))))"#,
+        )
+    }
+
+    /// What WASI calls "operation not permitted".
+    const EPERM: i32 = 63;
+
+    /// **A read-only mount is read-only.**
+    ///
+    /// It was not. Every mount was preopened with the ambient authority its
+    /// directory was opened with, whatever the specification said, so an
+    /// application whose write permission had been *revoked* could still
+    /// write — while the run's banner correctly said "Can read" and the
+    /// sentence shown when granting read says "It cannot change those files".
+    ///
+    /// Found by doing exactly this to a real application, not by reading the
+    /// code: nothing here distinguished the two mounts, so nothing failed.
+    #[test]
+    fn a_read_only_mount_refuses_to_be_written_to() {
+        let folder = tempfile::tempdir().expect("a temporary directory");
+
+        let refused = run(
+            &tries_to_write(),
+            &Capabilities {
+                visible: vec![(folder.path().to_path_buf(), "/mnt/data".to_owned())],
+                writable: Vec::new(),
+                ..granted(10_000_000)
+            },
+            None,
+        )
+        .expect("being refused is an outcome, not a failure to start");
+
+        assert_eq!(
+            refused.exit_code, EPERM,
+            "it should not have been permitted to create anything"
+        );
+        assert!(
+            !folder.path().join("note.txt").exists(),
+            "and nothing should have appeared on disk"
+        );
+    }
+
+    /// And a writable one still works. A sandbox that refuses everything is not
+    /// a sandbox, it is a broken runtime, and the test above alone cannot tell
+    /// the two apart.
+    #[test]
+    fn a_writable_mount_can_still_be_written_to() {
+        let folder = tempfile::tempdir().expect("a temporary directory");
+
+        let allowed = run(
+            &tries_to_write(),
+            &Capabilities {
+                visible: vec![(folder.path().to_path_buf(), "/mnt/data".to_owned())],
+                writable: vec!["/mnt/data".to_owned()],
+                ..granted(10_000_000)
+            },
+            None,
+        )
+        .expect("it runs");
+
+        assert_eq!(allowed.exit_code, 0, "it was allowed to create a file");
+        assert!(folder.path().join("note.txt").exists());
+    }
+
+    /// A module that asks for one request and prints whatever came back.
+    fn asks_for(request: &str) -> Vec<u8> {
+        module(&format!(
+            r#"(module
+                 (import "wasi_snapshot_preview1" "fd_write"
+                   (func $write (param i32 i32 i32 i32) (result i32)))
+                 (import "ephemeral" "send" (func $send (param i32 i32) (result i32)))
+                 (import "ephemeral" "recv" (func $recv (param i32 i32) (result i32)))
+                 (memory (export "memory") 1)
+                 (data (i32.const 1024) "{escaped}")
+                 (func (export "_start")
+                   (local $n i32)
+                   (drop (call $send (i32.const 1024) (i32.const {length})))
+                   (local.set $n (call $recv (i32.const 2048) (i32.const 8192)))
+                   (i32.store (i32.const 0) (i32.const 2048))
+                   (i32.store (i32.const 4) (local.get $n))
+                   (drop (call $write (i32.const 1) (i32.const 0) (i32.const 1)
+                                      (i32.const 8)))))"#,
+            escaped = quoted(request),
+            length = request.len(),
+        ))
+    }
+
+    /// A `Reach` that answers everything the same way, and remembers what it
+    /// was asked for.
+    #[derive(Default)]
+    struct Answers {
+        asked: std::sync::Mutex<Vec<Outbound>>,
+    }
+
+    impl Reach for Answers {
+        fn fetch(&self, request: &Outbound) -> Result<Answered, String> {
+            self.asked
+                .lock()
+                .expect("nothing else holds this")
+                .push(request.clone());
+            Ok(Answered {
+                status: 200,
+                body: "pong".to_owned(),
+            })
+        }
+    }
+
+    fn reaching(host: &str) -> Capabilities {
+        Capabilities {
+            reachable: Egress::AllowList(vec![
+                ephemeral_core::permission::HostScope::parse(host).expect("a host"),
+            ]),
+            ..granted(50_000_000)
+        }
+    }
+
+    /// **An application with no network grant cannot even start one.**
+    ///
+    /// The capability model, and the reason it is worth having: the host
+    /// functions are not linked at all, so a module that imports them has
+    /// nothing to bind to and never executes an instruction. There is no
+    /// version of this where the application runs and the request quietly
+    /// fails.
+    #[test]
+    fn a_module_that_asks_for_the_network_without_a_grant_never_starts() {
+        let wasm = asks_for(r#"{"method":"GET","url":"https://api.example.com/ping"}"#);
+        let carrier = Answers::default();
+
+        let refused =
+            run(&wasm, &granted(50_000_000), Some(&carrier)).expect_err("it was granted nothing");
+
+        assert!(matches!(refused, WasmError::Ungranted(_)), "{refused}");
+        assert!(
+            carrier
+                .asked
+                .lock()
+                .expect("nothing else holds this")
+                .is_empty(),
+            "and nothing was sent"
+        );
+    }
+
+    /// **A granted application reaches the host it was granted.**
+    #[test]
+    fn a_granted_request_is_carried_and_the_answer_comes_back() {
+        let wasm = asks_for(r#"{"method":"GET","url":"https://api.example.com/ping"}"#);
+        let carrier = Answers::default();
+
+        let outcome = run(&wasm, &reaching("api.example.com"), Some(&carrier)).expect("it runs");
+
+        assert!(outcome.succeeded(), "{outcome:?}");
+        assert!(
+            outcome.output.contains("pong") && outcome.output.contains("200"),
+            "the answer reaches the application: {}",
+            outcome.output
+        );
+
+        let asked = carrier.asked.lock().expect("nothing else holds this");
+        assert_eq!(asked.len(), 1);
+        assert_eq!(asked[0].method, Method::Get);
+        assert_eq!(asked[0].url, "https://api.example.com/ping");
+        assert!(asked[0].body.is_empty(), "a GET carries no body");
+    }
+
+    /// **And nothing else.**
+    ///
+    /// The grant names one host. Every other destination is refused *before*
+    /// anything is asked to carry it — so a host implementation that would
+    /// happily fetch anything is never given the chance, which is the whole
+    /// reason the check lives here and not there.
+    #[test]
+    fn a_host_that_was_not_granted_is_refused_before_anything_is_sent() {
+        let carrier = Answers::default();
+
+        for elsewhere in [
+            "https://api.example.org/ping",
+            "https://evil.example.com.attacker.net/ping",
+            "http://api.example.com/ping", // the same name, the wrong port
+            "https://api.example.com:8443/ping",
+            "file:///etc/passwd",
+            "https://user@api.example.com/ping",
+        ] {
+            let wasm = asks_for(&format!(r#"{{"method":"GET","url":"{elsewhere}"}}"#));
+            let outcome = run(&wasm, &reaching("api.example.com:443"), Some(&carrier))
+                .expect("a refusal is an answer, not a crash");
+
+            assert!(
+                outcome.output.contains("error"),
+                "{elsewhere} should have been refused: {}",
+                outcome.output
+            );
+            assert!(
+                carrier
+                    .asked
+                    .lock()
+                    .expect("nothing else holds this")
+                    .is_empty(),
+                "{elsewhere} reached the carrier, which should never have been asked"
+            );
+        }
+    }
+
+    /// **Requests are counted, because fuel does not count them.**
+    ///
+    /// A host call spends almost no fuel — the waiting happens outside the
+    /// interpreter — so without a separate budget an application could sit in a
+    /// loop making requests for as long as the other end kept answering, having
+    /// spent nearly none of its allowance.
+    #[test]
+    fn a_run_cannot_make_more_requests_than_it_was_allowed() {
+        let wasm = module(&format!(
+            r#"(module
+                 (import "wasi_snapshot_preview1" "fd_write"
+                   (func $write (param i32 i32 i32 i32) (result i32)))
+                 (import "ephemeral" "send" (func $send (param i32 i32) (result i32)))
+                 (import "ephemeral" "recv" (func $recv (param i32 i32) (result i32)))
+                 (memory (export "memory") 1)
+                 (data (i32.const 1024) "{escaped}")
+                 (func (export "_start")
+                   (local $left i32)
+                   (local $n i32)
+                   (local.set $left (i32.const 10))
+                   (loop $again
+                     (drop (call $send (i32.const 1024) (i32.const {length})))
+                     (local.set $n (call $recv (i32.const 2048) (i32.const 8192)))
+                     (local.set $left (i32.sub (local.get $left) (i32.const 1)))
+                     (br_if $again (local.get $left)))
+                   (i32.store (i32.const 0) (i32.const 2048))
+                   (i32.store (i32.const 4) (local.get $n))
+                   (drop (call $write (i32.const 1) (i32.const 0) (i32.const 1)
+                                      (i32.const 8)))))"#,
+            escaped = quoted(r#"{"method":"GET","url":"https://api.example.com/ping"}"#),
+            length = r#"{"method":"GET","url":"https://api.example.com/ping"}"#.len(),
+        ));
+
+        let carrier = Answers::default();
+        let outcome = run(
+            &wasm,
+            &Capabilities {
+                requests: 3,
+                ..reaching("api.example.com")
+            },
+            Some(&carrier),
+        )
+        .expect("running out of budget is an answer");
+
+        assert_eq!(
+            carrier.asked.lock().expect("nothing else holds this").len(),
+            3,
+            "three were allowed, ten were attempted"
+        );
+        assert!(
+            outcome.output.contains("every request it was allowed"),
+            "and the application is told, rather than hanging: {}",
+            outcome.output
+        );
+    }
+
     /// A module that does nothing runs, and is not mistaken for a failure.
     #[test]
     fn a_module_that_does_nothing_succeeds() {
         let wasm = module(r#"(module (func (export "_start")))"#);
 
-        let outcome = run(&wasm, &granted(1_000_000)).expect("it runs");
+        let outcome = run(&wasm, &granted(1_000_000), None).expect("it runs");
 
         assert!(outcome.succeeded());
         assert!(outcome.output.is_empty());
@@ -236,7 +574,8 @@ mod tests {
                  (func (export "_start") (call $out (i32.const 1))))"#,
         );
 
-        let refused = run(&wasm, &granted(1_000_000)).expect_err("it must not be allowed to start");
+        let refused =
+            run(&wasm, &granted(1_000_000), None).expect_err("it must not be allowed to start");
 
         assert!(
             matches!(refused, WasmError::Ungranted(_)),
@@ -257,7 +596,8 @@ mod tests {
                    (drop (call $open (i32.const 0) (i32.const 0) (i32.const 0)))))"#,
         );
 
-        let refused = run(&wasm, &granted(1_000_000)).expect_err("there is no socket to open");
+        let refused =
+            run(&wasm, &granted(1_000_000), None).expect_err("there is no socket to open");
 
         assert!(matches!(refused, WasmError::Ungranted(_)), "{refused}");
     }
@@ -271,7 +611,7 @@ mod tests {
     fn a_module_that_loops_forever_is_stopped() {
         let wasm = module(r#"(module (func (export "_start") (loop $forever (br $forever))))"#);
 
-        let stopped = run(&wasm, &granted(100_000)).expect("being stopped is an outcome");
+        let stopped = run(&wasm, &granted(100_000), None).expect("being stopped is an outcome");
 
         assert!(!stopped.succeeded());
         assert_eq!(stopped.halted, Some(Halt::Processing));
@@ -305,7 +645,7 @@ mod tests {
                    (loop $forever (br $forever))))"#,
         );
 
-        let stopped = run(&wasm, &granted(200_000)).expect("being stopped is an outcome");
+        let stopped = run(&wasm, &granted(200_000), None).expect("being stopped is an outcome");
 
         assert_eq!(stopped.halted, Some(Halt::Processing));
         assert_eq!(stopped.output, "got this far\n");
@@ -335,6 +675,7 @@ mod tests {
                 memory: 64 * 1024,
                 ..granted(100_000_000)
             },
+            None,
         )
         .expect("being stopped is an outcome");
 
@@ -359,6 +700,7 @@ mod tests {
                 memory: 4 * 64 * 1024,
                 ..granted(1_000_000)
             },
+            None,
         )
         .expect("two pages is inside a four page ceiling");
 
@@ -385,7 +727,7 @@ mod tests {
                      (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 20)))))"#,
         );
 
-        let outcome = run(&wasm, &granted(1_000_000)).expect("it runs");
+        let outcome = run(&wasm, &granted(1_000_000), None).expect("it runs");
 
         assert_eq!(outcome.output, "hi\n");
     }
@@ -397,7 +739,7 @@ mod tests {
     fn a_module_that_crashes_says_so() {
         let wasm = module(r#"(module (func (export "_start") (unreachable)))"#);
 
-        let crashed = run(&wasm, &granted(1_000_000)).expect("a crash is an outcome");
+        let crashed = run(&wasm, &granted(1_000_000), None).expect("a crash is an outcome");
 
         assert!(!crashed.succeeded());
         assert_eq!(crashed.halted, Some(Halt::Fault));
@@ -486,7 +828,7 @@ mod tests {
 
         assert!(capabilities.isolated(), "it can see nothing of the user's");
         assert!(capabilities.visible.is_empty());
-        assert!(!capabilities.writable);
+        assert!(capabilities.writable.is_empty());
         assert!(capabilities.environment.is_empty());
         assert!(capabilities.fuel > 0, "and it still has room to run");
     }
@@ -557,7 +899,7 @@ mod tests {
         );
         assert!(!capabilities.isolated());
         assert!(
-            !capabilities.writable,
+            capabilities.writable.is_empty(),
             "a read-only grant stays read-only across the translation"
         );
     }

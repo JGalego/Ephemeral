@@ -252,6 +252,12 @@ pub fn run_once(
         // A terminal is not a phone: somebody who typed a command and walked
         // away is happy for it to take what its manifest says it may.
         ceiling: DESKTOP_CEILING,
+        // Supplied, not granted. An application still reaches nothing unless a
+        // person allowed a destination; this is only what will carry a request
+        // once one has. Without it, a desktop would be the one place a granted
+        // application could not use the network — which is where this whole
+        // seam started.
+        reach: Some(std::sync::Arc::new(crate::reach::Curl)),
     });
 
     let ran = match outcome {
