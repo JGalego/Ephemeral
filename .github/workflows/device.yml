@@ -54,10 +54,15 @@ on:
         description: The service's base URL. Blank means that provider's own.
         default: "https://api.groq.com/openai/v1"
         type: string
-      model:
+      # Not `model`: that is the phone, above, and gcloud's own word for it.
+      # Both were called `model` until GitHub rejected the file — a duplicate
+      # key, which YAML tolerates by keeping the last and Actions does not
+      # tolerate at all.
+      llm_model:
         description: >
-          Which model. `ephemeral models --provider openai` lists what a service
-          has, and what size of reply each will accept.
+          Which model the app generates with. `ephemeral models --provider
+          openai` lists what a service has, and what size of reply each will
+          accept.
         default: "llama-3.3-70b-versatile"
         type: string
 
@@ -205,8 +210,8 @@ jobs:
             if [ -n "${{ inputs.base_url }}" ]; then
               settings="$settings,text:base_url=${{ inputs.base_url }}"
             fi
-            if [ -n "${{ inputs.model }}" ]; then
-              settings="$settings,text:model=${{ inputs.model }}"
+            if [ -n "${{ inputs.llm_model }}" ]; then
+              settings="$settings,text:model=${{ inputs.llm_model }}"
             fi
             # The connection test before anything is generated, so a wrong key
             # or a retired model shows up in the video as a sentence rather

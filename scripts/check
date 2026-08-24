@@ -52,10 +52,36 @@ except ImportError:
     print("(skipping: no pyyaml here; CI has it)")
     sys.exit(0)
 
+
+class Strict(yaml.SafeLoader):
+    """A loader that refuses what GitHub refuses.
+
+    PyYAML keeps the last of a duplicated key and says nothing. Actions rejects
+    the whole file. That difference is not academic: `device.yml` declared
+    `model` twice — the phone and the language model — and every push produced a
+    failed run with zero jobs and no log, for twenty-three commits, while this
+    check reported it fine.
+    """
+
+
+def no_duplicates(loader, node, deep=False):
+    seen = set()
+    for key, _ in node.value:
+        name = loader.construct_object(key, deep=deep)
+        if name in seen:
+            raise yaml.constructor.ConstructorError(
+                None, None, f"{name!r} is declared twice", key.start_mark
+            )
+        seen.add(name)
+    return yaml.SafeLoader.construct_mapping(loader, node, deep)
+
+
+Strict.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, no_duplicates)
+
 broken = 0
 for path in sorted(pathlib.Path(".github/workflows").glob("*.yml")):
     try:
-        loaded = yaml.safe_load(path.read_text())
+        loaded = yaml.load(path.read_text(), Loader=Strict)
     except yaml.YAMLError as error:
         print(f"  {path}: {error}")
         broken += 1
@@ -66,8 +92,16 @@ for path in sorted(pathlib.Path(".github/workflows").glob("*.yml")):
     if not isinstance(loaded, dict) or "jobs" not in loaded:
         print(f"  {path}: parses, but declares no jobs")
         broken += 1
-    else:
-        print(f"  ok  {path} ({len(loaded['jobs'])} jobs)")
+        continue
+
+    # `on` is the YAML 1.1 boolean true, which is why this looks for both. A
+    # workflow with no trigger at all is one nothing will ever run.
+    if "on" not in loaded and True not in loaded:
+        print(f"  {path}: declares no trigger, so nothing will run it")
+        broken += 1
+        continue
+
+    print(f"  ok  {path} ({len(loaded['jobs'])} jobs)")
 
 sys.exit(1 if broken else 0)
 PARSE
