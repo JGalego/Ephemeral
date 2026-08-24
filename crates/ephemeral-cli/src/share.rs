@@ -185,11 +185,23 @@ pub(crate) fn install(home: &Path, source: &Path, accepted: bool) -> Result<()> 
     println!("{} {id}", output::good("Installed."));
     println!("{}", output::dim(&format!("{copied} source file(s).")));
     println!();
+    // "Builds" is the container's word for it. A WebAssembly application
+    // arrives compiled, and the remaining work is checking that its module is a
+    // program this build can run — same command, honest description.
+    let readies = if installed
+        .runtime
+        .as_ref()
+        .is_some_and(|runtime| runtime.kind == ephemeral_core::manifest::RuntimeKind::Wasm)
+    {
+        "checks it and makes it ready on this machine"
+    } else {
+        "builds it on this machine"
+    };
     println!(
         "{}",
         output::dim(&format!(
             "It has no permissions. `ephemeral review {id}` asks you about each thing it wants, \
-             and `ephemeral generate {id}` builds it on this machine."
+             and `ephemeral generate {id}` {readies}."
         ))
     );
     Ok(())

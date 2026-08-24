@@ -227,6 +227,80 @@ pub fn run(wasm: &[u8], capabilities: &Capabilities) -> Result<Confined, WasmErr
     })
 }
 
+/// Checks that a module is one this build could actually run, without running
+/// it.
+///
+/// The honest content of "build" for this runtime. A container application is
+/// made ready by building an image, which fails loudly when the source is
+/// wrong; a WebAssembly application arrives already built, and the equivalent
+/// question is whether the bytes are a program at all. That is not a formality:
+/// this catches a file that is not WebAssembly, one compiled for something
+/// other than WASI, one with no entry point, and — the important one — one that
+/// imports a capability nothing here provides.
+///
+/// It instantiates but does not call `_start`, so the application's own code
+/// never executes. Checking a module by running it would mean running an
+/// unverified module to find out whether it should be run.
+///
+/// # Errors
+///
+/// [`WasmError::NotAModule`] when the bytes do not load or there is no entry
+/// point, and [`WasmError::Ungranted`] when it reaches for something it was not
+/// given.
+pub fn inspect(wasm: &[u8]) -> Result<(), WasmError> {
+    let mut config = Config::default();
+    config.compilation_mode(wasmi::CompilationMode::Lazy);
+    config.consume_fuel(true);
+
+    let engine = Engine::new(&config);
+    let module =
+        Module::new(&engine, wasm).map_err(|error| WasmError::NotAModule(error.to_string()))?;
+
+    let captured = Captured::new();
+    let nothing = Capabilities {
+        visible: Vec::new(),
+        writable: false,
+        arguments: Vec::new(),
+        environment: Vec::new(),
+        // Enough for a start section and no more. A module that wants to do
+        // real work before `main` is not being inspected, it is being run.
+        fuel: 1_000_000,
+        memory: 16 * 1024 * 1024,
+    };
+
+    let sandboxed = Sandboxed {
+        wasi: build_context(&nothing, &captured)?,
+        limits: StoreLimitsBuilder::new()
+            .memory_size(nothing.memory)
+            .trap_on_grow_failure(true)
+            .build(),
+    };
+
+    let mut store = Store::new(&engine, sandboxed);
+    store.limiter(|sandboxed| &mut sandboxed.limits);
+    store
+        .set_fuel(nothing.fuel)
+        .map_err(|error| WasmError::CannotPrepare(error.to_string()))?;
+
+    let mut linker = <Linker<Sandboxed>>::new(&engine);
+    wasmi_wasi::add_to_linker(&mut linker, |sandboxed: &mut Sandboxed| &mut sandboxed.wasi)
+        .map_err(|error| WasmError::CannotPrepare(error.to_string()))?;
+
+    let instance = linker
+        .instantiate(&mut store, &module)
+        .and_then(|pre| pre.start(&mut store))
+        .map_err(|error| refusal(&error))?;
+
+    instance
+        .get_typed_func::<(), ()>(&store, "_start")
+        .map(|_| ())
+        .map_err(|_| {
+            WasmError::NotAModule(
+                "it has no `_start`, so it is a library rather than a program".to_owned(),
+            )
+        })
+}
+
 /// Everything one run's store holds.
 ///
 /// The WASI context and the allocation bounds travel together because wasmi

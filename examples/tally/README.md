@@ -32,20 +32,35 @@ rustup target add wasm32-wasip1
 cargo build --release --target wasm32-wasip1
 ```
 
-Then put `target/wasm32-wasip1/release/tally.wasm` in an application's
-`source/program.wasm`, with a manifest declaring the WebAssembly runtime:
+Then make it into a package — an `ephemeral.yaml` beside a `source/` holding
+`program.wasm` — whose runtime block says:
 
-```json
-"runtime": {
-  "type": "wasm",
-  "program": "program.wasm",
-  "interface": "job",
-  "entrypoint": ["--file", "/data/files.csv"]
-}
+```yaml
+runtime:
+  type: wasm
+  program: program.wasm
+  interface: job          # or `web`, to write a page instead of a line
+  entrypoint: ["--file", "/data/files.csv"]
 ```
 
-`crates/ephemeral-runtime/tests/reference_wasm.rs` does all of that and asserts
-the result, so the shape above is checked rather than described.
+and install it:
+
+```
+ephemeral install <the package> --accept
+ephemeral generate <id>          # checks the module; no model, no Docker
+ephemeral run <id>
+```
+
+`generate` is the same command a container application uses, and it does the
+same job: whatever remains between a recipe and something runnable. For a
+container that is building an image. For this it is checking that the module
+loads, has an entry point, and asks for nothing it was not given — which is
+what stops an application installing cleanly and then failing the moment
+somebody presses Run.
+
+`crates/ephemeral-runtime/tests/reference_wasm.rs` runs the module directly, and
+`ephemeral-engine`'s tests cover the install-and-adopt path, so both are checked
+rather than described.
 
 ## What it cannot do
 

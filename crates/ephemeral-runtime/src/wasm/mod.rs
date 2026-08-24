@@ -48,7 +48,7 @@ mod program;
 mod runtime;
 mod session;
 
-pub use engine::{Confined, Halt, WasmError, run};
+pub use engine::{Confined, Halt, WasmError, inspect, run};
 pub use program::{NoProgram, PROGRAM_DIRECTORY, Program, languages};
 pub use runtime::WasmRuntime;
 pub use session::{Ran, Runnable, Shown, run as run_application};
@@ -415,6 +415,59 @@ mod tests {
         );
         assert_eq!(Halt::Memory.exit_code(), 137, "a kill after running out");
         assert_ne!(Halt::Fault.exit_code(), 0, "and a crash is never a success");
+    }
+
+    /// Inspecting a module is the honest content of "build" for this runtime,
+    /// and it is a real check rather than a formality.
+    #[test]
+    fn a_module_that_could_run_passes_inspection() {
+        assert!(inspect(&module(r#"(module (func (export "_start")))"#)).is_ok());
+    }
+
+    #[test]
+    fn bytes_that_are_not_a_module_do_not_pass_inspection() {
+        let refused = inspect(b"this is a text file").expect_err("that is not WebAssembly");
+        assert!(matches!(refused, WasmError::NotAModule(_)), "{refused}");
+    }
+
+    /// A library is not a program. Without this, an application would install
+    /// cleanly and then fail at the moment somebody pressed Run.
+    #[test]
+    fn a_module_with_no_entry_point_does_not_pass_inspection() {
+        let refused =
+            inspect(&module(r#"(module (func (export "add")))"#)).expect_err("it has no `_start`");
+        assert!(matches!(refused, WasmError::NotAModule(_)), "{refused}");
+    }
+
+    /// **The check worth having.** A module reaching for something nothing
+    /// provides is caught before it is ever installed, rather than at the
+    /// moment somebody tries to use it.
+    #[test]
+    fn a_module_asking_for_the_ungranted_fails_inspection() {
+        let refused = inspect(&module(
+            r#"(module
+                 (import "host" "exfiltrate" (func $out (param i32)))
+                 (func (export "_start") (call $out (i32.const 1))))"#,
+        ))
+        .expect_err("it asks for what nothing provides");
+
+        assert!(matches!(refused, WasmError::Ungranted(_)), "{refused}");
+    }
+
+    /// Inspecting does not run the application. Checking a module by running it
+    /// would mean running an unverified module to find out whether it should be
+    /// run — so this asserts the program's own code never executed.
+    #[test]
+    fn inspecting_a_module_does_not_run_it() {
+        let wasm = module(
+            r#"(module
+                 (import "wasi_snapshot_preview1" "proc_exit" (func $exit (param i32)))
+                 (memory (export "memory") 1)
+                 (func (export "_start") (call $exit (i32.const 42))))"#,
+        );
+
+        // If `_start` had been called this would be an exit, not an `Ok`.
+        assert!(inspect(&wasm).is_ok());
     }
 
     /// A specification that grants nothing produces capabilities that permit

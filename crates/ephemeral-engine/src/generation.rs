@@ -32,7 +32,7 @@ use ephemeral_core::{
 };
 use ephemeral_runtime::{BuildRequest, Runtime as _, docker::DockerRuntime};
 
-use crate::sandbox::usable_runtime;
+use crate::sandbox::{apply, save, usable_runtime};
 
 /// One capability a generated application will ask for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -124,6 +124,15 @@ pub fn generate(
     manifest: &mut AppManifest,
     provider_name: &str,
 ) -> Result<Generated> {
+    // An application that arrived already built. A recipe carries the module
+    // (ADR-0012), so there is nothing to ask a model for and nothing to
+    // compile — but there *is* something to check, and until this existed
+    // `generate` was the printed next step and it demanded Docker for a
+    // runtime that does not use it.
+    if let Some(ready) = already_built(workspace, manifest)? {
+        return Ok(ready);
+    }
+
     let regenerating = manifest.runtime.is_some();
 
     let Some(start) = starting_event(manifest) else {
@@ -601,6 +610,123 @@ pub fn provider(name: &str) -> Result<Box<dyn AgentProvider>> {
     }
 }
 
+/// Makes an application that arrived already built ready to run, or `None`.
+///
+/// The WebAssembly half of what `generate` means. For a container, generating
+/// asks a model for source and then builds an image from it. For a recipe that
+/// already carries a WebAssembly module there is nothing to ask and nothing to
+/// compile — the honest remaining work is checking that the module is a program
+/// this build can run, which is what [`ephemeral_runtime::wasm::inspect`] does
+/// without executing any of it.
+///
+/// Returns `None` for anything this does not apply to, so the ordinary path is
+/// unchanged: an application with no module, one already past this point, or
+/// one on any other runtime.
+///
+/// # Errors
+///
+/// When the module is not a program — corrupt, not WebAssembly, no entry point,
+/// or reaching for a capability nothing provides. Refusing here is the point:
+/// the alternative is an application that installs cleanly and fails the moment
+/// somebody presses Run.
+fn already_built(
+    workspace: &mut Workspace,
+    manifest: &mut AppManifest,
+) -> Result<Option<Generated>> {
+    let Some(runtime) = manifest.runtime.as_ref() else {
+        return Ok(None);
+    };
+    if runtime.kind != ephemeral_core::manifest::RuntimeKind::Wasm {
+        return Ok(None);
+    }
+    // Already ready, or running, or anywhere else this does not belong.
+    if starting_event(manifest).is_none() || manifest.lifecycle.state().is_runnable() {
+        return Ok(None);
+    }
+
+    let source = workspace.layout().app(&manifest.id).source();
+    let program = ephemeral_runtime::wasm::Program::locate(
+        runtime.program.as_deref(),
+        &source,
+        &workspace.layout().interpreters_dir(),
+    );
+
+    // Nothing to adopt. Not an error here: an application whose module has not
+    // arrived is one the ordinary path should get its say about.
+    let Ok(program) = program else {
+        return Ok(None);
+    };
+
+    let bytes = std::fs::read(program.wasm())
+        .with_context(|| format!("{} could not be read", program.wasm().display()))?;
+
+    ephemeral_runtime::wasm::inspect(&bytes).map_err(|error| {
+        Error::msg(format!(
+            "{} is not something this build can run: {error}",
+            manifest.id
+        ))
+    })?;
+
+    // The route to Ready, with reasons that say what actually happened rather
+    // than borrowing the container path's words. `BuildSucceeded` for a runtime
+    // with no build is the state machine's vocabulary, not a claim that
+    // anything was compiled.
+    for (event, actor, why) in [
+        (
+            LifecycleEvent::Plan,
+            Actor::Ephemeral,
+            "it arrived with its plan already made",
+        ),
+        (
+            LifecycleEvent::PlanCompleted,
+            Actor::Ephemeral,
+            "nothing to plan: the application came as a recipe",
+        ),
+        (
+            LifecycleEvent::GenerationCompleted,
+            Actor::Ephemeral,
+            "nothing to generate: the module was in the recipe",
+        ),
+        (
+            LifecycleEvent::BuildSucceeded,
+            Actor::Runtime,
+            "nothing to build: WebAssembly arrives compiled",
+        ),
+        (
+            LifecycleEvent::ValidationPassed,
+            Actor::Runtime,
+            "the module loads, has an entry point, and asks for nothing it was not given",
+        ),
+    ] {
+        // Anything already applied is skipped rather than forced: an
+        // application part-way along this route is being finished, not redone.
+        if manifest.lifecycle.can_apply(event, actor) {
+            apply(workspace, manifest, event, actor, why)?;
+        }
+    }
+
+    save(workspace, manifest)?;
+
+    Ok(Some(Generated {
+        app: manifest.id.to_string(),
+        headline: "It arrived already built, and its module checks out.".to_owned(),
+        how_it_went: "Nothing was generated and nothing was compiled: a WebAssembly \
+                      application travels as a module. What was done is the part that \
+                      remained — the module loads, has an entry point, and asks for \
+                      nothing it was not given."
+            .to_owned(),
+        version: Some(manifest.version.to_string()),
+        // None. It asked for whatever the recipe recorded, and a person answers
+        // those separately — installing grants nothing (ADR-0012).
+        requests: Vec::new(),
+        repairs: 0,
+        widened: None,
+        grants_withdrawn: 0,
+        unchanged: None,
+        warnings: Vec::new(),
+    }))
+}
+
 /// What a provider says it can be asked for, and whether it can be reached.
 ///
 /// The two questions are one call because they have one answer. Somebody about
@@ -737,6 +863,113 @@ mod tests {
     };
 
     use super::*;
+
+    /// One installed WebAssembly application: a manifest and a module, exactly
+    /// as `ephemeral install` leaves them.
+    fn installed(home: &std::path::Path, text: &str) -> (Workspace, AppManifest) {
+        let app = ephemeral_core::AppId::parse("tally").unwrap();
+        let mut workspace = Workspace::open(home).unwrap();
+
+        let mut manifest = AppManifest::requested(app.clone(), "Tally");
+        manifest.runtime = Some(ephemeral_core::manifest::RuntimeSpec::wasm_job(
+            "program.wasm",
+            Vec::new(),
+        ));
+
+        let source = workspace.layout().app(&app).source();
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            source.join("program.wasm"),
+            wat::parse_str(text).expect("the test module should assemble"),
+        )
+        .unwrap();
+        workspace.apps_mut().save(&manifest).unwrap();
+
+        (workspace, manifest)
+    }
+
+    /// **An application that arrived built becomes runnable without a model.**
+    ///
+    /// Before this, `install` left a WebAssembly application at `requested` and
+    /// the next step it printed — `ephemeral generate` — demanded authority to
+    /// use Docker for a runtime that does not use Docker. There was no route
+    /// forward at all. The provider named here is never reached.
+    #[test]
+    fn an_application_that_arrived_built_is_checked_rather_than_regenerated() {
+        let home = tempfile::tempdir().unwrap();
+        let (mut workspace, mut manifest) =
+            installed(home.path(), r#"(module (func (export "_start")))"#);
+
+        let done = generate(&mut workspace, &mut manifest, "no-such-provider")
+            .expect("it is adopted before a provider is ever looked up");
+
+        assert!(done.headline.contains("already built"));
+        assert_eq!(done.repairs, 0);
+        assert!(
+            manifest.lifecycle.state().is_runnable(),
+            "it must be runnable now, and it is {}",
+            manifest.lifecycle.state()
+        );
+    }
+
+    /// A module that is not a program is refused, and the application does not
+    /// become runnable. The alternative is one that installs cleanly and fails
+    /// the moment somebody presses Run.
+    #[test]
+    fn a_module_that_is_not_a_program_is_refused_before_it_is_ready() {
+        let home = tempfile::tempdir().unwrap();
+        let (mut workspace, mut manifest) =
+            installed(home.path(), r#"(module (func (export "add")))"#);
+
+        let refused =
+            generate(&mut workspace, &mut manifest, "mock").expect_err("it has no entry point");
+
+        assert!(format!("{refused:#}").contains("not something this build can run"));
+        assert!(
+            !manifest.lifecycle.state().is_runnable(),
+            "and it must not have been made runnable anyway"
+        );
+    }
+
+    /// The check that matters most: a module reaching for something nothing
+    /// provides never becomes an installed application.
+    #[test]
+    fn a_module_asking_for_the_ungranted_is_refused_at_install_time() {
+        let home = tempfile::tempdir().unwrap();
+        let (mut workspace, mut manifest) = installed(
+            home.path(),
+            r#"(module
+                 (import "host" "exfiltrate" (func $out (param i32)))
+                 (func (export "_start") (call $out (i32.const 1))))"#,
+        );
+
+        let refused = generate(&mut workspace, &mut manifest, "mock")
+            .expect_err("it asks for what nothing provides");
+
+        assert!(format!("{refused:#}").contains("not something this build can run"));
+        assert!(!manifest.lifecycle.state().is_runnable());
+    }
+
+    /// A WebAssembly application with no module yet is not adopted — it goes
+    /// down the ordinary path and gets whatever that says. Adopting an
+    /// application with nothing in it would make it runnable with nothing to
+    /// run.
+    #[test]
+    fn an_application_with_no_module_yet_is_not_adopted() {
+        let home = tempfile::tempdir().unwrap();
+        let app = ephemeral_core::AppId::parse("tally").unwrap();
+        let mut workspace = Workspace::open(home.path()).unwrap();
+        let mut manifest = AppManifest::requested(app, "Tally");
+        manifest.runtime = Some(ephemeral_core::manifest::RuntimeSpec::wasm_job(
+            "program.wasm",
+            Vec::new(),
+        ));
+
+        let outcome = generate(&mut workspace, &mut manifest, "no-such-provider");
+
+        assert!(outcome.is_err(), "there is nothing to adopt");
+        assert!(!manifest.lifecycle.state().is_runnable());
+    }
 
     /// A builder that succeeds without touching anything.
     struct AlwaysBuilds;
