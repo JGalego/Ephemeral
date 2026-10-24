@@ -21,7 +21,7 @@ crate-type = ["cdylib", "rlib"]
 # Java — the one piece nothing could test without a phone.
 [dependencies]
 ephemeral-ffi.workspace = true
-jni = "0.21.1"
+jni = "0.22.4"
 
 # Lints are NOT inherited from the workspace, for the same reason as
 # `ephemeral-ffi`: a JNI entry point is `extern "system"` over raw pointers and
